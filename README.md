@@ -31,6 +31,12 @@
 $ pnpm install
 ```
 
+## Migrate from ESLint to Biome
+
+```bash
+$ pnpm biome migrate eslint --write --include-inspired
+```
+
 ## Compile and run the project
 
 ```bash
