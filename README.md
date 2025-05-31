@@ -31,6 +31,30 @@
 $ pnpm install
 ```
 
+## Database Setup
+
+First, connect to your PostgreSQL server:
+```bash
+$ psql -U postgres
+```
+
+Then run the following commands:
+```bash
+CREATE ROLE "takumipay" WITH LOGIN PASSWORD 'takumipay-123';
+ALTER ROLE "takumipay" CREATEDB;
+CREATE DATABASE takumipay;
+GRANT ALL PRIVILEGES ON DATABASE takumipay TO "takumipay";
+ALTER DATABASE takumipay OWNER TO "takumipay";
+\c takumipay
+GRANT ALL ON SCHEMA public TO "takumipay";
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "takumipay";
+```
+
+Add the following to your `.env` file:
+```bash
+DATABASE_URL=postgresql://takumipay:takumipay-123@localhost:5432/takumipay
+```
+
 ## Migrate from ESLint to Biome
 
 ```bash
