@@ -190,3 +190,25 @@ export function ApiGetCategories() {
     }),
   );
 }
+
+export function ApiGetProductByCode() {
+  return applyDecorators(
+    ApiOperation({
+      summary: "Get a product by code",
+      description:
+        "Retrieves detailed information about a specific product using its code",
+    }),
+    ApiParam({
+      name: "code",
+      description: "Product Code",
+      example: "MLBB",
+      required: true,
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns the product with the specified code",
+      schema: productSchema,
+    }),
+    ApiResponse(notFoundResponse),
+  );
+}

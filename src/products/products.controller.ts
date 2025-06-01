@@ -19,6 +19,7 @@ import {
   ApiGetProducts,
   ApiGetProductsByCategory,
   ApiGetCategories,
+  ApiGetProductByCode,
   ApiUpdateProduct,
 } from "../decorators/swagger/product.decorators";
 
@@ -33,16 +34,22 @@ export class ProductsController {
     return this.productsService.findAll();
   }
 
-  @Get("category")
+  @Get("categories")
   @ApiGetCategories()
   findAllCategories() {
     return this.productsService.findAllCategories();
   }
 
-  @Get("category/:categoryId")
+  @Get("categories/:categoryId")
   @ApiGetProductsByCategory()
   findByCategory(@Param("categoryId") categoryId: string) {
     return this.productsService.findByCategory(categoryId);
+  }
+
+  @Get("codes/:code")
+  @ApiGetProductByCode()
+  findByCode(@Param("code") code: string) {
+    return this.productsService.findByCode(code);
   }
 
   @Get(":id")

@@ -43,6 +43,23 @@ export class ProductsService {
     return products;
   }
 
+  async findByCode(code: string) {
+    const product = await this.prisma.product.findFirst({
+      where: { code },
+      include: {
+        category: true,
+        vendor: true,
+        ProductPrice: true,
+      },
+    });
+
+    if (!product) {
+      throw new NotFoundException(`Product with code ${code} not found`);
+    }
+
+    return product;
+  }
+
   async findOne(id: string) {
     const product = await this.prisma.product.findUnique({
       where: { id },
