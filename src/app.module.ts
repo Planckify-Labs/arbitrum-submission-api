@@ -7,6 +7,7 @@ import { UsersModule } from "./users/users.module";
 import { VendorsModule } from "./vendors/vendors.module";
 import { TransactionsModule } from "./transactions/transactions.module";
 import { TokensModule } from "./tokens/tokens.module";
+import { RegionsModule } from "./regions/regions.module";
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { TokensModule } from "./tokens/tokens.module";
     VendorsModule,
     TransactionsModule,
     TokensModule,
+    RegionsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

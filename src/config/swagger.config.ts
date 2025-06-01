@@ -29,6 +29,7 @@ export function setupSwagger(app: INestApplication) {
     .addTag("app", "Application information endpoints")
     .addTag("products", "Product management endpoints")
     .addTag("tokens", "Token management endpoints")
+    .addTag("regions", "Region management endpoints")
     .addServer("http://localhost:3000", "Local development")
     .addServer("https://api.takumipay.com", "Production")
     .build();
