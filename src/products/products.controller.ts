@@ -17,6 +17,7 @@ import {
   ApiDeleteProduct,
   ApiGetProduct,
   ApiGetProducts,
+  ApiGetProductsByCategory,
   ApiUpdateProduct,
 } from "../decorators/swagger/product.decorators";
 
@@ -29,6 +30,12 @@ export class ProductsController {
   @ApiGetProducts()
   findAll() {
     return this.productsService.findAll();
+  }
+
+  @Get("category/:categoryId")
+  @ApiGetProductsByCategory()
+  findByCategory(@Param("categoryId") categoryId: string) {
+    return this.productsService.findByCategory(categoryId);
   }
 
   @Get(":id")

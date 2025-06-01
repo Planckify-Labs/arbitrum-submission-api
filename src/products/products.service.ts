@@ -16,6 +16,25 @@ export class ProductsService {
     });
   }
 
+  async findByCategory(categoryId: string) {
+    const products = await this.prisma.product.findMany({
+      where: { categoryId },
+      include: {
+        category: true,
+        vendor: true,
+        ProductPrice: true,
+      },
+    });
+
+    if (!products.length) {
+      throw new NotFoundException(
+        `No products found for category ${categoryId}`,
+      );
+    }
+
+    return products;
+  }
+
   async findOne(id: string) {
     const product = await this.prisma.product.findUnique({
       where: { id },

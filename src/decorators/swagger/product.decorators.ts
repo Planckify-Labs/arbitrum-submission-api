@@ -62,6 +62,30 @@ export function ApiGetProducts() {
   );
 }
 
+export function ApiGetProductsByCategory() {
+  return applyDecorators(
+    ApiOperation({
+      summary: "Get products by category",
+      description: "Retrieves a list of products filtered by category ID",
+    }),
+    ApiParam({
+      name: "categoryId",
+      description: "Category ID",
+      example: "01H1G5V...",
+      required: true,
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns products for the specified category",
+      schema: {
+        type: "array",
+        items: productSchema,
+      },
+    }),
+    ApiResponse(notFoundResponse),
+  );
+}
+
 export function ApiGetProduct() {
   return applyDecorators(
     ApiOperation({
