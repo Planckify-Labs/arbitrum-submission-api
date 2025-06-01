@@ -1,5 +1,5 @@
 import { applyDecorators } from "@nestjs/common";
-import { ApiOperation, ApiResponse, ApiParam } from "@nestjs/swagger";
+import { ApiOperation, ApiResponse, ApiParam, ApiQuery } from "@nestjs/swagger";
 
 const productSchema = {
   type: "object",
@@ -9,6 +9,21 @@ const productSchema = {
     code: { type: "string", example: "MLBB" },
     vendorId: { type: "string", example: "01H1G5V..." },
     categoryId: { type: "string", example: "01H1G5V..." },
+    createdAt: { type: "string", format: "date-time" },
+    updatedAt: { type: "string", format: "date-time" },
+  },
+};
+
+const productPriceSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string", example: "01H1G5V..." },
+    productId: { type: "string", example: "01H1G5V..." },
+    vendorId: { type: "string", example: "01H1G5V..." },
+    realValue: { type: "number", example: 50000 },
+    priceFromVendor: { type: "number", example: 47500 },
+    sellPrice: { type: "number", example: 52500 },
+    isActive: { type: "boolean", example: true },
     createdAt: { type: "string", format: "date-time" },
     updatedAt: { type: "string", format: "date-time" },
   },
@@ -208,6 +223,284 @@ export function ApiGetProductByCode() {
       status: 200,
       description: "Returns the product with the specified code",
       schema: productSchema,
+    }),
+    ApiResponse(notFoundResponse),
+  );
+}
+
+export function ApiSearchProducts() {
+  return applyDecorators(
+    ApiOperation({
+      summary: "Search products",
+      description:
+        "Search products using various criteria. You can search by ID, code, name, vendor name, or use a general query term. Additional filters for vendor ID and active status are also available.",
+    }),
+    ApiQuery({
+      name: "id",
+      required: false,
+      description: "Search by exact product ID",
+      type: "string",
+      example: "01JWN873BV2XXFVVMYR1JMY71E",
+    }),
+    ApiQuery({
+      name: "code",
+      required: false,
+      description: "Search by product code (case insensitive)",
+      type: "string",
+      example: "MLBB",
+    }),
+    ApiQuery({
+      name: "name",
+      required: false,
+      description: "Search by product name (case insensitive)",
+      type: "string",
+      example: "Mobile Legends",
+    }),
+    ApiQuery({
+      name: "vendorName",
+      required: false,
+      description: "Search by vendor name (case insensitive)",
+      type: "string",
+      example: "Game Publisher Inc",
+    }),
+    ApiQuery({
+      name: "query",
+      required: false,
+      description:
+        "General search term that matches against name, code, or vendor name (used only if specific search fields are not provided)",
+      type: "string",
+    }),
+    ApiQuery({
+      name: "vendorId",
+      required: false,
+      description: "Filter by vendor ID",
+      type: "string",
+    }),
+    ApiQuery({
+      name: "active",
+      required: false,
+      description: "Filter by active status",
+      type: "boolean",
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns matching products",
+      schema: {
+        type: "array",
+        items: productSchema,
+      },
+    }),
+  );
+}
+
+export function ApiGetProductPrices() {
+  return applyDecorators(
+    ApiOperation({
+      summary: "Get product prices",
+      description: "Get all prices for a specific product",
+    }),
+    ApiParam({
+      name: "id",
+      description: "Product ID",
+      example: "01H1G5V...",
+      required: true,
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns all prices for the product",
+      schema: {
+        type: "array",
+        items: productPriceSchema,
+      },
+    }),
+    ApiResponse(notFoundResponse),
+  );
+}
+
+export function ApiCreateProductPrice() {
+  return applyDecorators(
+    ApiOperation({
+      summary: "Create product price",
+      description: "Add a new price for a specific product",
+    }),
+    ApiParam({
+      name: "id",
+      description: "Product ID",
+      example: "01H1G5V...",
+      required: true,
+    }),
+    ApiResponse({
+      status: 201,
+      description: "Price created successfully",
+      schema: productPriceSchema,
+    }),
+    ApiResponse(badRequestResponse),
+  );
+}
+
+export function ApiUpdateProductPrice() {
+  return applyDecorators(
+    ApiOperation({
+      summary: "Update product price",
+      description: "Update an existing product price",
+    }),
+    ApiParam({
+      name: "priceId",
+      description: "Price ID",
+      example: "01H1G5V...",
+      required: true,
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Price updated successfully",
+      schema: productPriceSchema,
+    }),
+    ApiResponse(notFoundResponse),
+    ApiResponse(badRequestResponse),
+  );
+}
+
+export function ApiDeleteProductPrice() {
+  return applyDecorators(
+    ApiOperation({
+      summary: "Delete product price",
+      description: "Delete an existing product price",
+    }),
+    ApiParam({
+      name: "priceId",
+      description: "Price ID",
+      example: "01H1G5V...",
+      required: true,
+    }),
+    ApiResponse({
+      status: 204,
+      description: "Price deleted successfully",
+    }),
+    ApiResponse(notFoundResponse),
+  );
+}
+
+export function ApiCreateCategory() {
+  return applyDecorators(
+    ApiOperation({
+      summary: "Create category",
+      description: "Create a new product category",
+    }),
+    ApiResponse({
+      status: 201,
+      description: "Category created successfully",
+      schema: {
+        type: "object",
+        properties: {
+          id: { type: "string", example: "01H1G5V..." },
+          name: { type: "string", example: "Games" },
+          description: {
+            type: "string",
+            example: "Digital games and gaming products",
+          },
+          imageUrl: {
+            type: "string",
+            example: "https://example.com/games.jpg",
+          },
+          isActive: { type: "boolean", example: true },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+        },
+      },
+    }),
+    ApiResponse(badRequestResponse),
+  );
+}
+
+export function ApiGetCategory() {
+  return applyDecorators(
+    ApiOperation({
+      summary: "Get category",
+      description: "Get a specific category by ID",
+    }),
+    ApiParam({
+      name: "id",
+      description: "Category ID",
+      example: "01H1G5V...",
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns the category",
+      schema: {
+        type: "object",
+        properties: {
+          id: { type: "string", example: "01H1G5V..." },
+          name: { type: "string", example: "Games" },
+          description: {
+            type: "string",
+            example: "Digital games and gaming products",
+          },
+          imageUrl: {
+            type: "string",
+            example: "https://example.com/games.jpg",
+          },
+          isActive: { type: "boolean", example: true },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+        },
+      },
+    }),
+    ApiResponse(notFoundResponse),
+  );
+}
+
+export function ApiUpdateCategory() {
+  return applyDecorators(
+    ApiOperation({
+      summary: "Update category",
+      description: "Update an existing category",
+    }),
+    ApiParam({
+      name: "id",
+      description: "Category ID",
+      example: "01H1G5V...",
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Category updated successfully",
+      schema: {
+        type: "object",
+        properties: {
+          id: { type: "string", example: "01H1G5V..." },
+          name: { type: "string", example: "Games" },
+          description: {
+            type: "string",
+            example: "Digital games and gaming products",
+          },
+          imageUrl: {
+            type: "string",
+            example: "https://example.com/games.jpg",
+          },
+          isActive: { type: "boolean", example: true },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+        },
+      },
+    }),
+    ApiResponse(notFoundResponse),
+    ApiResponse(badRequestResponse),
+  );
+}
+
+export function ApiDeleteCategory() {
+  return applyDecorators(
+    ApiOperation({
+      summary: "Delete category",
+      description: "Delete an existing category",
+    }),
+    ApiParam({
+      name: "id",
+      description: "Category ID",
+      example: "01H1G5V...",
+    }),
+    ApiResponse({
+      status: 204,
+      description: "Category deleted successfully",
     }),
     ApiResponse(notFoundResponse),
   );
