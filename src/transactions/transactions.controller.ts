@@ -1,16 +1,16 @@
-import { Controller, Get, Post, Body, Put, Param, Query } from "@nestjs/common";
+import { Controller, Get, Post, Body, Param, Put, Query } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { TransactionsService } from "./transactions.service";
 import { CreateTransactionDto } from "./dto/create-transaction.dto";
 import { UpdateTransactionDto } from "./dto/update-transaction.dto";
 import { SearchTransactionDto } from "./dto/search-transaction.dto";
+import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import {
   ApiCreateTransaction,
   ApiGetTransaction,
   ApiGetTransactions,
   ApiGetUserTransactions,
   ApiSearchTransactions,
-  ApiUpdateTransactionStatus,
   ApiGetBlockchainTransactions,
   ApiGetTokenTransactions,
 } from "../decorators/swagger/transaction.decorators";
@@ -28,29 +28,23 @@ export class TransactionsController {
 
   @Get()
   @ApiGetTransactions()
-  findAll() {
-    return this.transactionsService.findAll();
+  findAll(@Query() paginationDto: CursorPaginationDto) {
+    return this.transactionsService.findAll(paginationDto);
   }
 
   @Get("search")
   @ApiSearchTransactions()
-  search(@Query() searchParams: SearchTransactionDto) {
-    return this.transactionsService.search(searchParams);
+  search(
+    @Query() searchParams: SearchTransactionDto,
+    @Query() paginationDto: CursorPaginationDto,
+  ) {
+    return this.transactionsService.search(searchParams, paginationDto);
   }
 
   @Get(":id")
   @ApiGetTransaction()
   findOne(@Param("id") id: string) {
     return this.transactionsService.findOne(id);
-  }
-
-  @Put(":id/status")
-  @ApiUpdateTransactionStatus()
-  updateStatus(
-    @Param("id") id: string,
-    @Body() updateTransactionDto: UpdateTransactionDto,
-  ) {
-    return this.transactionsService.updateStatus(id, updateTransactionDto);
   }
 
   @Get("user/:userId")

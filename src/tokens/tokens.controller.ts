@@ -15,6 +15,7 @@ import { TokensService } from "./tokens.service";
 import { CreateTokenDto } from "./dto/create-token.dto";
 import { UpdateTokenDto } from "./dto/update-token.dto";
 import { SearchTokenDto } from "./dto/search-token.dto";
+import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import {
   ApiCreateToken,
   ApiDeleteToken,
@@ -37,14 +38,17 @@ export class TokensController {
 
   @Get()
   @ApiGetTokens()
-  findAll() {
-    return this.tokensService.findAll();
+  findAll(@Query() paginationDto: CursorPaginationDto) {
+    return this.tokensService.findAll(paginationDto);
   }
 
   @Get("search")
   @ApiSearchTokens()
-  search(@Query() searchParams: SearchTokenDto) {
-    return this.tokensService.search(searchParams);
+  search(
+    @Query() searchParams: SearchTokenDto,
+    @Query() paginationDto: CursorPaginationDto,
+  ) {
+    return this.tokensService.search(searchParams, paginationDto);
   }
 
   @Get(":id")

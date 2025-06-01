@@ -4,6 +4,7 @@ import { CreateBlockchainDto } from "./dto/create-blockchain.dto";
 import { UpdateBlockchainDto } from "./dto/update-blockchain.dto";
 import { SearchBlockchainDto } from "./dto/search-blockchain.dto";
 import { Prisma } from "@generated/prisma";
+import { CursorPaginationDto } from "../dto/common/pagination.dto";
 
 @Injectable()
 export class BlockchainsService {
@@ -15,11 +16,24 @@ export class BlockchainsService {
     });
   }
 
-  async findAll() {
-    return await this.prisma.blockchain.findMany();
+  async findAll(paginationDto: CursorPaginationDto) {
+    const { cursor, take = 10 } = paginationDto;
+
+    return await this.prisma.blockchain.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
+      orderBy: {
+        name: "asc",
+      },
+    });
   }
 
-  async search(searchParams: SearchBlockchainDto) {
+  async search(
+    searchParams: SearchBlockchainDto,
+    paginationDto: CursorPaginationDto,
+  ) {
+    const { cursor, take = 10 } = paginationDto;
     const { name, chainId, isEVM, isActive } = searchParams;
 
     const where: Prisma.BlockchainWhereInput = {};
@@ -44,6 +58,9 @@ export class BlockchainsService {
     }
 
     return await this.prisma.blockchain.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
       where,
       orderBy: {
         name: "asc",

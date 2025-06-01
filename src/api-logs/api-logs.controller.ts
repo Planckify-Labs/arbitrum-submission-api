@@ -2,6 +2,7 @@ import { Controller, Get, Param, Query } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { ApiLogsService } from "./api-logs.service";
 import { SearchApiLogDto } from "./dto/api-log.dto";
+import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import {
   ApiGetLogs,
   ApiSearchLogs,
@@ -17,14 +18,17 @@ export class ApiLogsController {
 
   @Get()
   @ApiGetLogs()
-  findAll() {
-    return this.apiLogsService.findAll();
+  findAll(@Query() paginationDto: CursorPaginationDto) {
+    return this.apiLogsService.findAll(paginationDto);
   }
 
   @Get("search")
   @ApiSearchLogs()
-  search(@Query() searchParams: SearchApiLogDto) {
-    return this.apiLogsService.search(searchParams);
+  search(
+    @Query() searchParams: SearchApiLogDto,
+    @Query() paginationDto: CursorPaginationDto,
+  ) {
+    return this.apiLogsService.search(searchParams, paginationDto);
   }
 
   @Get("request/:requestId")

@@ -7,6 +7,7 @@ import {
 } from "./dto/product-price.dto";
 import { CreateCategoryDto, UpdateCategoryDto } from "./dto/category.dto";
 import { Prisma } from "generated/prisma";
+import { CursorPaginationDto } from "../dto/common/pagination.dto";
 
 interface SearchProductsParams {
   query?: string;
@@ -20,27 +21,30 @@ interface SearchProductsParams {
 
 @Injectable()
 export class ProductsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
-  findAll() {
+  findAll(paginationDto: CursorPaginationDto) {
+    const { cursor, take = 10 } = paginationDto;
+
     return this.prisma.product.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
       include: {
         category: true,
         vendor: true,
         ProductPrice: true,
       },
+      orderBy: {
+        name: "asc",
+      },
     });
   }
 
-  search({
-    query,
-    vendorId,
-    active,
-    code,
-    id,
-    name,
-    vendorName,
-  }: SearchProductsParams) {
+  search(params: SearchProductsParams, paginationDto: CursorPaginationDto) {
+    const { cursor, take = 10 } = paginationDto;
+    const { query, vendorId, active, code, id, name, vendorName } = params;
+
     const where: Prisma.ProductWhereInput = {};
 
     // Handle direct ID search
@@ -101,17 +105,28 @@ export class ProductsService {
     }
 
     return this.prisma.product.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
       where,
       include: {
         category: true,
         vendor: true,
         ProductPrice: true,
       },
+      orderBy: {
+        name: "asc",
+      },
     });
   }
 
-  findAllCategories() {
+  findAllCategories(paginationDto: CursorPaginationDto) {
+    const { cursor, take = 10 } = paginationDto;
+
     return this.prisma.category.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
       orderBy: {
         name: "asc",
       },

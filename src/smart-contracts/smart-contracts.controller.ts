@@ -15,6 +15,7 @@ import { SmartContractsService } from "./smart-contracts.service";
 import { CreateSmartContractDto } from "./dto/create-smart-contract.dto";
 import { UpdateSmartContractDto } from "./dto/update-smart-contract.dto";
 import { SearchSmartContractDto } from "./dto/search-smart-contract.dto";
+import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import {
   ApiCreateSmartContract,
   ApiDeleteSmartContract,
@@ -37,14 +38,17 @@ export class SmartContractsController {
 
   @Get()
   @ApiGetSmartContracts()
-  findAll() {
-    return this.smartContractsService.findAll();
+  findAll(@Query() paginationDto: CursorPaginationDto) {
+    return this.smartContractsService.findAll(paginationDto);
   }
 
   @Get("search")
   @ApiSearchSmartContracts()
-  search(@Query() searchParams: SearchSmartContractDto) {
-    return this.smartContractsService.search(searchParams);
+  search(
+    @Query() searchParams: SearchSmartContractDto,
+    @Query() paginationDto: CursorPaginationDto,
+  ) {
+    return this.smartContractsService.search(searchParams, paginationDto);
   }
 
   @Get(":id")

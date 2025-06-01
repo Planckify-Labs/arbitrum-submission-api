@@ -4,6 +4,7 @@ import { CreateTokenDto } from "./dto/create-token.dto";
 import { UpdateTokenDto } from "./dto/update-token.dto";
 import { SearchTokenDto } from "./dto/search-token.dto";
 import { Prisma } from "@generated/prisma";
+import { CursorPaginationDto } from "../dto/common/pagination.dto";
 
 @Injectable()
 export class TokensService {
@@ -63,11 +64,19 @@ export class TokensService {
     });
   }
 
-  async findAll() {
+  async findAll(paginationDto: CursorPaginationDto) {
+    const { cursor, take = 10 } = paginationDto;
+
     return await this.prisma.token.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
       include: {
         blockchain: true,
         regionAvailability: true,
+      },
+      orderBy: {
+        symbol: "asc",
       },
     });
   }
@@ -167,7 +176,11 @@ export class TokensService {
     });
   }
 
-  async search(searchParams: SearchTokenDto) {
+  async search(
+    searchParams: SearchTokenDto,
+    paginationDto: CursorPaginationDto,
+  ) {
+    const { cursor, take = 10 } = paginationDto;
     const {
       symbol,
       name,
@@ -177,7 +190,6 @@ export class TokensService {
       isActive,
     } = searchParams;
 
-    // Build where clause based on provided filters
     const where: Prisma.TokenWhereInput = {};
 
     if (symbol) {
@@ -208,6 +220,9 @@ export class TokensService {
     }
 
     return await this.prisma.token.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
       where,
       include: {
         blockchain: true,

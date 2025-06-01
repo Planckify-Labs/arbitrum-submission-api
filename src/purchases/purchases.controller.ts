@@ -3,6 +3,7 @@ import { ApiTags } from "@nestjs/swagger";
 import { PurchasesService } from "./purchases.service";
 import { CreatePurchaseDto, UpdatePurchaseDto } from "./dto/purchase.dto";
 import { SearchPurchaseDto } from "./dto/search-purchase.dto";
+import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import {
   ApiCreatePurchase,
   ApiGetPurchase,
@@ -28,32 +29,44 @@ export class PurchasesController {
 
   @Get()
   @ApiGetPurchases()
-  findAll() {
-    return this.purchasesService.findAll();
+  findAll(@Query() paginationDto: CursorPaginationDto) {
+    return this.purchasesService.findAll(paginationDto);
   }
 
   @Get("search")
   @ApiSearchPurchases()
-  search(@Query() searchParams: SearchPurchaseDto) {
-    return this.purchasesService.search(searchParams);
+  search(
+    @Query() searchParams: SearchPurchaseDto,
+    @Query() paginationDto: CursorPaginationDto,
+  ) {
+    return this.purchasesService.search(searchParams, paginationDto);
   }
 
   @Get("user/:userId")
   @ApiGetUserPurchases()
-  findByUser(@Param("userId") userId: string) {
-    return this.purchasesService.findByUser(userId);
+  findByUser(
+    @Param("userId") userId: string,
+    @Query() paginationDto: CursorPaginationDto,
+  ) {
+    return this.purchasesService.findByUser(userId, paginationDto);
   }
 
   @Get("token/:tokenId")
   @ApiGetTokenPurchases()
-  findByToken(@Param("tokenId") tokenId: string) {
-    return this.purchasesService.findByToken(tokenId);
+  findByToken(
+    @Param("tokenId") tokenId: string,
+    @Query() paginationDto: CursorPaginationDto,
+  ) {
+    return this.purchasesService.findByToken(tokenId, paginationDto);
   }
 
   @Get("blockchain/:blockchainId")
   @ApiGetBlockchainPurchases()
-  findByBlockchain(@Param("blockchainId") blockchainId: string) {
-    return this.purchasesService.findByBlockchain(blockchainId);
+  findByBlockchain(
+    @Param("blockchainId") blockchainId: string,
+    @Query() paginationDto: CursorPaginationDto,
+  ) {
+    return this.purchasesService.findByBlockchain(blockchainId, paginationDto);
   }
 
   @Get(":id")

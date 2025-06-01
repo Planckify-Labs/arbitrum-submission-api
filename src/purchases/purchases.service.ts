@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { CreatePurchaseDto, UpdatePurchaseDto } from "./dto/purchase.dto";
 import { SearchPurchaseDto } from "./dto/search-purchase.dto";
 import { Prisma } from "@generated/prisma";
+import { CursorPaginationDto } from "../dto/common/pagination.dto";
 
 @Injectable()
 export class PurchasesService {
@@ -50,13 +51,21 @@ export class PurchasesService {
     });
   }
 
-  async findAll() {
+  async findAll(paginationDto: CursorPaginationDto) {
+    const { cursor, take = 10 } = paginationDto;
+
     return await this.prisma.purchase.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
       include: {
         transaction: true,
         product: true,
         productPrice: true,
         apiLogs: true,
+      },
+      orderBy: {
+        createdAt: "desc",
       },
     });
   }
@@ -114,7 +123,11 @@ export class PurchasesService {
     };
   }
 
-  async search(searchParams: SearchPurchaseDto) {
+  async search(
+    searchParams: SearchPurchaseDto,
+    paginationDto: CursorPaginationDto,
+  ) {
+    const { cursor, take = 10 } = paginationDto;
     const {
       userId,
       transactionId,
@@ -126,6 +139,9 @@ export class PurchasesService {
     } = searchParams;
 
     return await this.prisma.purchase.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
       where: {
         ...(transactionId && { transactionId }),
         ...(productId && { productId }),
@@ -167,10 +183,15 @@ export class PurchasesService {
         productPrice: true,
         apiLogs: true,
       },
+      orderBy: {
+        createdAt: "desc",
+      },
     });
   }
 
-  async findByUser(userId: string) {
+  async findByUser(userId: string, paginationDto: CursorPaginationDto) {
+    const { cursor, take = 10 } = paginationDto;
+
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
     });
@@ -180,6 +201,9 @@ export class PurchasesService {
     }
 
     return this.prisma.purchase.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
       where: {
         transaction: {
           userId,
@@ -199,10 +223,15 @@ export class PurchasesService {
         productPrice: true,
         apiLogs: true,
       },
+      orderBy: {
+        createdAt: "desc",
+      },
     });
   }
 
-  async findByToken(tokenId: string) {
+  async findByToken(tokenId: string, paginationDto: CursorPaginationDto) {
+    const { cursor, take = 10 } = paginationDto;
+
     const token = await this.prisma.token.findUnique({
       where: { id: tokenId },
     });
@@ -212,6 +241,9 @@ export class PurchasesService {
     }
 
     return this.prisma.purchase.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
       where: {
         transaction: {
           tokenId,
@@ -231,10 +263,18 @@ export class PurchasesService {
         productPrice: true,
         apiLogs: true,
       },
+      orderBy: {
+        createdAt: "desc",
+      },
     });
   }
 
-  async findByBlockchain(blockchainId: string) {
+  async findByBlockchain(
+    blockchainId: string,
+    paginationDto: CursorPaginationDto,
+  ) {
+    const { cursor, take = 10 } = paginationDto;
+
     const blockchain = await this.prisma.blockchain.findUnique({
       where: { id: blockchainId },
     });
@@ -246,6 +286,9 @@ export class PurchasesService {
     }
 
     return this.prisma.purchase.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
       where: {
         transaction: {
           token: {
@@ -266,6 +309,9 @@ export class PurchasesService {
         },
         productPrice: true,
         apiLogs: true,
+      },
+      orderBy: {
+        createdAt: "desc",
       },
     });
   }

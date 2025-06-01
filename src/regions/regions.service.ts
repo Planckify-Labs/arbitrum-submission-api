@@ -6,6 +6,7 @@ import { CreateRegionTokenDto } from "./dto/create-region-token.dto";
 import { UpdateRegionTokenDto } from "./dto/update-region-token.dto";
 import { SearchRegionDto } from "./dto/search-region.dto";
 import { Prisma } from "@generated/prisma";
+import { CursorPaginationDto } from "../dto/common/pagination.dto";
 
 @Injectable()
 export class RegionsService {
@@ -36,8 +37,13 @@ export class RegionsService {
     });
   }
 
-  async findAll() {
+  async findAll(paginationDto: CursorPaginationDto) {
+    const { cursor, take = 10 } = paginationDto;
+
     return await this.prisma.region.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
       include: {
         users: true,
         availableTokens: {
@@ -45,6 +51,9 @@ export class RegionsService {
             token: true,
           },
         },
+      },
+      orderBy: {
+        code: "asc",
       },
     });
   }
@@ -108,13 +117,21 @@ export class RegionsService {
     });
   }
 
-  async findRegionTokens(id: string) {
+  async findRegionTokens(id: string, paginationDto: CursorPaginationDto) {
     await this.findOne(id); // Check if region exists
 
+    const { cursor, take = 10 } = paginationDto;
+
     return this.prisma.regionAvailableToken.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
       where: { regionId: id },
       include: {
         token: true,
+      },
+      orderBy: {
+        createdAt: "desc",
       },
     });
   }
@@ -240,11 +257,14 @@ export class RegionsService {
     });
   }
 
-  async search(searchParams: SearchRegionDto) {
+  async search(
+    searchParams: SearchRegionDto,
+    paginationDto: CursorPaginationDto,
+  ) {
+    const { cursor, take = 10 } = paginationDto;
     const { code, name, currencyCode, isActive, hasKYCRequirement } =
       searchParams;
 
-    // Build where clause based on provided filters
     const where: Prisma.RegionWhereInput = {};
 
     if (code) {
@@ -268,6 +288,9 @@ export class RegionsService {
     }
 
     return await this.prisma.region.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
       where,
       include: {
         users: true,

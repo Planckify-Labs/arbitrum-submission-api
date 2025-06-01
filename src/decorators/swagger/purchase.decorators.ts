@@ -37,7 +37,19 @@ export function ApiGetPurchases() {
     ApiBearerAuth(),
     ApiOperation({
       summary: "Get all purchases",
-      description: "Retrieves a list of all purchases",
+      description: "Get all purchases with pagination",
+    }),
+    ApiQuery({
+      name: "take",
+      required: false,
+      type: Number,
+      description: "Number of records to take",
+    }),
+    ApiQuery({
+      name: "cursor",
+      required: false,
+      type: String,
+      description: "Cursor for pagination (ID of the last item)",
     }),
     ApiResponse({
       status: 200,
@@ -128,7 +140,7 @@ export function ApiSearchPurchases() {
     ApiBearerAuth(),
     ApiOperation({
       summary: "Search purchases",
-      description: "Search purchases with various filters",
+      description: "Search purchases with various filters and pagination",
     }),
     ApiQuery({
       name: "userId",
@@ -166,6 +178,18 @@ export function ApiSearchPurchases() {
       description: "Filter by purchase status",
       enum: PurchaseStatus,
     }),
+    ApiQuery({
+      name: "take",
+      required: false,
+      type: Number,
+      description: "Number of records to take",
+    }),
+    ApiQuery({
+      name: "cursor",
+      required: false,
+      type: String,
+      description: "Cursor for pagination (ID of the last item)",
+    }),
     ApiResponse({
       status: 200,
       description: "List of filtered purchases",
@@ -179,21 +203,29 @@ export function ApiGetUserPurchases() {
     ApiBearerAuth(),
     ApiOperation({
       summary: "Get user purchases",
-      description: "Get all purchases for a specific user",
+      description: "Get all purchases for a specific user with pagination",
     }),
     ApiParam({
       name: "userId",
+      required: true,
       description: "User ID",
-      example: "01H1G5V...",
+    }),
+    ApiQuery({
+      name: "take",
+      required: false,
+      type: Number,
+      description: "Number of records to take",
+    }),
+    ApiQuery({
+      name: "cursor",
+      required: false,
+      type: String,
+      description: "Cursor for pagination (ID of the last item)",
     }),
     ApiResponse({
       status: 200,
-      description: "List of user's purchases",
+      description: "List of user purchases",
       type: [PurchaseResponseDto],
-    }),
-    ApiResponse({
-      status: 404,
-      description: "User not found",
     }),
   );
 }
@@ -203,21 +235,29 @@ export function ApiGetTokenPurchases() {
     ApiBearerAuth(),
     ApiOperation({
       summary: "Get token purchases",
-      description: "Get all purchases for a specific token",
+      description: "Get all purchases for a specific token with pagination",
     }),
     ApiParam({
       name: "tokenId",
+      required: true,
       description: "Token ID",
-      example: "01H1G5V...",
+    }),
+    ApiQuery({
+      name: "take",
+      required: false,
+      type: Number,
+      description: "Number of records to take",
+    }),
+    ApiQuery({
+      name: "cursor",
+      required: false,
+      type: String,
+      description: "Cursor for pagination (ID of the last item)",
     }),
     ApiResponse({
       status: 200,
       description: "List of token purchases",
       type: [PurchaseResponseDto],
-    }),
-    ApiResponse({
-      status: 404,
-      description: "Token not found",
     }),
   );
 }
@@ -227,21 +267,30 @@ export function ApiGetBlockchainPurchases() {
     ApiBearerAuth(),
     ApiOperation({
       summary: "Get blockchain purchases",
-      description: "Get all purchases for a specific blockchain",
+      description:
+        "Get all purchases for a specific blockchain with pagination",
     }),
     ApiParam({
       name: "blockchainId",
+      required: true,
       description: "Blockchain ID",
-      example: "01H1G5V...",
+    }),
+    ApiQuery({
+      name: "take",
+      required: false,
+      type: Number,
+      description: "Number of records to take",
+    }),
+    ApiQuery({
+      name: "cursor",
+      required: false,
+      type: String,
+      description: "Cursor for pagination (ID of the last item)",
     }),
     ApiResponse({
       status: 200,
       description: "List of blockchain purchases",
       type: [PurchaseResponseDto],
-    }),
-    ApiResponse({
-      status: 404,
-      description: "Blockchain not found",
     }),
   );
 }

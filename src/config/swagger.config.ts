@@ -12,6 +12,15 @@ export function setupSwagger(app: INestApplication) {
       ## Authentication
       Most endpoints require Bearer token authentication.
       
+      ## Pagination
+      All GET endpoints that return multiple items (e.g. /products, /transactions, /purchases) use cursor-based pagination:
+      - \`take\`: Controls how many items to return in one response (default: 10)
+      - \`cursor\`: Pass the ID of the last item you received to get the next page of results
+      
+      Example: 
+      1. First request: \`GET /products?take=10\`
+      2. Next page: \`GET /products?take=10&cursor=last_item_id\`
+      
       ## Rate Limiting
       API calls are subject to rate limiting.
       

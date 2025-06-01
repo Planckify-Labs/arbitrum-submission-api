@@ -17,6 +17,7 @@ import { UpdateRegionDto } from "./dto/update-region.dto";
 import { CreateRegionTokenDto } from "./dto/create-region-token.dto";
 import { UpdateRegionTokenDto } from "./dto/update-region-token.dto";
 import { SearchRegionDto } from "./dto/search-region.dto";
+import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import {
   ApiCreateRegion,
   ApiDeleteRegion,
@@ -43,14 +44,17 @@ export class RegionsController {
 
   @Get()
   @ApiGetRegions()
-  findAll() {
-    return this.regionsService.findAll();
+  findAll(@Query() paginationDto: CursorPaginationDto) {
+    return this.regionsService.findAll(paginationDto);
   }
 
   @Get("search")
   @ApiSearchRegions()
-  search(@Query() searchParams: SearchRegionDto) {
-    return this.regionsService.search(searchParams);
+  search(
+    @Query() searchParams: SearchRegionDto,
+    @Query() paginationDto: CursorPaginationDto,
+  ) {
+    return this.regionsService.search(searchParams, paginationDto);
   }
 
   @Get(":id")
@@ -74,8 +78,11 @@ export class RegionsController {
 
   @Get(":id/tokens")
   @ApiGetRegionTokens()
-  findRegionTokens(@Param("id") id: string) {
-    return this.regionsService.findRegionTokens(id);
+  findRegionTokens(
+    @Param("id") id: string,
+    @Query() paginationDto: CursorPaginationDto,
+  ) {
+    return this.regionsService.findRegionTokens(id, paginationDto);
   }
 
   @Post(":id/tokens")

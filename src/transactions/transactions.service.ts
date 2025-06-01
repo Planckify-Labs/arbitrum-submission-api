@@ -4,6 +4,7 @@ import { CreateTransactionDto } from "./dto/create-transaction.dto";
 import { UpdateTransactionDto } from "./dto/update-transaction.dto";
 import { SearchTransactionDto } from "./dto/search-transaction.dto";
 import { Prisma } from "@generated/prisma";
+import { CursorPaginationDto } from "../dto/common/pagination.dto";
 
 @Injectable()
 export class TransactionsService {
@@ -19,11 +20,19 @@ export class TransactionsService {
     });
   }
 
-  async findAll() {
+  async findAll(paginationDto: CursorPaginationDto) {
+    const { cursor, take = 10 } = paginationDto;
+
     return await this.prisma.transactionHistory.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
       include: {
         token: true,
         purchase: true,
+      },
+      orderBy: {
+        createdAt: "desc",
       },
     });
   }
@@ -123,7 +132,11 @@ export class TransactionsService {
     });
   }
 
-  async search(searchParams: SearchTransactionDto) {
+  async search(
+    searchParams: SearchTransactionDto,
+    paginationDto: CursorPaginationDto,
+  ) {
+    const { cursor, take = 10 } = paginationDto;
     const {
       type,
       status,
@@ -151,6 +164,9 @@ export class TransactionsService {
     }
 
     return await this.prisma.transactionHistory.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
       where,
       include: {
         token: true,

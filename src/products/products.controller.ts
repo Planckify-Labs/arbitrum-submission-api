@@ -18,6 +18,7 @@ import {
   UpdateProductPriceDto,
 } from "./dto/product-price.dto";
 import { CreateCategoryDto, UpdateCategoryDto } from "./dto/category.dto";
+import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import {
   ApiCreateProduct,
   ApiDeleteProduct,
@@ -53,28 +54,32 @@ export class ProductsController {
     @Query("id") id?: string,
     @Query("name") name?: string,
     @Query("vendorName") vendorName?: string,
+    @Query() paginationDto: CursorPaginationDto = new CursorPaginationDto(),
   ) {
-    return this.productsService.search({
-      query,
-      vendorId,
-      active,
-      code,
-      id,
-      name,
-      vendorName,
-    });
+    return this.productsService.search(
+      {
+        query,
+        vendorId,
+        active,
+        code,
+        id,
+        name,
+        vendorName,
+      },
+      paginationDto,
+    );
   }
 
   @Get()
   @ApiGetProducts()
-  findAll() {
-    return this.productsService.findAll();
+  findAll(@Query() paginationDto: CursorPaginationDto) {
+    return this.productsService.findAll(paginationDto);
   }
 
   @Get("categories")
   @ApiGetCategories()
-  findAllCategories() {
-    return this.productsService.findAllCategories();
+  findAllCategories(@Query() paginationDto: CursorPaginationDto) {
+    return this.productsService.findAllCategories(paginationDto);
   }
 
   @Get("categories/:categoryId")
@@ -87,6 +92,31 @@ export class ProductsController {
   @ApiGetProductByCode()
   findByCode(@Param("code") code: string) {
     return this.productsService.findByCode(code);
+  }
+
+  @Get(":id")
+  @ApiGetProduct()
+  findOne(@Param("id") id: string) {
+    return this.productsService.findOne(id);
+  }
+
+  @Post()
+  @ApiCreateProduct()
+  create(@Body() createProductDto: CreateProductDto) {
+    return this.productsService.create(createProductDto);
+  }
+
+  @Put(":id")
+  @ApiUpdateProduct()
+  update(@Param("id") id: string, @Body() updateProductDto: UpdateProductDto) {
+    return this.productsService.update(id, updateProductDto);
+  }
+
+  @Delete(":id")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiDeleteProduct()
+  remove(@Param("id") id: string) {
+    return this.productsService.remove(id);
   }
 
   @Get(":id/prices")
@@ -120,41 +150,10 @@ export class ProductsController {
     return this.productsService.removePrice(priceId);
   }
 
-  @Get(":id")
-  @ApiGetProduct()
-  findOne(@Param("id") id: string) {
-    return this.productsService.findOne(id);
-  }
-
-  @Post()
-  @ApiCreateProduct()
-  create(@Body() createProductDto: CreateProductDto) {
-    return this.productsService.create(createProductDto);
-  }
-
-  @Put(":id")
-  @ApiUpdateProduct()
-  update(@Param("id") id: string, @Body() updateProductDto: UpdateProductDto) {
-    return this.productsService.update(id, updateProductDto);
-  }
-
-  @Delete(":id")
-  @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiDeleteProduct()
-  remove(@Param("id") id: string) {
-    return this.productsService.remove(id);
-  }
-
   @Post("categories")
   @ApiCreateCategory()
   createCategory(@Body() createCategoryDto: CreateCategoryDto) {
     return this.productsService.createCategory(createCategoryDto);
-  }
-
-  @Get("categories/:id")
-  @ApiGetCategory()
-  findOneCategory(@Param("id") id: string) {
-    return this.productsService.findOneCategory(id);
   }
 
   @Put("categories/:id")
@@ -171,5 +170,11 @@ export class ProductsController {
   @ApiDeleteCategory()
   removeCategory(@Param("id") id: string) {
     return this.productsService.removeCategory(id);
+  }
+
+  @Get("categories/:id")
+  @ApiGetCategory()
+  findOneCategory(@Param("id") id: string) {
+    return this.productsService.findOneCategory(id);
   }
 }

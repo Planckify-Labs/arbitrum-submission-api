@@ -15,6 +15,7 @@ import { BlockchainsService } from "./blockchains.service";
 import { CreateBlockchainDto } from "./dto/create-blockchain.dto";
 import { UpdateBlockchainDto } from "./dto/update-blockchain.dto";
 import { SearchBlockchainDto } from "./dto/search-blockchain.dto";
+import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import {
   ApiCreateBlockchain,
   ApiDeleteBlockchain,
@@ -37,14 +38,17 @@ export class BlockchainsController {
 
   @Get()
   @ApiGetBlockchains()
-  findAll() {
-    return this.blockchainsService.findAll();
+  findAll(@Query() paginationDto: CursorPaginationDto) {
+    return this.blockchainsService.findAll(paginationDto);
   }
 
   @Get("search")
   @ApiSearchBlockchains()
-  search(@Query() searchParams: SearchBlockchainDto) {
-    return this.blockchainsService.search(searchParams);
+  search(
+    @Query() searchParams: SearchBlockchainDto,
+    @Query() paginationDto: CursorPaginationDto,
+  ) {
+    return this.blockchainsService.search(searchParams, paginationDto);
   }
 
   @Get(":id")

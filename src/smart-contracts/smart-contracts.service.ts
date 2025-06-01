@@ -4,6 +4,7 @@ import { CreateSmartContractDto } from "./dto/create-smart-contract.dto";
 import { UpdateSmartContractDto } from "./dto/update-smart-contract.dto";
 import { SearchSmartContractDto } from "./dto/search-smart-contract.dto";
 import { Prisma } from "@generated/prisma";
+import { CursorPaginationDto } from "../dto/common/pagination.dto";
 
 @Injectable()
 export class SmartContractsService {
@@ -19,16 +20,35 @@ export class SmartContractsService {
     });
   }
 
-  async findAll() {
+  async findAll(paginationDto: CursorPaginationDto) {
+    const { cursor, take = 10 } = paginationDto;
+
     return await this.prisma.smartContract.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
       include: {
         blockchain: true,
         abi: true,
       },
+      orderBy: [
+        {
+          blockchain: {
+            name: "asc",
+          },
+        },
+        {
+          name: "asc",
+        },
+      ],
     });
   }
 
-  async search(searchParams: SearchSmartContractDto) {
+  async search(
+    searchParams: SearchSmartContractDto,
+    paginationDto: CursorPaginationDto,
+  ) {
+    const { cursor, take = 10 } = paginationDto;
     const {
       name,
       blockchainId,
@@ -92,6 +112,9 @@ export class SmartContractsService {
     }
 
     return await this.prisma.smartContract.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
       where,
       include: {
         blockchain: true,

@@ -1,21 +1,34 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { SearchApiLogDto } from "./dto/api-log.dto";
+import { CursorPaginationDto } from "../dto/common/pagination.dto";
 
 @Injectable()
 export class ApiLogsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll() {
+  async findAll(paginationDto: CursorPaginationDto) {
+    const { cursor, take = 10 } = paginationDto;
+
     return await this.prisma.apiRequestLog.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
       include: {
         user: true,
         purchase: true,
       },
+      orderBy: {
+        createdAt: "desc",
+      },
     });
   }
 
-  async search(searchParams: SearchApiLogDto) {
+  async search(
+    searchParams: SearchApiLogDto,
+    paginationDto: CursorPaginationDto,
+  ) {
+    const { cursor, take = 10 } = paginationDto;
     const {
       requestId,
       userId,
@@ -27,6 +40,9 @@ export class ApiLogsService {
     } = searchParams;
 
     return await this.prisma.apiRequestLog.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
       where: {
         ...(requestId && { requestId }),
         ...(userId && { userId }),
@@ -39,6 +55,9 @@ export class ApiLogsService {
       include: {
         user: true,
         purchase: true,
+      },
+      orderBy: {
+        createdAt: "desc",
       },
     });
   }
