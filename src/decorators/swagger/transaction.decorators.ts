@@ -94,3 +94,37 @@ export function ApiSearchTransactions() {
     }),
   );
 }
+
+export function ApiGetBlockchainTransactions() {
+  return applyDecorators(
+    ApiOperation({ summary: "Get blockchain's transactions" }),
+    ApiParam({ name: "blockchainId", description: "Blockchain ID" }),
+    ApiResponse({
+      status: 200,
+      description: "Returns blockchain's transactions",
+      type: TransactionResponseDto,
+      isArray: true,
+    }),
+    ApiResponse({
+      status: 404,
+      description: "Blockchain not found",
+    }),
+  );
+}
+
+export function ApiGetTokenTransactions() {
+  return applyDecorators(
+    ApiOperation({ summary: "Get token's transactions" }),
+    ApiParam({ name: "tokenId", description: "Token ID" }),
+    ApiResponse({
+      status: 200,
+      description: "Returns token's transactions",
+      type: TransactionResponseDto,
+      isArray: true,
+    }),
+    ApiResponse({
+      status: 404,
+      description: "Token not found",
+    }),
+  );
+}

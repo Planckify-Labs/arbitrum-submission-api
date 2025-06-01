@@ -45,7 +45,7 @@ export class TransactionsService {
   }
 
   async updateStatus(id: string, updateTransactionDto: UpdateTransactionDto) {
-    await this.findOne(id); // Check if transaction exists
+    await this.findOne(id);
 
     return await this.prisma.transactionHistory.update({
       where: { id },
@@ -58,7 +58,6 @@ export class TransactionsService {
   }
 
   async findByUser(userId: string) {
-    // Check if user exists
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
     });
@@ -76,6 +75,54 @@ export class TransactionsService {
     });
   }
 
+  async findByBlockchain(blockchainId: string) {
+    const blockchain = await this.prisma.blockchain.findUnique({
+      where: { id: blockchainId },
+    });
+
+    if (!blockchain) {
+      throw new NotFoundException(
+        `Blockchain with ID ${blockchainId} not found`,
+      );
+    }
+
+    return await this.prisma.transactionHistory.findMany({
+      where: {
+        token: {
+          blockchainId,
+        },
+      },
+      include: {
+        token: true,
+        purchase: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+  }
+
+  async findByToken(tokenId: string) {
+    const token = await this.prisma.token.findUnique({
+      where: { id: tokenId },
+    });
+
+    if (!token) {
+      throw new NotFoundException(`Token with ID ${tokenId} not found`);
+    }
+
+    return await this.prisma.transactionHistory.findMany({
+      where: { tokenId },
+      include: {
+        token: true,
+        purchase: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+  }
+
   async search(searchParams: SearchTransactionDto) {
     const {
       type,
@@ -88,7 +135,6 @@ export class TransactionsService {
       endDate,
     } = searchParams;
 
-    // Build where clause based on provided filters
     const where: Prisma.TransactionHistoryWhereInput = {};
 
     if (type) where.type = type;
@@ -98,7 +144,6 @@ export class TransactionsService {
     if (fromAddress) where.fromAddress = fromAddress;
     if (toAddress) where.toAddress = toAddress;
 
-    // Add date range if provided
     if (startDate || endDate) {
       where.createdAt = {};
       if (startDate) where.createdAt.gte = new Date(startDate);

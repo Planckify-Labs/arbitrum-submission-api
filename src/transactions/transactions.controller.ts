@@ -11,6 +11,8 @@ import {
   ApiGetUserTransactions,
   ApiSearchTransactions,
   ApiUpdateTransactionStatus,
+  ApiGetBlockchainTransactions,
+  ApiGetTokenTransactions,
 } from "../decorators/swagger/transaction.decorators";
 
 @Controller("transactions")
@@ -55,5 +57,17 @@ export class TransactionsController {
   @ApiGetUserTransactions()
   findByUser(@Param("userId") userId: string) {
     return this.transactionsService.findByUser(userId);
+  }
+
+  @Get("blockchain/:blockchainId")
+  @ApiGetBlockchainTransactions()
+  findByBlockchain(@Param("blockchainId") blockchainId: string) {
+    return this.transactionsService.findByBlockchain(blockchainId);
+  }
+
+  @Get("token/:tokenId")
+  @ApiGetTokenTransactions()
+  findByToken(@Param("tokenId") tokenId: string) {
+    return this.transactionsService.findByToken(tokenId);
   }
 }
