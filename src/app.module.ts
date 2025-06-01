@@ -9,6 +9,7 @@ import { TransactionsModule } from "./transactions/transactions.module";
 import { TokensModule } from "./tokens/tokens.module";
 import { RegionsModule } from "./regions/regions.module";
 import { BlockchainsModule } from "./blockchains/blockchains.module";
+import { SmartContractsModule } from "./smart-contracts/smart-contracts.module";
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { BlockchainsModule } from "./blockchains/blockchains.module";
     TokensModule,
     RegionsModule,
     BlockchainsModule,
+    SmartContractsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
