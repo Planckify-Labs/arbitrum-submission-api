@@ -8,6 +8,7 @@ import { VendorsModule } from "./vendors/vendors.module";
 import { TransactionsModule } from "./transactions/transactions.module";
 import { TokensModule } from "./tokens/tokens.module";
 import { RegionsModule } from "./regions/regions.module";
+import { BlockchainsModule } from "./blockchains/blockchains.module";
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { RegionsModule } from "./regions/regions.module";
     TransactionsModule,
     TokensModule,
     RegionsModule,
+    BlockchainsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
