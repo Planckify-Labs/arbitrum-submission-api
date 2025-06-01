@@ -15,29 +15,293 @@ datasource db {
 }
 
 model Category {
-  id        String     @id @default(ulid())
-  name      String     @unique
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
-  Product   Products[]
+  id        String    @id @default(ulid())
+  name      String    @unique
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  Product   Product[]
 }
 
-model Products {
-  id         String   @id @default(ulid())
-  name       String
-  vendor     Vendors  @relation(fields: [vendorId], references: [id])
-  vendorId   String
-  code       String
-  category   Category @relation(fields: [categoryId], references: [id])
-  categoryId String
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+model Product {
+  id           String         @id @default(ulid())
+  name         String
+  vendor       Vendor         @relation(fields: [vendorId], references: [id])
+  vendorId     String
+  code         String
+  category     Category       @relation(fields: [categoryId], references: [id])
+  categoryId   String
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  ProductPrice ProductPrice[]
+  Purchase     Purchase[]
 }
 
-model Vendors {
-  id        String     @id @default(ulid())
-  name      String     @unique
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
-  products  Products[]
+model Vendor {
+  id           String         @id @default(ulid())
+  name         String         @unique
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  products     Product[]
+  VendorAPI    VendorAPI[]
+  ProductPrice ProductPrice[]
+}
+
+model User {
+  id            String               @id @default(ulid())
+  walletAddress String?              @unique
+  email         String?              @unique
+  name          String?
+  profileImage  String?
+  authProvider  AuthProvider
+  socialId      String?
+  transactions  TransactionHistory[]
+  apiLogs       ApiRequestLog[]
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  Region        Region?              @relation(fields: [regionId], references: [id])
+  regionId      String?
+
+  @@unique([authProvider, socialId])
+}
+
+model Blockchain {
+  id            String          @id @default(ulid())
+  name          String          @unique
+  chainId       Int             @unique
+  rpcUrl        String
+  blockExplorer String
+  isEVM         Boolean         @default(true)
+  isActive      Boolean         @default(true)
+  tokens        Token[]
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  SmartContract SmartContract[]
+}
+
+model Token {
+  id                 String                 @id @default(ulid())
+  name               String
+  symbol             String
+  decimals           Int
+  blockchain         Blockchain             @relation(fields: [blockchainId], references: [id])
+  blockchainId       String
+  contractAddress    String?
+  logoUrl            String?
+  isStablecoin       Boolean                @default(false)
+  isActive           Boolean                @default(true)
+  transactions       TransactionHistory[]
+  regionAvailability RegionAvailableToken[]
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+
+  @@unique([blockchainId, symbol])
+  @@unique([blockchainId, contractAddress])
+}
+
+model ProductPrice {
+  id              String     @id @default(ulid())
+  product         Product    @relation(fields: [productId], references: [id])
+  productId       String
+  vendor          Vendor     @relation(fields: [vendorId], references: [id])
+  vendorId        String
+  realValue       Decimal
+  priceFromVendor Decimal
+  sellPrice       Decimal
+  isActive        Boolean    @default(true)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  Purchase        Purchase[]
+}
+
+model TransactionHistory {
+  id          String            @id @default(ulid())
+  user        User              @relation(fields: [userId], references: [id])
+  userId      String
+  token       Token             @relation(fields: [tokenId], references: [id])
+  tokenId     String
+  type        TransactionType
+  status      TransactionStatus @default(PENDING)
+  amount      Decimal
+  amountInIDR Decimal
+  txHash      String?
+  fromAddress String?
+  toAddress   String?
+  purchase    Purchase?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+}
+
+model Purchase {
+  id             String             @id @default(ulid())
+  transaction    TransactionHistory @relation(fields: [transactionId], references: [id])
+  transactionId  String             @unique
+  product        Product            @relation(fields: [productId], references: [id])
+  productId      String
+  productPrice   ProductPrice       @relation(fields: [productPriceId], references: [id])
+  productPriceId String
+  status         PurchaseStatus     @default(PENDING)
+  customerInfo   Json
+  vendorResponse Json?
+  vendorRefId    String?
+  apiLogs        ApiRequestLog[]
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+}
+
+model ApiRequestLog {
+  id           String   @id @default(ulid())
+  requestId    String   @unique
+  endpoint     String
+  method       String
+  service      String
+  requestBody  Json
+  responseBody Json?
+  statusCode   Int?
+  success      Boolean
+  errorMessage String?
+  duration     Int
+  ipAddress    String?
+  userAgent    String?
+  user         User?    @relation(fields: [userId], references: [id])
+  userId       String?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  purchase   Purchase? @relation(fields: [purchaseId], references: [id])
+  purchaseId String?
+}
+
+model ExchangeRate {
+  id               String         @id @default(ulid())
+  fromCurrency     String
+  toCurrency       String
+  rate             Decimal
+  sourceProvider   ExchangeSource @relation(fields: [sourceProviderId], references: [id])
+  sourceProviderId String
+  region           String?
+  provider         String?
+  markup           Decimal?
+  isActive         Boolean        @default(true)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([fromCurrency, toCurrency, region, provider])
+}
+
+model ExchangeSource {
+  id             String         @id @default(ulid())
+  name           String         @unique
+  description    String?
+  apiEndpoint    String?
+  apiKey         String?
+  updateInterval Int            @default(3600)
+  priority       Int            @default(1)
+  isActive       Boolean        @default(true)
+  lastUpdated    DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  exchangeRates  ExchangeRate[]
+}
+
+model VendorAPI {
+  id        String   @id @default(ulid())
+  vendor    Vendor   @relation(fields: [vendorId], references: [id])
+  vendorId  String
+  baseUrl   String
+  apiKey    String
+  apiSecret String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SmartContract {
+  id           String      @id @default(ulid())
+  name         String
+  blockchain   Blockchain  @relation(fields: [blockchainId], references: [id])
+  blockchainId String
+  address      String
+  abi          ContractABI @relation(fields: [abiId], references: [id])
+  abiId        String
+  isActive     Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@unique([blockchainId, address])
+}
+
+model ContractABI {
+  id          String          @id @default(ulid())
+  name        String          @unique
+  description String?
+  version     String?
+  abi         Json
+  isVerified  Boolean         @default(false)
+  contracts   SmartContract[]
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+}
+
+enum TransactionType {
+  PAYMENT
+  REFUND
+}
+
+enum TransactionStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum PurchaseStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum AuthProvider {
+  WALLET
+  GOOGLE
+  APPLE
+  EMAIL
+}
+
+model Region {
+  id                String   @id @default(ulid())
+  code              String   @unique
+  name              String
+  currencyCode      String
+  isActive          Boolean  @default(true)
+  hasKYCRequirement Boolean  @default(false)
+  taxRate           Decimal  @default(0)
+  supportEmail      String?
+  supportPhone      String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  users           User[]
+  availableTokens RegionAvailableToken[]
+}
+
+model RegionAvailableToken {
+  id                 String   @id @default(ulid())
+  region             Region   @relation(fields: [regionId], references: [id])
+  regionId           String
+  token              Token    @relation(fields: [tokenId], references: [id])
+  tokenId            String
+  isActive           Boolean  @default(true)
+  minAmount          Decimal?
+  maxAmount          Decimal?
+  processingFee      Decimal  @default(0)
+  networkFeeEstimate Decimal?
+  isDefault          Boolean  @default(false)
+  regulatoryNotes    String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([regionId, tokenId])
 }
