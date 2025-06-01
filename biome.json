@@ -86,7 +86,10 @@
   },
   "javascript": {
     "formatter": { "quoteStyle": "double" },
-    "globals": ["exports"]
+    "globals": ["exports"],
+    "parser": {
+      "unsafeParameterDecoratorsEnabled": true
+    }
   },
   "overrides": [
     {
