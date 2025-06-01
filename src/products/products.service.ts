@@ -16,6 +16,14 @@ export class ProductsService {
     });
   }
 
+  findAllCategories() {
+    return this.prisma.category.findMany({
+      orderBy: {
+        name: "asc",
+      },
+    });
+  }
+
   async findByCategory(categoryId: string) {
     const products = await this.prisma.product.findMany({
       where: { categoryId },

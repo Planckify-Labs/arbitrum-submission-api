@@ -18,6 +18,7 @@ import {
   ApiGetProduct,
   ApiGetProducts,
   ApiGetProductsByCategory,
+  ApiGetCategories,
   ApiUpdateProduct,
 } from "../decorators/swagger/product.decorators";
 
@@ -30,6 +31,12 @@ export class ProductsController {
   @ApiGetProducts()
   findAll() {
     return this.productsService.findAll();
+  }
+
+  @Get("category")
+  @ApiGetCategories()
+  findAllCategories() {
+    return this.productsService.findAllCategories();
   }
 
   @Get("category/:categoryId")

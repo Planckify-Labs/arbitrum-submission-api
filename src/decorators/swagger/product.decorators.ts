@@ -44,6 +44,16 @@ const badRequestResponse = {
   },
 };
 
+const categorySchema = {
+  type: "object",
+  properties: {
+    id: { type: "string", example: "01H1G5V..." },
+    name: { type: "string", example: "Gaming Top Up" },
+    createdAt: { type: "string", format: "date-time" },
+    updatedAt: { type: "string", format: "date-time" },
+  },
+};
+
 export function ApiGetProducts() {
   return applyDecorators(
     ApiOperation({
@@ -161,5 +171,22 @@ export function ApiDeleteProduct() {
       description: "The product has been successfully deleted",
     }),
     ApiResponse(notFoundResponse),
+  );
+}
+
+export function ApiGetCategories() {
+  return applyDecorators(
+    ApiOperation({
+      summary: "Get all product categories",
+      description: "Retrieves a list of all available product categories",
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns all product categories",
+      schema: {
+        type: "array",
+        items: categorySchema,
+      },
+    }),
   );
 }
