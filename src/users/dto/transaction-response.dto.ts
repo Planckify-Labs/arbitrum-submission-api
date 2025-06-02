@@ -1,7 +1,7 @@
 import { ApiProperty } from "@nestjs/swagger";
 import { TransactionStatus, TransactionType } from "../../../generated/prisma";
 
-export class TransactionResponseDto {
+export class UserTransactionResponseDto {
   @ApiProperty({ example: "01H1G5V..." })
   id: string;
 

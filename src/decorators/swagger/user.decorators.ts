@@ -1,7 +1,7 @@
 import { applyDecorators } from "@nestjs/common";
 import { ApiOperation, ApiResponse, ApiParam } from "@nestjs/swagger";
 import { UserResponseDto } from "../../users/dto/user-response.dto";
-import { TransactionResponseDto } from "../../users/dto/transaction-response.dto";
+import { UserTransactionResponseDto } from "../../users/dto/transaction-response.dto";
 
 export function ApiGetUsers() {
   return applyDecorators(
@@ -80,7 +80,7 @@ export function ApiGetUserTransactions() {
     ApiResponse({
       status: 200,
       description: "Returns user's transactions",
-      type: TransactionResponseDto,
+      type: UserTransactionResponseDto,
       isArray: true,
     }),
     ApiResponse({
