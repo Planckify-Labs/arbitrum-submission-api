@@ -41,6 +41,15 @@ export function setupSwagger(app: INestApplication) {
     .addTag("regions", "Region management endpoints")
     .addTag("blockchains", "Blockchain management endpoints")
     .addTag("smart-contracts", "Smart contract management endpoints")
+    .addTag(
+      "bookings",
+      "Booking management endpoints for pre-transaction order reservations",
+    )
+    .addTag("users", "User management endpoints")
+    .addTag("vendors", "Vendor management endpoints")
+    .addTag("transactions", "Transaction management endpoints")
+    .addTag("purchases", "Purchase management endpoints")
+    .addTag("api-logs", "API logs management endpoints")
     .addServer("http://localhost:3000", "Local development")
     .addServer("https://api.takumipay.com", "Production")
     .build();

@@ -12,6 +12,7 @@ import { BlockchainsModule } from "./blockchains/blockchains.module";
 import { SmartContractsModule } from "./smart-contracts/smart-contracts.module";
 import { PurchasesModule } from "./purchases/purchases.module";
 import { ApiLogsModule } from "./api-logs/api-logs.module";
+import { BookingModule } from "./booking/booking.module";
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { ApiLogsModule } from "./api-logs/api-logs.module";
     SmartContractsModule,
     PurchasesModule,
     ApiLogsModule,
+    BookingModule,
   ],
   controllers: [AppController],
   providers: [AppService],

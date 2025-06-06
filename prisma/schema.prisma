@@ -40,6 +40,7 @@ model Product {
   updatedAt    DateTime       @updatedAt
   ProductPrice ProductPrice[]
   Purchase     Purchase[]
+  BookingOrder BookingOrder[]
 
   @@index([code])
 }
@@ -107,18 +108,19 @@ model Token {
 }
 
 model ProductPrice {
-  id              String     @id @default(ulid())
-  product         Product    @relation(fields: [productId], references: [id])
+  id              String         @id @default(ulid())
+  product         Product        @relation(fields: [productId], references: [id])
   productId       String
-  vendor          Vendor     @relation(fields: [vendorId], references: [id])
+  vendor          Vendor         @relation(fields: [vendorId], references: [id])
   vendorId        String
   realValue       Decimal
   priceFromVendor Decimal
   sellPrice       Decimal
-  isActive        Boolean    @default(true)
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  isActive        Boolean        @default(true)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
   Purchase        Purchase[]
+  BookingOrder    BookingOrder[]
 }
 
 model TransactionHistory {
@@ -154,6 +156,7 @@ model Purchase {
   apiLogs        ApiRequestLog[]
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
+  bookingOrder   BookingOrder?
 }
 
 model ApiRequestLog {
@@ -312,4 +315,35 @@ model RegionAvailableToken {
   updatedAt          DateTime @updatedAt
 
   @@unique([regionId, tokenId])
+}
+
+enum BookingStatus {
+  PENDING
+  EXPIRED
+  EXECUTED
+  CANCELLED
+}
+
+model BookingOrder {
+  id             String       @id @default(ulid())
+  walletAddress  String
+  productId      String
+  product        Product      @relation(fields: [productId], references: [id])
+  productPrice   ProductPrice @relation(fields: [productPriceId], references: [id])
+  productPriceId String
+
+  payment      Json // Stores payment details (token, network, amount)
+  exchangeRate Json // Stores rate info at booking time
+
+  status    BookingStatus @default(PENDING)
+  expiresAt DateTime
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  // Optional reference to the actual purchase if executed
+  purchase   Purchase? @relation(fields: [purchaseId], references: [id])
+  purchaseId String?   @unique
+
+  @@index([walletAddress])
+  @@index([status])
 }
