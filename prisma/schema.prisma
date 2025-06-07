@@ -98,6 +98,7 @@ model Token {
   logoUrl            String?
   isStablecoin       Boolean                @default(false)
   isActive           Boolean                @default(true)
+  isNativeCurrency   Boolean                @default(false)
   transactions       TransactionHistory[]
   regionAvailability RegionAvailableToken[]
   createdAt          DateTime               @default(now())

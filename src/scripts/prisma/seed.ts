@@ -144,6 +144,50 @@ async function main() {
     }),
   ]);
 
+  // First check if the tokens already exist to avoid unique constraint errors
+  const ethToken = await prisma.token.findFirst({
+    where: {
+      blockchainId: blockchains[0].id,
+      isNativeCurrency: true,
+    },
+  });
+
+  const maticToken = await prisma.token.findFirst({
+    where: {
+      blockchainId: blockchains[1].id,
+      isNativeCurrency: true,
+    },
+  });
+
+  const nativeTokens = await Promise.all([
+    prisma.token.create({
+      data: {
+        name: "Ethereum",
+        symbol: "ETH",
+        decimals: 18,
+        blockchainId: blockchains[0].id,
+        contractAddress: "0x0000000000000000000000000000000000000000",
+        logoUrl: "https://assets.coingecko.com/coins/images/279/small/ethereum.png",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
+      },
+    }),
+    prisma.token.create({
+      data: {
+        name: "Polygon",
+        symbol: "MATIC",
+        decimals: 18,
+        blockchainId: blockchains[1].id,
+        contractAddress: "0x1230000000000000000000000000000000000000",
+        logoUrl: "https://assets.coingecko.com/coins/images/4713/small/matic-token-icon.png",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
+      },
+    }),
+  ]);
+
   await Promise.all([
     prisma.regionAvailableToken.create({
       data: {
@@ -167,6 +211,33 @@ async function main() {
         processingFee: 1,
         networkFeeEstimate: 5,
         isDefault: true,
+      },
+    }),
+  ]);
+
+  await Promise.all([
+    prisma.regionAvailableToken.create({
+      data: {
+        regionId: regions[0].id, // Indonesia
+        tokenId: nativeTokens[0].id, // ETH
+        isActive: true,
+        minAmount: 0.01,
+        maxAmount: 10,
+        processingFee: 0.001,
+        networkFeeEstimate: 0.002,
+        isDefault: false,
+      },
+    }),
+    prisma.regionAvailableToken.create({
+      data: {
+        regionId: regions[0].id, // Indonesia
+        tokenId: nativeTokens[1].id, // MATIC
+        isActive: true,
+        minAmount: 10,
+        maxAmount: 10000,
+        processingFee: 0.5,
+        networkFeeEstimate: 0.1,
+        isDefault: false,
       },
     }),
   ]);
