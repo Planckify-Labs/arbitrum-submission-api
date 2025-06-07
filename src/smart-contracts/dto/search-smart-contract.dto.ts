@@ -56,7 +56,7 @@ export class SearchSmartContractDto {
   @Transform(({ value }) => {
     if (value === "true") return true;
     if (value === "false") return false;
-    return undefined;
+    return value;
   })
   isBlockchainEVM?: boolean;
 
@@ -88,7 +88,7 @@ export class SearchSmartContractDto {
   @Transform(({ value }) => {
     if (value === "true") return true;
     if (value === "false") return false;
-    return undefined;
+    return value;
   })
   isActive?: boolean;
 }

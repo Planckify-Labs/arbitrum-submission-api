@@ -1,11 +1,10 @@
 import { ApiProperty } from "@nestjs/swagger";
 import {
   IsBoolean,
-  IsInt,
-  IsObject,
   IsOptional,
   IsString,
 } from "class-validator";
+import { Transform } from "class-transformer";
 
 interface ApiLogMetadata {
   service?: string;
@@ -74,8 +73,13 @@ export class SearchApiLogDto {
     example: true,
     required: false,
   })
-  @IsBoolean()
   @IsOptional()
+  @IsBoolean()
+  @Transform(({ value }) => {
+    if (value === "true") return true;
+    if (value === "false") return false;
+    return value;
+  })
   success?: boolean;
 }
 

@@ -10,6 +10,8 @@ import {
   HttpStatus,
   Query,
 } from "@nestjs/common";
+import { Transform } from "class-transformer";
+
 import { ProductsService } from "./products.service";
 import { ApiTags } from "@nestjs/swagger";
 import { CreateProductDto, UpdateProductDto } from "./dto/product.dto";
@@ -38,6 +40,7 @@ import {
   ApiDeleteCategory,
   ApiGetCategory,
 } from "../decorators/swagger/product.decorators";
+import { SearchProductDto } from "./dto/search-product.dto";
 
 @Controller("products")
 @ApiTags("products")
@@ -47,27 +50,10 @@ export class ProductsController {
   @Get("search")
   @ApiSearchProducts()
   search(
-    @Query("query") query?: string,
-    @Query("vendorId") vendorId?: string,
-    @Query("active") active?: boolean,
-    @Query("code") code?: string,
-    @Query("id") id?: string,
-    @Query("name") name?: string,
-    @Query("vendorName") vendorName?: string,
+    @Query() searchDto: SearchProductDto,
     @Query() paginationDto: CursorPaginationDto = new CursorPaginationDto(),
   ) {
-    return this.productsService.search(
-      {
-        query,
-        vendorId,
-        active,
-        code,
-        id,
-        name,
-        vendorName,
-      },
-      paginationDto,
-    );
+    return this.productsService.search(searchDto, paginationDto);
   }
 
   @Get()
