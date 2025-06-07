@@ -94,7 +94,7 @@ model Token {
   decimals           Int
   blockchain         Blockchain             @relation(fields: [blockchainId], references: [id])
   blockchainId       String
-  contractAddress    String?
+  contractAddress    String                 @unique
   logoUrl            String?
   isStablecoin       Boolean                @default(false)
   isActive           Boolean                @default(true)
@@ -103,7 +103,6 @@ model Token {
   createdAt          DateTime               @default(now())
   updatedAt          DateTime               @updatedAt
 
-  @@unique([blockchainId, symbol])
   @@unique([blockchainId, contractAddress])
 }
 
