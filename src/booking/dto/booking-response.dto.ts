@@ -43,16 +43,28 @@ export class TokenDetailsResponseDto {
   symbol: string;
 
   @ApiProperty({
+    description: "Token contract address on the blockchain",
+    example: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+  })
+  address: string;
+
+  @ApiProperty({
     description: "Token amount",
     example: "10.5",
   })
   amount: string;
 
   @ApiProperty({
-    description: "Network ID",
-    example: "polygon",
+    description: "ID of the blockchain from the blockchain table",
+    example: "01JX2FJZ7Y37Y9XXDHYP323P0X",
   })
-  networkId: string;
+  blockchainId: string;
+
+  @ApiProperty({
+    description: "Name of the blockchain",
+    example: "Polygon",
+  })
+  blockchainName: string;
 }
 
 export class ExchangeRateResponseDto {

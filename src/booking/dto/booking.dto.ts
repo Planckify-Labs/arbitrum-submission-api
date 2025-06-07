@@ -5,25 +5,26 @@ import {
   IsObject,
   ValidateNested,
   IsNumber,
+  IsOptional,
 } from "class-validator";
 import { Type } from "class-transformer";
 
 export class PaymentDetailsDto {
   @ApiProperty({
-    description: "Token symbol to pay with (e.g., 'USDC', 'USDT')",
-    example: "USDC",
+    description: "Token contract address on the blockchain",
+    example: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
   })
   @IsString()
   @IsNotEmpty()
-  tokenSymbol: string;
+  tokenAddress: string;
 
   @ApiProperty({
-    description: "Network ID where the payment will be executed",
-    example: "polygon",
+    description: "ID of the blockchain from the blockchain table",
+    example: "01JX2FJZ7Y37Y9XXDHYP323P0X",
   })
   @IsString()
   @IsNotEmpty()
-  networkId: string;
+  blockchainId: string;
 }
 
 export class CreateBookingDto {
@@ -120,6 +121,13 @@ export class TokenDetailsDto {
   symbol: string;
 
   @ApiProperty({
+    description: "Token contract address on the blockchain",
+    example: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+  })
+  @IsString()
+  address: string;
+
+  @ApiProperty({
     description: "Token amount",
     example: "10.5",
   })
@@ -127,11 +135,18 @@ export class TokenDetailsDto {
   amount: string;
 
   @ApiProperty({
-    description: "Network ID",
-    example: "polygon",
+    description: "ID of the blockchain from the blockchain table",
+    example: "01JX2FJZ7Y37Y9XXDHYP323P0X",
   })
   @IsString()
-  networkId: string;
+  blockchainId: string;
+
+  @ApiProperty({
+    description: "Name of the blockchain",
+    example: "Polygon",
+  })
+  @IsString()
+  blockchainName: string;
 }
 
 export class ExchangeRateDetailsDto {

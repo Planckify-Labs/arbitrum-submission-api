@@ -3,9 +3,19 @@ import { Product, ProductPrice } from "@generated/prisma";
 import { JsonValue } from "@prisma/client/runtime/library";
 
 export interface BookingPayment {
-  tokenSymbol: string;
-  networkId: string;
+  tokenAddress: string;
+  blockchainNetworkId: string;
   amount: string;
+}
+
+export interface TokenDetails {
+  symbol: string;
+  address: string;
+  amount: string;
+  blockchainId: string;
+  blockchainName: string;
+  chainId: number;
+  blockExplorer: string;
 }
 
 export interface BookingExchangeRate {
@@ -13,6 +23,11 @@ export interface BookingExchangeRate {
   fromCurrency: string;
   toCurrency: string;
   lockedAt: string;
+}
+
+export interface PaymentResponse {
+  token: TokenDetails;
+  exchangeRate: BookingExchangeRate;
 }
 
 export interface DbBooking {

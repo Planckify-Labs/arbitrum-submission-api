@@ -17,6 +17,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { BookingQueryDto } from "./dto/booking-query.dto";
 import { Decimal } from "@prisma/client/runtime/library";
 import { BookingStatus } from "./enums/booking-status.enum";
+import { BlockchainsService } from "../blockchains/blockchains.service";
 
 @Injectable()
 export class BookingService {
@@ -26,6 +27,7 @@ export class BookingService {
   constructor(
     private readonly configService: ConfigService,
     private readonly prismaService: PrismaService,
+    private readonly blockchainsService: BlockchainsService,
   ) {
     this.prisma = new PrismaClient();
     this.BOOKING_EXPIRY_MINUTES = this.configService.get(
@@ -37,6 +39,31 @@ export class BookingService {
   async createBooking(createBookingDto: CreateBookingDto) {
     const { walletAddress, productId, productPriceId, payment } =
       createBookingDto;
+
+    const blockchain = await this.blockchainsService.findOne(
+      payment.blockchainId,
+    );
+
+    if (!blockchain.isActive) {
+      throw new BadRequestException(
+        `Blockchain network ${blockchain.name} is not active`,
+      );
+    }
+
+    const token = await this.prisma.token.findUnique({
+      where: {
+        blockchainId_contractAddress: {
+          blockchainId: payment.blockchainId,
+          contractAddress: payment.tokenAddress,
+        },
+      },
+    });
+
+    if (!token) {
+      throw new BadRequestException(
+        `Token with address ${payment.tokenAddress} not found on blockchain ${blockchain.name}`,
+      );
+    }
 
     // 1. Validate product and price exist
     const productPrice = await this.prisma.productPrice.findUnique({
@@ -57,7 +84,7 @@ export class BookingService {
     // 2. Get current exchange rate
     const exchangeRate = await this.prisma.exchangeRate.findFirst({
       where: {
-        fromCurrency: payment.tokenSymbol,
+        fromCurrency: token.symbol,
         toCurrency: "IDR", // You can make this dynamic based on region
         isActive: true,
       },
@@ -84,13 +111,13 @@ export class BookingService {
         productId,
         productPriceId,
         payment: {
-          tokenSymbol: payment.tokenSymbol,
-          networkId: payment.networkId,
+          tokenAddress: payment.tokenAddress,
+          blockchainNetworkId: blockchain.id,
           amount: tokenAmount.toString(),
         },
         exchangeRate: {
           rate: Number(exchangeRate.rate),
-          fromCurrency: exchangeRate.fromCurrency,
+          fromCurrency: token.symbol,
           toCurrency: exchangeRate.toCurrency,
           lockedAt: new Date().toISOString(),
         },
@@ -305,10 +332,30 @@ export class BookingService {
     };
   }
 
-  private formatBookingResponse(booking: DbBooking) {
+  private async formatBookingResponse(booking: DbBooking) {
     const payment = booking.payment as unknown as BookingPayment;
     const exchangeRateInfo =
       booking.exchangeRate as unknown as BookingExchangeRate;
+
+    const blockchain = await this.blockchainsService.findOne(
+      payment.blockchainNetworkId,
+    );
+
+    // Fetch token details from database
+    const token = await this.prisma.token.findUnique({
+      where: {
+        blockchainId_contractAddress: {
+          blockchainId: payment.blockchainNetworkId,
+          contractAddress: payment.tokenAddress,
+        },
+      },
+    });
+
+    if (!token) {
+      throw new NotFoundException(
+        `Token with address ${payment.tokenAddress} not found on blockchain ${blockchain.name}`,
+      );
+    }
 
     return {
       id: booking.id,
@@ -323,9 +370,11 @@ export class BookingService {
       },
       payment: {
         token: {
-          symbol: payment.tokenSymbol,
+          symbol: token.symbol,
+          address: payment.tokenAddress,
           amount: payment.amount,
-          networkId: payment.networkId,
+          blockchainId: blockchain.id,
+          blockchainName: blockchain.name,
         },
         exchangeRate: {
           rate: exchangeRateInfo.rate,
