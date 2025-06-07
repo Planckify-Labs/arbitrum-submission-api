@@ -85,6 +85,7 @@ export function ApiSearchTokens() {
     ApiQuery({ name: "contractAddress", type: String, required: false }),
     ApiQuery({ name: "isStablecoin", type: Boolean, required: false }),
     ApiQuery({ name: "isActive", type: Boolean, required: false }),
+    ApiQuery({ name: "isNativeCurrency", type: Boolean, required: false }),
     ApiResponse({
       status: 200,
       description: "Returns filtered tokens",

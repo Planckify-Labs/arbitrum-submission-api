@@ -173,7 +173,18 @@ export class TokensService {
       contractAddress,
       isStablecoin,
       isActive,
+      isNativeCurrency,
     } = searchParams;
+
+    console.log('Search params:', {
+      symbol,
+      name,
+      blockchainId,
+      contractAddress,
+      isStablecoin,
+      isActive,
+      isNativeCurrency,
+    });
 
     const where: Prisma.TokenWhereInput = {};
 
@@ -204,7 +215,11 @@ export class TokensService {
       where.isActive = isActive;
     }
 
-    return await this.prisma.token.findMany({
+    if (typeof isNativeCurrency !== "undefined") {
+      where.isNativeCurrency = isNativeCurrency;
+    }
+
+    const result = await this.prisma.token.findMany({
       take,
       skip: cursor ? 1 : 0,
       cursor: cursor ? { id: cursor } : undefined,
@@ -217,5 +232,8 @@ export class TokensService {
         symbol: "asc",
       },
     });
+
+    console.log(`Found ${result.length} tokens`);
+    return result;
   }
 }

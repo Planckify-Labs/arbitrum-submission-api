@@ -1,6 +1,6 @@
 import { ApiProperty } from "@nestjs/swagger";
 import { IsBoolean, IsOptional, IsString } from "class-validator";
-import { Type } from "class-transformer";
+import { Transform } from "class-transformer";
 
 export class SearchTokenDto {
   @ApiProperty({ example: "USDT", required: false })
@@ -29,12 +29,30 @@ export class SearchTokenDto {
   @ApiProperty({ example: true, required: false })
   @IsOptional()
   @IsBoolean()
-  @Type(() => Boolean)
+  @Transform(({ value }) => {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return value;
+  })
   isStablecoin?: boolean;
 
   @ApiProperty({ example: true, required: false })
   @IsOptional()
   @IsBoolean()
-  @Type(() => Boolean)
+  @Transform(({ value }) => {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return value;
+  })
   isActive?: boolean;
+
+  @ApiProperty({ example: true, required: false })
+  @IsOptional()
+  @IsBoolean()
+  @Transform(({ value }) => {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return value;
+  })
+  isNativeCurrency?: boolean;
 }
