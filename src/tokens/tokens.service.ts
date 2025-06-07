@@ -11,7 +11,6 @@ export class TokensService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(createTokenDto: CreateTokenDto) {
-    // Check if blockchain exists
     const blockchain = await this.prisma.blockchain.findUnique({
       where: { id: createTokenDto.blockchainId },
     });
@@ -22,7 +21,6 @@ export class TokensService {
       );
     }
 
-    // Check for unique constraints
     if (createTokenDto.contractAddress) {
       const existingToken = await this.prisma.token.findUnique({
         where: {
@@ -40,23 +38,11 @@ export class TokensService {
       }
     }
 
-    const existingSymbol = await this.prisma.token.findUnique({
-      where: {
-        blockchainId_symbol: {
-          blockchainId: createTokenDto.blockchainId,
-          symbol: createTokenDto.symbol,
-        },
-      },
-    });
-
-    if (existingSymbol) {
-      throw new Error(
-        `Token with symbol ${createTokenDto.symbol} already exists on blockchain ${createTokenDto.blockchainId}`,
-      );
-    }
-
     return this.prisma.token.create({
-      data: createTokenDto,
+      data: {
+        ...createTokenDto,
+        contractAddress: createTokenDto?.contractAddress || "",
+      },
       include: {
         blockchain: true,
         regionAvailability: true,
@@ -98,7 +84,7 @@ export class TokensService {
   }
 
   async update(id: string, updateTokenDto: UpdateTokenDto) {
-    await this.findOne(id); // Check if token exists
+    await this.findOne(id);
 
     if (updateTokenDto.blockchainId) {
       const blockchain = await this.prisma.blockchain.findUnique({
@@ -112,7 +98,6 @@ export class TokensService {
       }
     }
 
-    // Check for unique constraints if updating relevant fields
     if (
       updateTokenDto.contractAddress ||
       updateTokenDto.symbol ||
@@ -169,7 +154,7 @@ export class TokensService {
   }
 
   async remove(id: string) {
-    await this.findOne(id); // Check if token exists
+    await this.findOne(id);
 
     await this.prisma.token.delete({
       where: { id },
