@@ -7,13 +7,18 @@ export function setupSwagger(app: INestApplication) {
     .setDescription(`
       Welcome to the TakumiPay API documentation.
       
-      This API provides endpoints for managing products and other resources in the TakumiPay system.
+      This API provides endpoints for managing products, variants, prices and other resources in the TakumiPay system.
+      
+      ## Product Structure
+      - Products: Base items (e.g., "Mobile Legends")
+      - Product Variants: Specific versions of products (e.g., "60 Diamonds", "120 Diamonds")
+      - Product Prices: Vendor-specific pricing for variants
       
       ## Authentication
       Most endpoints require Bearer token authentication.
       
       ## Pagination
-      All GET endpoints that return multiple items (e.g. /products, /transactions, /purchases) use cursor-based pagination:
+      All GET endpoints that return multiple items use cursor-based pagination:
       - \`take\`: Controls how many items to return in one response (default: 10)
       - \`cursor\`: Pass the ID of the last item you received to get the next page of results
       

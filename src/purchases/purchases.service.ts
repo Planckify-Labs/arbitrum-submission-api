@@ -20,23 +20,13 @@ export class PurchasesService {
       );
     }
 
-    const product = await this.prisma.product.findUnique({
-      where: { id: createPurchaseDto.productId },
+    const productVariant = await this.prisma.productVariant.findUnique({
+      where: { id: createPurchaseDto.productVariantId },
     });
 
-    if (!product) {
+    if (!productVariant) {
       throw new NotFoundException(
-        `Product with ID ${createPurchaseDto.productId} not found`,
-      );
-    }
-
-    const productPrice = await this.prisma.productPrice.findUnique({
-      where: { id: createPurchaseDto.productPriceId },
-    });
-
-    if (!productPrice) {
-      throw new NotFoundException(
-        `Product price with ID ${createPurchaseDto.productPriceId} not found`,
+        `Product variant with ID ${createPurchaseDto.productVariantId} not found`,
       );
     }
 
@@ -44,8 +34,11 @@ export class PurchasesService {
       data: createPurchaseDto,
       include: {
         transaction: true,
-        product: true,
-        productPrice: true,
+        productVariant: {
+          include: {
+            product: true,
+          },
+        },
         apiLogs: true,
       },
     });
@@ -60,8 +53,11 @@ export class PurchasesService {
       cursor: cursor ? { id: cursor } : undefined,
       include: {
         transaction: true,
-        product: true,
-        productPrice: true,
+        productVariant: {
+          include: {
+            product: true,
+          },
+        },
         apiLogs: true,
       },
       orderBy: {
@@ -75,8 +71,11 @@ export class PurchasesService {
       where: { id },
       include: {
         transaction: true,
-        product: true,
-        productPrice: true,
+        productVariant: {
+          include: {
+            product: true,
+          },
+        },
         apiLogs: true,
       },
     });
@@ -105,8 +104,11 @@ export class PurchasesService {
       data: updateData,
       include: {
         transaction: true,
-        product: true,
-        productPrice: true,
+        productVariant: {
+          include: {
+            product: true,
+          },
+        },
         apiLogs: true,
       },
     });
@@ -144,8 +146,14 @@ export class PurchasesService {
       cursor: cursor ? { id: cursor } : undefined,
       where: {
         ...(transactionId && { transactionId }),
-        ...(productId && { productId }),
         ...(status && { status }),
+        ...(productId && {
+          productVariant: {
+            product: {
+              id: productId,
+            },
+          },
+        }),
         ...(userId && {
           transaction: {
             userId,
@@ -164,8 +172,14 @@ export class PurchasesService {
           },
         }),
         ...(vendorId && {
-          product: {
-            vendorId,
+          productVariant: {
+            ProductPrice: {
+              some: {
+                vendor: {
+                  id: vendorId,
+                },
+              },
+            },
           },
         }),
       },
@@ -175,12 +189,16 @@ export class PurchasesService {
             token: true,
           },
         },
-        product: {
+        productVariant: {
           include: {
-            vendor: true,
+            product: true,
+            ProductPrice: {
+              include: {
+                vendor: true,
+              },
+            },
           },
         },
-        productPrice: true,
         apiLogs: true,
       },
       orderBy: {
@@ -215,12 +233,16 @@ export class PurchasesService {
             token: true,
           },
         },
-        product: {
+        productVariant: {
           include: {
-            vendor: true,
+            product: true,
+            ProductPrice: {
+              include: {
+                vendor: true,
+              },
+            },
           },
         },
-        productPrice: true,
         apiLogs: true,
       },
       orderBy: {
@@ -255,12 +277,16 @@ export class PurchasesService {
             token: true,
           },
         },
-        product: {
+        productVariant: {
           include: {
-            vendor: true,
+            product: true,
+            ProductPrice: {
+              include: {
+                vendor: true,
+              },
+            },
           },
         },
-        productPrice: true,
         apiLogs: true,
       },
       orderBy: {
@@ -302,12 +328,16 @@ export class PurchasesService {
             token: true,
           },
         },
-        product: {
+        productVariant: {
           include: {
-            vendor: true,
+            product: true,
+            ProductPrice: {
+              include: {
+                vendor: true,
+              },
+            },
           },
         },
-        productPrice: true,
         apiLogs: true,
       },
       orderBy: {

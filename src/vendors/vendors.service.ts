@@ -50,10 +50,31 @@ export class VendorsService {
     await this.findOne(id); // Check if vendor exists
 
     return await this.prisma.product.findMany({
-      where: { vendorId: id },
+      where: {
+        variants: {
+          some: {
+            ProductPrice: {
+              some: {
+                vendorId: id,
+              },
+            },
+          },
+        },
+      },
       include: {
         category: true,
-        ProductPrice: true,
+        variants: {
+          include: {
+            ProductPrice: {
+              where: {
+                vendorId: id,
+              },
+              include: {
+                vendor: true,
+              },
+            },
+          },
+        },
       },
     });
   }

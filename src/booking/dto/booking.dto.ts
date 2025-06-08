@@ -37,12 +37,12 @@ export class CreateBookingDto {
   walletAddress: string;
 
   @ApiProperty({
-    description: "Product ID being booked",
+    description: "Product variant ID being booked",
     example: "01H1G5V...",
   })
   @IsString()
   @IsNotEmpty()
-  productId: string;
+  productVariantId: string;
 
   @ApiProperty({
     description: "Product price ID for the booking",
@@ -88,6 +88,29 @@ export class ProductPriceDto {
   currency: string;
 }
 
+export class ProductVariantDto {
+  @ApiProperty({
+    description: "Product variant ID",
+    example: "01H1G5V...",
+  })
+  @IsString()
+  id: string;
+
+  @ApiProperty({
+    description: "Product variant name",
+    example: "86 Diamonds",
+  })
+  @IsString()
+  name: string;
+
+  @ApiProperty({
+    description: "Product variant SKU",
+    example: "ML-86D",
+  })
+  @IsString()
+  sku: string;
+}
+
 export class ProductDetailsDto {
   @ApiProperty({
     description: "Product ID",
@@ -102,6 +125,14 @@ export class ProductDetailsDto {
   })
   @IsString()
   name: string;
+
+  @ApiProperty({
+    description: "Product variant details",
+    type: ProductVariantDto,
+  })
+  @ValidateNested()
+  @Type(() => ProductVariantDto)
+  variant: ProductVariantDto;
 
   @ApiProperty({
     description: "Product price details",

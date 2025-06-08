@@ -31,20 +31,12 @@ export class CreatePurchaseDto {
   transactionId: string;
 
   @ApiProperty({
-    description: "Product ID being purchased",
+    description: "Product variant ID being purchased",
     example: "01H1G5V...",
   })
   @IsString()
   @IsNotEmpty()
-  productId: string;
-
-  @ApiProperty({
-    description: "Product price ID for the purchase",
-    example: "01H1G5V...",
-  })
-  @IsString()
-  @IsNotEmpty()
-  productPriceId: string;
+  productVariantId: string;
 
   @ApiProperty({
     description: "Customer information for the purchase",

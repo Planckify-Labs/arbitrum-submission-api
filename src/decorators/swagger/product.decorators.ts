@@ -1,5 +1,11 @@
 import { applyDecorators } from "@nestjs/common";
-import { ApiOperation, ApiResponse, ApiParam, ApiQuery } from "@nestjs/swagger";
+import {
+  ApiOperation,
+  ApiResponse,
+  ApiParam,
+  ApiQuery,
+  ApiBody,
+} from "@nestjs/swagger";
 
 const productSchema = {
   type: "object",
@@ -7,10 +13,27 @@ const productSchema = {
     id: { type: "string", example: "01H1G5V..." },
     name: { type: "string", example: "Mobile Legends" },
     code: { type: "string", example: "MLBB" },
-    vendorId: { type: "string", example: "01H1G5V..." },
     categoryId: { type: "string", example: "01H1G5V..." },
+    description: {
+      type: "string",
+      example: "Mobile Legends: Bang Bang game credits",
+    },
+    imageUrl: { type: "string", example: "https://example.com/mlbb.jpg" },
+    isActive: { type: "boolean", example: true },
     createdAt: { type: "string", format: "date-time" },
     updatedAt: { type: "string", format: "date-time" },
+    variants: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          name: { type: "string" },
+          sku: { type: "string" },
+          // Other variant properties
+        },
+      },
+    },
   },
 };
 
@@ -320,14 +343,52 @@ export function ApiGetProductPrices() {
 export function ApiCreateProductPrice() {
   return applyDecorators(
     ApiOperation({
-      summary: "Create product price",
-      description: "Add a new price for a specific product",
+      summary: "Create a new product price",
+      description: "Creates a new price for a product variant",
     }),
-    ApiParam({
-      name: "id",
-      description: "Product ID",
-      example: "01H1G5V...",
-      required: true,
+    ApiBody({
+      schema: {
+        type: "object",
+        required: [
+          "productVariantId",
+          "vendorId",
+          "realValue",
+          "priceFromVendor",
+          "sellPrice",
+        ],
+        properties: {
+          productVariantId: {
+            type: "string",
+            description: "ID of the product variant",
+            example: "01H1G5V...",
+          },
+          vendorId: {
+            type: "string",
+            description: "ID of the vendor",
+            example: "01H1G5V...",
+          },
+          realValue: {
+            type: "number",
+            description: "Real value of the product",
+            example: 50000,
+          },
+          priceFromVendor: {
+            type: "number",
+            description: "Price from the vendor",
+            example: 47500,
+          },
+          sellPrice: {
+            type: "number",
+            description: "Selling price of the product",
+            example: 52500,
+          },
+          isActive: {
+            type: "boolean",
+            description: "Whether the price is active",
+            example: true,
+          },
+        },
+      },
     }),
     ApiResponse({
       status: 201,

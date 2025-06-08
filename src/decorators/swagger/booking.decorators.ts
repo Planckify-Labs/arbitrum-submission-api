@@ -30,7 +30,30 @@ export function ApiCreateBooking() {
       description:
         "Creates a new booking with locked exchange rate and 15-minute expiration",
     }),
-    ApiBody({ type: CreateBookingDto }),
+    ApiBody({
+      schema: {
+        type: "object",
+        required: ["walletAddress", "productVariantId", "productPriceId"],
+        properties: {
+          walletAddress: {
+            type: "string",
+            description: "Wallet address of the customer",
+            example: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+          },
+          productVariantId: {
+            type: "string",
+            description: "ID of the product variant",
+            example: "01H1G5V...",
+          },
+          productPriceId: {
+            type: "string",
+            description: "ID of the product price",
+            example: "01H1G5V...",
+          },
+          // Other properties
+        },
+      },
+    }),
     ApiResponse({
       status: 201,
       description: "Booking created successfully",
@@ -64,10 +87,10 @@ export function ApiGetWalletBookings() {
       description: "Filter by booking status",
     }),
     ApiQuery({
-      name: "productId",
+      name: "productVariantId",
       required: false,
       type: String,
-      description: "Filter by product ID",
+      description: "Filter by product variant ID",
     }),
     ApiQuery({
       name: "createdFrom",

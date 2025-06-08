@@ -9,7 +9,6 @@ import { ConfigService } from "@nestjs/config";
 import {
   BookingPayment,
   BookingExchangeRate,
-  BookingWithRelations,
   WhereClause,
   DbBooking,
 } from "./interfaces/booking.interface";
@@ -37,7 +36,7 @@ export class BookingService {
   }
 
   async createBooking(createBookingDto: CreateBookingDto) {
-    const { walletAddress, productId, productPriceId, payment } =
+    const { walletAddress, productVariantId, productPriceId, payment } =
       createBookingDto;
 
     const blockchain = await this.blockchainsService.findOne(
@@ -65,27 +64,26 @@ export class BookingService {
       );
     }
 
-    // 1. Validate product and price exist
     const productPrice = await this.prisma.productPrice.findUnique({
       where: { id: productPriceId },
       include: {
-        product: true,
+        productVariant: true,
       },
     });
 
     if (
       !productPrice ||
-      !productPrice.product ||
-      productPrice.productId !== productId
+      !productPrice.productVariant ||
+      productPrice.productVariantId !== productVariantId
     ) {
-      throw new NotFoundException("Product or price not found");
+      throw new NotFoundException("Product variant or price not found");
     }
 
-    // 2. Get current exchange rate
+    // TODO: the toCurrency should be dynamic based on the region
     const exchangeRate = await this.prisma.exchangeRate.findFirst({
       where: {
         fromCurrency: token.symbol,
-        toCurrency: "IDR", // You can make this dynamic based on region
+        toCurrency: "IDR",
         isActive: true,
       },
       orderBy: {
@@ -99,16 +97,36 @@ export class BookingService {
       );
     }
 
-    // 3. Calculate token amount needed
     const sellPrice = new Decimal(productPrice.sellPrice.toString());
     const rate = new Decimal(exchangeRate.rate.toString());
     const tokenAmount = sellPrice.div(rate);
 
-    // 4. Create booking with expiration
+    const transaction = await this.prisma.transactionHistory.create({
+      data: {
+        userId: "",
+        tokenId: token.id,
+        type: "PAYMENT",
+        status: "PENDING",
+        amount: new Decimal(tokenAmount.toString()),
+        amountInIDR: sellPrice,
+      },
+    });
+
+    const purchase = await this.prisma.purchase.create({
+      data: {
+        transactionId: transaction.id,
+        productVariantId,
+        status: "PENDING",
+        customerInfo: {
+          walletAddress,
+        },
+      },
+    });
+
     const booking = await this.prisma.bookingOrder.create({
       data: {
         walletAddress,
-        productId,
+        productVariantId,
         productPriceId,
         payment: {
           tokenAddress: payment.tokenAddress,
@@ -125,14 +143,19 @@ export class BookingService {
         expiresAt: new Date(
           Date.now() + this.BOOKING_EXPIRY_MINUTES * 60 * 1000,
         ),
+        purchaseId: purchase.id,
       },
       include: {
-        product: true,
+        productVariant: {
+          include: {
+            product: true,
+          },
+        },
         productPrice: true,
       },
     });
 
-    return this.formatBookingResponse(booking as DbBooking);
+    return this.formatBookingResponse(booking as unknown as DbBooking);
   }
 
   async getLatestBooking(walletAddress: string) {
@@ -148,7 +171,11 @@ export class BookingService {
         createdAt: "desc",
       },
       include: {
-        product: true,
+        productVariant: {
+          include: {
+            product: true,
+          },
+        },
         productPrice: true,
       },
     });
@@ -157,7 +184,7 @@ export class BookingService {
       return null;
     }
 
-    return this.formatBookingResponse(booking as DbBooking);
+    return this.formatBookingResponse(booking as unknown as DbBooking);
   }
 
   async expireBookings() {
@@ -233,7 +260,7 @@ export class BookingService {
     }
 
     if (query.productId) {
-      where.productId = query.productId;
+      where.productVariantId = query.productId;
     }
 
     if (query.createdFrom || query.createdTo) {
@@ -249,7 +276,11 @@ export class BookingService {
     const bookings = await this.prisma.bookingOrder.findMany({
       where,
       include: {
-        product: true,
+        productVariant: {
+          include: {
+            product: true,
+          },
+        },
         productPrice: true,
       },
       orderBy: {
@@ -258,46 +289,40 @@ export class BookingService {
     });
 
     return bookings.map((booking) =>
-      this.formatBookingResponse(booking as DbBooking),
+      this.formatBookingResponse(booking as unknown as DbBooking),
     );
   }
 
   async getBookingStats(walletAddress: string) {
     const [total, pending, executed, expired, cancelled, executionTimes] =
       await Promise.all([
-        // Total bookings
         this.prisma.bookingOrder.count({
           where: { walletAddress },
         }),
-        // Pending bookings
         this.prisma.bookingOrder.count({
           where: {
             walletAddress,
             status: BookingStatus.PENDING as BookingStatus,
           },
         }),
-        // Executed bookings
         this.prisma.bookingOrder.count({
           where: {
             walletAddress,
             status: BookingStatus.EXECUTED as BookingStatus,
           },
         }),
-        // Expired bookings
         this.prisma.bookingOrder.count({
           where: {
             walletAddress,
             status: BookingStatus.EXPIRED as BookingStatus,
           },
         }),
-        // Cancelled bookings
         this.prisma.bookingOrder.count({
           where: {
             walletAddress,
             status: BookingStatus.CANCELLED as BookingStatus,
           },
         }),
-        // Get execution times for executed bookings
         this.prisma.bookingOrder.findMany({
           where: {
             walletAddress,
@@ -310,13 +335,12 @@ export class BookingService {
         }),
       ]);
 
-    // Calculate average execution time
     const avgTimeToExecution =
       executionTimes.length > 0
         ? executionTimes.reduce((acc, booking) => {
             const executionTime =
               booking.updatedAt.getTime() - booking.createdAt.getTime();
-            return acc + executionTime / (1000 * 60); // Convert to minutes
+            return acc + executionTime / (1000 * 60);
           }, 0) / executionTimes.length
         : undefined;
 
@@ -341,7 +365,6 @@ export class BookingService {
       payment.blockchainNetworkId,
     );
 
-    // Fetch token details from database
     const token = await this.prisma.token.findUnique({
       where: {
         blockchainId_contractAddress: {
@@ -361,8 +384,13 @@ export class BookingService {
       id: booking.id,
       walletAddress: booking.walletAddress,
       product: {
-        id: booking.product.id,
-        name: booking.product.name,
+        id: booking.productVariant.product.id,
+        name: booking.productVariant.product.name,
+        variant: {
+          id: booking.productVariant.id,
+          name: booking.productVariant.name,
+          sku: booking.productVariant.sku,
+        },
         price: {
           amount: Number(booking.productPrice.sellPrice),
           currency: exchangeRateInfo.toCurrency,

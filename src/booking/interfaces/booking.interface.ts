@@ -1,5 +1,5 @@
 import { BookingStatus } from "../enums/booking-status.enum";
-import { Product, ProductPrice } from "@generated/prisma";
+import { ProductVariant, ProductPrice, Product } from "@generated/prisma";
 import { JsonValue } from "@prisma/client/runtime/library";
 
 export interface BookingPayment {
@@ -33,7 +33,7 @@ export interface PaymentResponse {
 export interface DbBooking {
   id: string;
   walletAddress: string;
-  productId: string;
+  productVariantId: string;
   productPriceId: string;
   payment: JsonValue;
   exchangeRate: JsonValue;
@@ -41,7 +41,7 @@ export interface DbBooking {
   expiresAt: Date;
   createdAt: Date;
   updatedAt: Date;
-  product: Product;
+  productVariant: ProductVariant & { product: Product };
   productPrice: ProductPrice;
 }
 
@@ -54,7 +54,7 @@ export interface BookingWithRelations
 export interface WhereClause {
   walletAddress?: string;
   status?: BookingStatus;
-  productId?: string;
+  productVariantId?: string;
   createdAt?: {
     gte?: Date;
     lte?: Date;

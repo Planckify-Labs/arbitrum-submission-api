@@ -32,8 +32,15 @@ export class ProductsService {
       cursor: cursor ? { id: cursor } : undefined,
       include: {
         category: true,
-        vendor: true,
-        ProductPrice: true,
+        variants: {
+          include: {
+            ProductPrice: {
+              include: {
+                vendor: true,
+              },
+            },
+          },
+        },
       },
       orderBy: {
         name: "asc",
@@ -70,10 +77,18 @@ export class ProductsService {
 
     // Handle vendor name search
     if (vendorName) {
-      where.vendor = {
-        name: {
-          contains: vendorName,
-          mode: "insensitive",
+      where.variants = {
+        some: {
+          ProductPrice: {
+            some: {
+              vendor: {
+                name: {
+                  contains: vendorName,
+                  mode: "insensitive",
+                },
+              },
+            },
+          },
         },
       };
     }
@@ -84,10 +99,18 @@ export class ProductsService {
         { name: { contains: query, mode: "insensitive" } },
         { code: { contains: query, mode: "insensitive" } },
         {
-          vendor: {
-            name: {
-              contains: query,
-              mode: "insensitive",
+          variants: {
+            some: {
+              ProductPrice: {
+                some: {
+                  vendor: {
+                    name: {
+                      contains: query,
+                      mode: "insensitive",
+                    },
+                  },
+                },
+              },
             },
           },
         },
@@ -96,10 +119,17 @@ export class ProductsService {
 
     // Handle vendor filter
     if (vendorId) {
-      where.vendorId = vendorId;
+      where.variants = {
+        some: {
+          ProductPrice: {
+            some: {
+              vendorId: vendorId,
+            },
+          },
+        },
+      };
     }
 
-    // Handle active status filter
     if (active !== undefined) {
       where.isActive = active;
     }
@@ -111,8 +141,15 @@ export class ProductsService {
       where,
       include: {
         category: true,
-        vendor: true,
-        ProductPrice: true,
+        variants: {
+          include: {
+            ProductPrice: {
+              include: {
+                vendor: true,
+              },
+            },
+          },
+        },
       },
       orderBy: {
         name: "asc",
@@ -138,8 +175,15 @@ export class ProductsService {
       where: { categoryId },
       include: {
         category: true,
-        vendor: true,
-        ProductPrice: true,
+        variants: {
+          include: {
+            ProductPrice: {
+              include: {
+                vendor: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -157,8 +201,15 @@ export class ProductsService {
       where: { code },
       include: {
         category: true,
-        vendor: true,
-        ProductPrice: true,
+        variants: {
+          include: {
+            ProductPrice: {
+              include: {
+                vendor: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -173,9 +224,13 @@ export class ProductsService {
     const product = await this.prisma.product.findUnique({
       where: { id },
       include: {
-        ProductPrice: {
+        variants: {
           include: {
-            vendor: true,
+            ProductPrice: {
+              include: {
+                vendor: true,
+              },
+            },
           },
         },
       },
@@ -185,27 +240,31 @@ export class ProductsService {
       throw new NotFoundException(`Product with ID ${id} not found`);
     }
 
-    return product.ProductPrice;
+    // Flatten the prices from all variants
+    const prices = product.variants.flatMap((variant) => variant.ProductPrice);
+    return prices;
   }
 
-  async createPrice(productId: string, data: CreateProductPriceDto) {
-    const product = await this.prisma.product.findUnique({
-      where: { id: productId },
+  async createPrice(productVariantId: string, data: CreateProductPriceDto) {
+    const productVariant = await this.prisma.productVariant.findUnique({
+      where: { id: productVariantId },
     });
 
-    if (!product) {
-      throw new NotFoundException(`Product with ID ${productId} not found`);
+    if (!productVariant) {
+      throw new NotFoundException(
+        `Product variant with ID ${productVariantId} not found`,
+      );
     }
 
     try {
       return await this.prisma.productPrice.create({
         data: {
           ...data,
-          productId,
+          productVariantId,
         },
         include: {
           vendor: true,
-          product: true,
+          productVariant: true,
         },
       });
     } catch (error) {
@@ -223,7 +282,7 @@ export class ProductsService {
         data,
         include: {
           vendor: true,
-          product: true,
+          productVariant: true,
         },
       });
     } catch (error) {
@@ -252,8 +311,15 @@ export class ProductsService {
       where: { id },
       include: {
         category: true,
-        vendor: true,
-        ProductPrice: true,
+        variants: {
+          include: {
+            ProductPrice: {
+              include: {
+                vendor: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -269,7 +335,7 @@ export class ProductsService {
       data,
       include: {
         category: true,
-        vendor: true,
+        variants: true,
       },
     });
   }
@@ -281,8 +347,15 @@ export class ProductsService {
         data,
         include: {
           category: true,
-          vendor: true,
-          ProductPrice: true,
+          variants: {
+            include: {
+              ProductPrice: {
+                include: {
+                  vendor: true,
+                },
+              },
+            },
+          },
         },
       });
     } catch (error) {
