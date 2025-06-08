@@ -144,21 +144,6 @@ async function main() {
     }),
   ]);
 
-  // First check if the tokens already exist to avoid unique constraint errors
-  const ethToken = await prisma.token.findFirst({
-    where: {
-      blockchainId: blockchains[0].id,
-      isNativeCurrency: true,
-    },
-  });
-
-  const maticToken = await prisma.token.findFirst({
-    where: {
-      blockchainId: blockchains[1].id,
-      isNativeCurrency: true,
-    },
-  });
-
   const nativeTokens = await Promise.all([
     prisma.token.create({
       data: {
@@ -167,7 +152,8 @@ async function main() {
         decimals: 18,
         blockchainId: blockchains[0].id,
         contractAddress: "0x0000000000000000000000000000000000000000",
-        logoUrl: "https://assets.coingecko.com/coins/images/279/small/ethereum.png",
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/279/small/ethereum.png",
         isStablecoin: false,
         isNativeCurrency: true,
         isActive: true,
@@ -180,7 +166,8 @@ async function main() {
         decimals: 18,
         blockchainId: blockchains[1].id,
         contractAddress: "0x1230000000000000000000000000000000000000",
-        logoUrl: "https://assets.coingecko.com/coins/images/4713/small/matic-token-icon.png",
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/4713/small/matic-token-icon.png",
         isStablecoin: false,
         isNativeCurrency: true,
         isActive: true,
@@ -339,6 +326,9 @@ async function main() {
     prisma.category.create({
       data: { name: "Voucher" },
     }),
+    prisma.category.create({
+      data: { name: "Mobile Data" },
+    }),
   ]);
 
   const products = await Promise.all([
@@ -346,16 +336,86 @@ async function main() {
       data: {
         name: "Mobile Legends",
         code: "MLBB",
-        vendorId: vendors[0].id,
         categoryId: categories[0].id,
+        description: "Mobile Legends: Bang Bang is a mobile MOBA game",
+        imageUrl: "https://example.com/mobile-legends.png",
       },
     }),
     prisma.product.create({
       data: {
         name: "Voucher Google Play US",
         code: "VOGOP",
-        vendorId: vendors[1].id,
         categoryId: categories[1].id,
+        description: "Google Play gift cards for US store",
+        imageUrl: "https://example.com/google-play.png",
+      },
+    }),
+    prisma.product.create({
+      data: {
+        name: "XL Data Packages",
+        code: "XLDATA",
+        categoryId: categories[2].id,
+        description: "XL mobile data packages for Indonesia",
+        imageUrl: "https://example.com/xl-data.png",
+      },
+    }),
+  ]);
+
+  const productVariants = await Promise.all([
+    prisma.productVariant.create({
+      data: {
+        name: "86 Diamonds",
+        sku: "MLBB-86",
+        description: "86 Diamonds for Mobile Legends",
+        productId: products[0].id,
+      },
+    }),
+    prisma.productVariant.create({
+      data: {
+        name: "172 Diamonds",
+        sku: "MLBB-172",
+        description: "172 Diamonds for Mobile Legends",
+        productId: products[0].id,
+      },
+    }),
+    prisma.productVariant.create({
+      data: {
+        name: "$10 Google Play Card",
+        sku: "GOGP-10",
+        description: "$10 Google Play Gift Card",
+        productId: products[1].id,
+      },
+    }),
+    prisma.productVariant.create({
+      data: {
+        name: "$25 Google Play Card",
+        sku: "GOGP-25",
+        description: "$25 Google Play Gift Card",
+        productId: products[1].id,
+      },
+    }),
+    prisma.productVariant.create({
+      data: {
+        name: "Data Blue 1 GB 2 Hari",
+        sku: "XLDB1GB2H",
+        description: "XL Data Blue 1 GB valid for 2 days",
+        productId: products[2].id,
+      },
+    }),
+    prisma.productVariant.create({
+      data: {
+        name: "HOTROD 1 GB 2 Hari",
+        sku: "XLHR1GB2H",
+        description: "XL HOTROD 1 GB valid for 2 days",
+        productId: products[2].id,
+      },
+    }),
+    prisma.productVariant.create({
+      data: {
+        name: "HOTROD 500 MB 7 Hari",
+        sku: "XLHR500M7H",
+        description: "XL HOTROD 500 MB valid for 7 days",
+        productId: products[2].id,
       },
     }),
   ]);
@@ -363,7 +423,7 @@ async function main() {
   await Promise.all([
     prisma.productPrice.create({
       data: {
-        productId: products[0].id,
+        productVariantId: productVariants[0].id,
         vendorId: vendors[0].id,
         realValue: 50000,
         priceFromVendor: 47500,
@@ -373,11 +433,61 @@ async function main() {
     }),
     prisma.productPrice.create({
       data: {
-        productId: products[1].id,
-        vendorId: vendors[1].id,
+        productVariantId: productVariants[1].id,
+        vendorId: vendors[0].id,
         realValue: 100000,
         priceFromVendor: 95000,
         sellPrice: 105000,
+        isActive: true,
+      },
+    }),
+    prisma.productPrice.create({
+      data: {
+        productVariantId: productVariants[2].id,
+        vendorId: vendors[1].id,
+        realValue: 150000,
+        priceFromVendor: 145000,
+        sellPrice: 155000,
+        isActive: true,
+      },
+    }),
+    prisma.productPrice.create({
+      data: {
+        productVariantId: productVariants[3].id,
+        vendorId: vendors[1].id,
+        realValue: 375000,
+        priceFromVendor: 365000,
+        sellPrice: 385000,
+        isActive: true,
+      },
+    }),
+    prisma.productPrice.create({
+      data: {
+        productVariantId: productVariants[4].id,
+        vendorId: vendors[0].id,
+        realValue: 4710,
+        priceFromVendor: 4500,
+        sellPrice: 5000,
+        isActive: true,
+      },
+    }),
+    prisma.productPrice.create({
+      data: {
+        productVariantId: productVariants[5].id,
+        vendorId: vendors[0].id,
+        realValue: 4728,
+        priceFromVendor: 4500,
+        sellPrice: 5000,
+        isActive: true,
+      },
+    }),
+    prisma.productPrice.create({
+      data: {
+        productVariantId: productVariants[6].id,
+        vendorId: vendors[0].id,
+        realValue: 5395,
+        priceFromVendor: 5100,
+        sellPrice: 5700,
         isActive: true,
       },
     }),
@@ -399,18 +509,19 @@ async function main() {
   });
 
   const productPrice = await prisma.productPrice.findFirst({
-    where: { productId: products[0].id },
+    where: { productVariantId: productVariants[0].id },
   });
 
   if (!productPrice) {
-    throw new Error("Product price not found for product: " + products[0].id);
+    throw new Error(
+      "Product price not found for variant: " + productVariants[0].id,
+    );
   }
 
   await prisma.purchase.create({
     data: {
       transactionId: transaction.id,
-      productId: products[0].id,
-      productPriceId: productPrice.id,
+      productVariantId: productVariants[0].id,
       status: "COMPLETED",
       customerInfo: JSON.parse('{"gameId": "12345678", "serverID": "9999"}'),
       vendorResponse: JSON.parse(

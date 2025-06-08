@@ -26,15 +26,28 @@ model Category {
 }
 
 model Product {
+  id          String           @id @default(ulid())
+  name        String
+  description String?
+  imageUrl    String?
+  code        String           @unique
+  category    Category         @relation(fields: [categoryId], references: [id])
+  categoryId  String
+  isActive    Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  variants    ProductVariant[]
+
+  @@index([code])
+}
+
+model ProductVariant {
   id           String         @id @default(ulid())
   name         String
   description  String?
-  imageUrl     String?
-  vendor       Vendor         @relation(fields: [vendorId], references: [id])
-  vendorId     String
-  code         String         @unique
-  category     Category       @relation(fields: [categoryId], references: [id])
-  categoryId   String
+  sku          String         @unique
+  product      Product        @relation(fields: [productId], references: [id])
+  productId    String
   isActive     Boolean        @default(true)
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
@@ -42,7 +55,7 @@ model Product {
   Purchase     Purchase[]
   BookingOrder BookingOrder[]
 
-  @@index([code])
+  @@index([sku])
 }
 
 model Vendor {
@@ -50,7 +63,6 @@ model Vendor {
   name         String         @unique
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
-  products     Product[]
   VendorAPI    VendorAPI[]
   ProductPrice ProductPrice[]
 }
@@ -108,19 +120,18 @@ model Token {
 }
 
 model ProductPrice {
-  id              String         @id @default(ulid())
-  product         Product        @relation(fields: [productId], references: [id])
-  productId       String
-  vendor          Vendor         @relation(fields: [vendorId], references: [id])
-  vendorId        String
-  realValue       Decimal
-  priceFromVendor Decimal
-  sellPrice       Decimal
-  isActive        Boolean        @default(true)
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-  Purchase        Purchase[]
-  BookingOrder    BookingOrder[]
+  id               String         @id @default(ulid())
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id])
+  productVariantId String
+  vendor           Vendor         @relation(fields: [vendorId], references: [id])
+  vendorId         String
+  realValue        Decimal
+  priceFromVendor  Decimal
+  sellPrice        Decimal
+  isActive         Boolean        @default(true)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  BookingOrder     BookingOrder[]
 }
 
 model TransactionHistory {
@@ -142,23 +153,22 @@ model TransactionHistory {
 }
 
 model Purchase {
-  id             String             @id @default(ulid())
-  transaction    TransactionHistory @relation(fields: [transactionId], references: [id])
-  transactionId  String             @unique
-  product        Product            @relation(fields: [productId], references: [id])
-  productId      String
-  productPrice   ProductPrice       @relation(fields: [productPriceId], references: [id])
-  productPriceId String
-  status         PurchaseStatus     @default(PENDING)
-  customerInfo   Json
-  vendorResponse Json?
-  vendorRefId    String?
-  apiLogs        ApiRequestLog[]
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
-  bookingOrder   BookingOrder?
+  id               String             @id @default(ulid())
+  transaction      TransactionHistory @relation(fields: [transactionId], references: [id])
+  transactionId    String             @unique
+  productVariant   ProductVariant     @relation(fields: [productVariantId], references: [id])
+  productVariantId String
+  status           PurchaseStatus     @default(PENDING)
+  customerInfo     Json
+  vendorResponse   Json?
+  vendorRefId      String?
+  apiLogs          ApiRequestLog[]
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  bookingOrder     BookingOrder?
 }
 
+// TODO: find a better way to store the api request log
 model ApiRequestLog {
   id           String   @id @default(ulid())
   requestId    String   @unique
@@ -182,6 +192,7 @@ model ApiRequestLog {
   purchaseId String?
 }
 
+// TODO: for better performance, we can use timescaledb to store the exchange rate
 model ExchangeRate {
   id               String         @id @default(ulid())
   fromCurrency     String
@@ -325,24 +336,23 @@ enum BookingStatus {
 }
 
 model BookingOrder {
-  id             String       @id @default(ulid())
-  walletAddress  String
-  productId      String
-  product        Product      @relation(fields: [productId], references: [id])
-  productPrice   ProductPrice @relation(fields: [productPriceId], references: [id])
-  productPriceId String
+  id               String         @id @default(ulid())
+  walletAddress    String
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id])
+  productVariantId String
+  productPrice     ProductPrice   @relation(fields: [productPriceId], references: [id])
+  productPriceId   String
 
-  payment      Json // Stores payment details (token, network, amount)
-  exchangeRate Json // Stores rate info at booking time
+  payment      Json
+  exchangeRate Json
 
   status    BookingStatus @default(PENDING)
   expiresAt DateTime
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 
-  // Optional reference to the actual purchase if executed
-  purchase   Purchase? @relation(fields: [purchaseId], references: [id])
-  purchaseId String?   @unique
+  purchase   Purchase @relation(fields: [purchaseId], references: [id])
+  purchaseId String   @unique
 
   @@index([walletAddress])
   @@index([status])
