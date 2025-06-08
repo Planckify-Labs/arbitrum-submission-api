@@ -8,6 +8,7 @@ import {
 import { CreateCategoryDto, UpdateCategoryDto } from "./dto/category.dto";
 import { Prisma } from "generated/prisma";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
+import { SearchProductVariantDto } from "./dto/search-product-variant.dto";
 
 interface SearchProductsParams {
   query?: string;
@@ -431,5 +432,106 @@ export class ProductsService {
       }
       throw error;
     }
+  }
+
+  async findVariants(productId: string) {
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+    });
+
+    if (!product) {
+      throw new NotFoundException(`Product with ID ${productId} not found`);
+    }
+
+    return this.prisma.productVariant.findMany({
+      where: { productId },
+      include: {
+        ProductPrice: {
+          include: {
+            vendor: true,
+          },
+        },
+      },
+      orderBy: {
+        name: "asc",
+      },
+    });
+  }
+
+  async findOneVariant(id: string) {
+    const variant = await this.prisma.productVariant.findUnique({
+      where: { id },
+      include: {
+        product: true,
+        ProductPrice: {
+          include: {
+            vendor: true,
+          },
+        },
+      },
+    });
+
+    if (!variant) {
+      throw new NotFoundException(`Product variant with ID ${id} not found`);
+    }
+
+    return variant;
+  }
+
+  async searchVariants(
+    params: SearchProductVariantDto,
+    paginationDto: CursorPaginationDto,
+  ) {
+    const { cursor, take = 10 } = paginationDto;
+    const { sku, name, productId, isActive, query } = params;
+
+    const where: Prisma.ProductVariantWhereInput = {};
+
+    if (sku) {
+      where.sku = {
+        contains: sku,
+        mode: "insensitive",
+      };
+    }
+
+    if (name) {
+      where.name = {
+        contains: name,
+        mode: "insensitive",
+      };
+    }
+
+    if (productId) {
+      where.productId = productId;
+    }
+
+    if (isActive !== undefined) {
+      where.isActive = isActive;
+    }
+
+    if (query && !sku && !name) {
+      where.OR = [
+        { name: { contains: query, mode: "insensitive" } },
+        { sku: { contains: query, mode: "insensitive" } },
+      ];
+    }
+
+    return await this.prisma.productVariant.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
+      where,
+      include: {
+        product: true,
+        ProductPrice: {
+          include: {
+            vendor: true,
+          },
+        },
+      },
+      orderBy: {
+        name: "asc",
+      },
+    });
   }
 }

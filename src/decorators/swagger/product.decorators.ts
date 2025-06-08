@@ -566,3 +566,189 @@ export function ApiDeleteCategory() {
     ApiResponse(notFoundResponse),
   );
 }
+
+export function ApiGetProductVariants() {
+  return applyDecorators(
+    ApiOperation({
+      summary: "Get product variants",
+      description: "Retrieves all variants for a specific product",
+    }),
+    ApiParam({
+      name: "id",
+      description: "Product ID",
+      example: "01H1G5V...",
+      required: true,
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns all variants for the product",
+      schema: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string", example: "01H1G5V..." },
+            name: { type: "string", example: "60 Diamonds" },
+            description: {
+              type: "string",
+              example: "60 Mobile Legends Diamonds",
+            },
+            sku: { type: "string", example: "MLBB-60D" },
+            productId: { type: "string", example: "01H1G5V..." },
+            isActive: { type: "boolean", example: true },
+            createdAt: { type: "string", format: "date-time" },
+            updatedAt: { type: "string", format: "date-time" },
+            ProductPrice: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  vendorId: { type: "string" },
+                  realValue: { type: "number" },
+                  priceFromVendor: { type: "number" },
+                  sellPrice: { type: "number" },
+                  isActive: { type: "boolean" },
+                  vendor: {
+                    type: "object",
+                    properties: {
+                      id: { type: "string" },
+                      name: { type: "string" },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    }),
+    ApiResponse(notFoundResponse),
+  );
+}
+
+export function ApiSearchProductVariants() {
+  return applyDecorators(
+    ApiOperation({
+      summary: "Search product variants",
+      description: "Search product variants using various criteria",
+    }),
+    ApiQuery({
+      name: "sku",
+      required: false,
+      description: "Search by SKU (case insensitive)",
+      type: "string",
+      example: "MLBB-60D",
+    }),
+    ApiQuery({
+      name: "name",
+      required: false,
+      description: "Search by variant name (case insensitive)",
+      type: "string",
+      example: "60 Diamonds",
+    }),
+    ApiQuery({
+      name: "productId",
+      required: false,
+      description: "Filter by product ID",
+      type: "string",
+      example: "01H1G5V...",
+    }),
+    ApiQuery({
+      name: "isActive",
+      required: false,
+      description: "Filter by active status",
+      type: "boolean",
+    }),
+    ApiQuery({
+      name: "query",
+      required: false,
+      description: "General search term that matches against name or SKU",
+      type: "string",
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns matching product variants",
+      schema: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string", example: "01H1G5V..." },
+            name: { type: "string", example: "60 Diamonds" },
+            sku: { type: "string", example: "MLBB-60D" },
+            productId: { type: "string", example: "01H1G5V..." },
+            isActive: { type: "boolean", example: true },
+            // Other properties
+          },
+        },
+      },
+    }),
+  );
+}
+
+export function ApiGetProductVariant() {
+  return applyDecorators(
+    ApiOperation({
+      summary: "Get a product variant by ID",
+      description:
+        "Retrieves detailed information about a specific product variant",
+    }),
+    ApiParam({
+      name: "id",
+      description: "Product Variant ID",
+      example: "01H1G5V...",
+      required: true,
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns the product variant with the specified ID",
+      schema: {
+        type: "object",
+        properties: {
+          id: { type: "string", example: "01H1G5V..." },
+          name: { type: "string", example: "60 Diamonds" },
+          description: {
+            type: "string",
+            example: "60 Mobile Legends Diamonds",
+          },
+          sku: { type: "string", example: "MLBB-60D" },
+          productId: { type: "string", example: "01H1G5V..." },
+          isActive: { type: "boolean", example: true },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+          product: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              name: { type: "string" },
+              code: { type: "string" },
+            },
+          },
+          ProductPrice: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                vendorId: { type: "string" },
+                realValue: { type: "number" },
+                priceFromVendor: { type: "number" },
+                sellPrice: { type: "number" },
+                isActive: { type: "boolean" },
+                vendor: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    name: { type: "string" },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    }),
+    ApiResponse(notFoundResponse),
+  );
+}

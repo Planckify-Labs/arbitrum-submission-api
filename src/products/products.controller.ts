@@ -39,8 +39,12 @@ import {
   ApiUpdateCategory,
   ApiDeleteCategory,
   ApiGetCategory,
+  ApiGetProductVariants,
+  ApiSearchProductVariants,
+  ApiGetProductVariant,
 } from "../decorators/swagger/product.decorators";
 import { SearchProductDto } from "./dto/search-product.dto";
+import { SearchProductVariantDto } from "./dto/search-product-variant.dto";
 
 @Controller("products")
 @ApiTags("products")
@@ -162,5 +166,26 @@ export class ProductsController {
   @ApiGetCategory()
   findOneCategory(@Param("id") id: string) {
     return this.productsService.findOneCategory(id);
+  }
+
+  @Get(":id/variants")
+  @ApiGetProductVariants()
+  findVariants(@Param("id") id: string) {
+    return this.productsService.findVariants(id);
+  }
+
+  @Get("variants/search")
+  @ApiSearchProductVariants()
+  searchVariants(
+    @Query() searchDto: SearchProductVariantDto,
+    @Query() paginationDto: CursorPaginationDto = new CursorPaginationDto(),
+  ) {
+    return this.productsService.searchVariants(searchDto, paginationDto);
+  }
+
+  @Get("variants/:id")
+  @ApiGetProductVariant()
+  findOneVariant(@Param("id") id: string) {
+    return this.productsService.findOneVariant(id);
   }
 }
