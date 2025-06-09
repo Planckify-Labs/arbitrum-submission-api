@@ -23,6 +23,13 @@ export class BlockchainsService {
       take,
       skip: cursor ? 1 : 0,
       cursor: cursor ? { id: cursor } : undefined,
+      include: {
+        tokens: {
+          where: {
+            isNativeCurrency: true,
+          },
+        },
+      },
       orderBy: {
         name: "asc",
       },
@@ -62,6 +69,13 @@ export class BlockchainsService {
       skip: cursor ? 1 : 0,
       cursor: cursor ? { id: cursor } : undefined,
       where,
+      include: {
+        tokens: {
+          where: {
+            isNativeCurrency: true,
+          },
+        },
+      },
       orderBy: {
         name: "asc",
       },
@@ -71,6 +85,13 @@ export class BlockchainsService {
   async findOne(id: string) {
     const blockchain = await this.prisma.blockchain.findUnique({
       where: { id },
+      include: {
+        tokens: {
+          where: {
+            isNativeCurrency: true,
+          },
+        },
+      },
     });
 
     if (!blockchain) {

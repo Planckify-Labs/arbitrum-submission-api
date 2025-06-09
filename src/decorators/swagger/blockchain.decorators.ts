@@ -9,10 +9,10 @@ const notFoundResponse = {
 
 export function ApiGetBlockchains() {
   return applyDecorators(
-    ApiOperation({ summary: "Get all blockchains" }),
+    ApiOperation({ summary: "Get all blockchains with their native tokens" }),
     ApiResponse({
       status: 200,
-      description: "Returns a list of blockchains",
+      description: "Returns a list of blockchains with their native tokens",
       type: BlockchainResponseDto,
       isArray: true,
     }),
@@ -37,7 +37,7 @@ export function ApiSearchBlockchains() {
 
 export function ApiGetBlockchain() {
   return applyDecorators(
-    ApiOperation({ summary: "Get blockchain by ID" }),
+    ApiOperation({ summary: "Get blockchain by ID with its native token" }),
     ApiParam({
       name: "id",
       description: "Blockchain ID",
@@ -45,7 +45,7 @@ export function ApiGetBlockchain() {
     }),
     ApiResponse({
       status: 200,
-      description: "Returns a blockchain",
+      description: "Returns a blockchain with its native token",
       type: BlockchainResponseDto,
     }),
     ApiResponse(notFoundResponse),
