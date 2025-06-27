@@ -31,18 +31,6 @@ export class ProductsService {
       take,
       skip: cursor ? 1 : 0,
       cursor: cursor ? { id: cursor } : undefined,
-      include: {
-        category: true,
-        variants: {
-          include: {
-            ProductPrice: {
-              include: {
-                vendor: true,
-              },
-            },
-          },
-        },
-      },
       orderBy: {
         name: "asc",
       },
@@ -55,12 +43,10 @@ export class ProductsService {
 
     const where: Prisma.ProductWhereInput = {};
 
-    // Handle direct ID search
     if (id) {
       where.id = id;
     }
 
-    // Handle direct code search
     if (code) {
       where.code = {
         contains: code,
@@ -68,7 +54,6 @@ export class ProductsService {
       };
     }
 
-    // Handle direct name search
     if (name) {
       where.name = {
         contains: name,
@@ -76,7 +61,6 @@ export class ProductsService {
       };
     }
 
-    // Handle vendor name search
     if (vendorName) {
       where.variants = {
         some: {
@@ -94,7 +78,6 @@ export class ProductsService {
       };
     }
 
-    // Handle general query search
     if (query && !id && !code && !name && !vendorName) {
       where.OR = [
         { name: { contains: query, mode: "insensitive" } },
@@ -118,7 +101,6 @@ export class ProductsService {
       ];
     }
 
-    // Handle vendor filter
     if (vendorId) {
       where.variants = {
         some: {
@@ -241,7 +223,6 @@ export class ProductsService {
       throw new NotFoundException(`Product with ID ${id} not found`);
     }
 
-    // Flatten the prices from all variants
     const prices = product.variants.flatMap((variant) => variant.ProductPrice);
     return prices;
   }
