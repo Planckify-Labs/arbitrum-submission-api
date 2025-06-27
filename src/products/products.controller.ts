@@ -42,6 +42,7 @@ import {
   ApiGetProductVariants,
   ApiSearchProductVariants,
   ApiGetProductVariant,
+  ApiGetProductsGroupedByCategories,
 } from "../decorators/swagger/product.decorators";
 import { SearchProductDto } from "./dto/search-product.dto";
 import { SearchProductVariantDto } from "./dto/search-product-variant.dto";
@@ -64,6 +65,12 @@ export class ProductsController {
   @ApiGetProducts()
   findAll(@Query() paginationDto: CursorPaginationDto) {
     return this.productsService.findAll(paginationDto);
+  }
+
+  @Get("grouped-by-categories")
+  @ApiGetProductsGroupedByCategories()
+  findAllGroupedByCategories(@Query("take") take?: number) {
+    return this.productsService.findAllGroupedByCategories(take);
   }
 
   @Get("categories")

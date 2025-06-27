@@ -30,7 +30,6 @@ const productSchema = {
           id: { type: "string" },
           name: { type: "string" },
           sku: { type: "string" },
-          // Other variant properties
         },
       },
     },
@@ -89,6 +88,20 @@ const categorySchema = {
     name: { type: "string", example: "Gaming Top Up" },
     createdAt: { type: "string", format: "date-time" },
     updatedAt: { type: "string", format: "date-time" },
+  },
+};
+
+const productsGroupedByCategoriesResponse = {
+  type: "array",
+  items: {
+    type: "object",
+    properties: {
+      category: { type: "string", example: "Gaming Top Up" },
+      products: {
+        type: "array",
+        items: productSchema,
+      },
+    },
   },
 };
 
@@ -679,7 +692,6 @@ export function ApiSearchProductVariants() {
             sku: { type: "string", example: "MLBB-60D" },
             productId: { type: "string", example: "01H1G5V..." },
             isActive: { type: "boolean", example: true },
-            // Other properties
           },
         },
       },
@@ -750,5 +762,28 @@ export function ApiGetProductVariant() {
       },
     }),
     ApiResponse(notFoundResponse),
+  );
+}
+
+export function ApiGetProductsGroupedByCategories() {
+  return applyDecorators(
+    ApiOperation({
+      summary: "Get all products grouped by categories",
+      description:
+        "Retrieves a list of all products organized by their categories.",
+    }),
+    ApiResponse({
+      status: 200,
+      description:
+        "Returns all products grouped by their respective categories.",
+      schema: productsGroupedByCategoriesResponse,
+    }),
+    ApiQuery({
+      name: "take",
+      required: false,
+      type: Number,
+      description: "total product to take from each categories",
+      example: 10,
+    }),
   );
 }

@@ -515,4 +515,25 @@ export class ProductsService {
       },
     });
   }
+
+  async findAllGroupedByCategories(take?: number) {
+    const categories = await this.prisma.category.findMany({
+      include: {
+        Product: {
+          take: take ? take : 6,
+        },
+      },
+      orderBy: {
+        name: "asc",
+      },
+    });
+
+    return categories.map((category) => ({
+      category: {
+        id: category.id,
+        name: category.name,
+      },
+      products: category.Product,
+    }));
+  }
 }
