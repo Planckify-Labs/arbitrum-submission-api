@@ -28,12 +28,17 @@ export function ApiCreateBooking() {
     ApiOperation({
       summary: "Create a new booking",
       description:
-        "Creates a new booking with locked exchange rate and 15-minute expiration",
+        "Creates a new booking with locked exchange rate and 15-minute expiration. Requires payment details including blockchain network and token information.",
     }),
     ApiBody({
       schema: {
         type: "object",
-        required: ["walletAddress", "productVariantId", "productPriceId"],
+        required: [
+          "walletAddress",
+          "productVariantId",
+          "productPriceId",
+          "payment",
+        ],
         properties: {
           walletAddress: {
             type: "string",
@@ -50,7 +55,30 @@ export function ApiCreateBooking() {
             description: "ID of the product price",
             example: "01H1G5V...",
           },
-          // Other properties
+          payment: {
+            type: "object",
+            required: ["tokenAddress", "blockchainId", "exchangeRateId"],
+            properties: {
+              tokenAddress: {
+                type: "string",
+                description:
+                  "The contract address of the token to be used for payment",
+                example: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+              },
+              blockchainId: {
+                type: "string",
+                description:
+                  "The ID of the blockchain network where the payment will be processed",
+                example: "01JX2FJZ7Y37Y9XXDHYP323P0X",
+              },
+              exchangeRateId: {
+                type: "string",
+                description:
+                  "The ID of the exchange rate to lock for this booking",
+                example: "01JX2FJZ7Y37Y9XXDHYP323P0X",
+              },
+            },
+          },
         },
       },
     }),
@@ -62,7 +90,7 @@ export function ApiCreateBooking() {
     ApiResponse(invalidInputResponse),
     ApiResponse({
       status: 404,
-      description: "Product or price not found",
+      description: "Product, price, blockchain network, or token not found",
     }),
   );
 }

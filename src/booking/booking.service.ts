@@ -36,126 +36,134 @@ export class BookingService {
   }
 
   async createBooking(createBookingDto: CreateBookingDto) {
-    const { walletAddress, productVariantId, productPriceId, payment } =
-      createBookingDto;
+    const { walletAddress, productVariantId, payment } = createBookingDto;
 
-    const blockchain = await this.blockchainsService.findOne(
-      payment.blockchainId,
-    );
-
-    if (!blockchain.isActive) {
-      throw new BadRequestException(
-        `Blockchain network ${blockchain.name} is not active`,
+    const booking = await this.prisma.$transaction(async (tx) => {
+      const blockchain = await this.blockchainsService.findOne(
+        payment.blockchainId,
       );
-    }
+      if (!blockchain) {
+        throw new NotFoundException(
+          `Blockchain network with ID ${payment.blockchainId} not found`,
+        );
+      }
+      if (!blockchain.isActive) {
+        throw new BadRequestException(
+          `Blockchain network ${blockchain.name} is not active`,
+        );
+      }
 
-    const token = await this.prisma.token.findUnique({
-      where: {
-        blockchainId_contractAddress: {
-          blockchainId: payment.blockchainId,
-          contractAddress: payment.tokenAddress,
-        },
-      },
-    });
-
-    if (!token) {
-      throw new BadRequestException(
-        `Token with address ${payment.tokenAddress} not found on blockchain ${blockchain.name}`,
-      );
-    }
-
-    const productPrice = await this.prisma.productPrice.findUnique({
-      where: { id: productPriceId },
-      include: {
-        productVariant: true,
-      },
-    });
-
-    if (
-      !productPrice ||
-      !productPrice.productVariant ||
-      productPrice.productVariantId !== productVariantId
-    ) {
-      throw new NotFoundException("Product variant or price not found");
-    }
-
-    // TODO: the toCurrency should be dynamic based on the region
-    const exchangeRate = await this.prisma.exchangeRate.findFirst({
-      where: {
-        fromCurrency: token.symbol,
-        toCurrency: "IDR",
-        isActive: true,
-      },
-      orderBy: {
-        updatedAt: "desc",
-      },
-    });
-
-    if (!exchangeRate) {
-      throw new BadRequestException(
-        "Exchange rate not available for the selected token",
-      );
-    }
-
-    const sellPrice = new Decimal(productPrice.sellPrice.toString());
-    const rate = new Decimal(exchangeRate.rate.toString());
-    const tokenAmount = sellPrice.div(rate);
-
-    const transaction = await this.prisma.transactionHistory.create({
-      data: {
-        userId: "",
-        tokenId: token.id,
-        type: "PAYMENT",
-        status: "PENDING",
-        amount: new Decimal(tokenAmount.toString()),
-        amountInIDR: sellPrice,
-      },
-    });
-
-    const purchase = await this.prisma.purchase.create({
-      data: {
-        transactionId: transaction.id,
-        productVariantId,
-        status: "PENDING",
-        customerInfo: {
-          walletAddress,
-        },
-      },
-    });
-
-    const booking = await this.prisma.bookingOrder.create({
-      data: {
-        walletAddress,
-        productVariantId,
-        productPriceId,
-        payment: {
-          tokenAddress: payment.tokenAddress,
-          blockchainNetworkId: blockchain.id,
-          amount: tokenAmount.toString(),
-        },
-        exchangeRate: {
-          rate: Number(exchangeRate.rate),
-          fromCurrency: token.symbol,
-          toCurrency: exchangeRate.toCurrency,
-          lockedAt: new Date().toISOString(),
-        },
-        status: BookingStatus.PENDING as BookingStatus,
-        expiresAt: new Date(
-          Date.now() + this.BOOKING_EXPIRY_MINUTES * 60 * 1000,
-        ),
-        purchaseId: purchase.id,
-      },
-      include: {
-        productVariant: {
-          include: {
-            product: true,
+      const token = await tx.token.findUnique({
+        where: {
+          blockchainId_contractAddress: {
+            blockchainId: payment.blockchainId,
+            contractAddress: payment.tokenAddress,
           },
         },
-        productPrice: true,
-      },
+      });
+
+      if (!token) {
+        throw new BadRequestException(
+          `Token with address ${payment.tokenAddress} not found on blockchain ${blockchain.name}`,
+        );
+      }
+
+      if (!token.isActive) {
+        throw new BadRequestException(
+          `Token ${token.symbol} (${payment.tokenAddress}) is not active on blockchain ${blockchain.name}`,
+        );
+      }
+
+      const productVariant = await tx.productVariant.findUnique({
+        where: { id: productVariantId },
+        include: {
+          product: true,
+          ProductPrice: {
+            where: { isActive: true },
+            orderBy: { createdAt: "desc" },
+            take: 1,
+          },
+        },
+      });
+
+      if (!productVariant) {
+        throw new NotFoundException(
+          `Product variant with ID ${productVariantId} not found`,
+        );
+      }
+
+      if (!productVariant.ProductPrice.length) {
+        throw new BadRequestException(
+          `No active price found for product variant ${productVariantId}`,
+        );
+      }
+
+      const productPrice = productVariant.ProductPrice[0];
+
+      const exchangeRate = await tx.exchangeRate.findUnique({
+        where: {
+          id: payment.exchangeRateId,
+        },
+      });
+
+      if (!exchangeRate) {
+        throw new BadRequestException(
+          `Exchange rate with ID ${payment.exchangeRateId} not found`,
+        );
+      }
+
+      if (!exchangeRate.isActive) {
+        throw new BadRequestException(
+          `Exchange rate with ID ${payment.exchangeRateId} is no longer active`,
+        );
+      }
+
+      if (exchangeRate.fromCurrency !== token.symbol) {
+        throw new BadRequestException(
+          `Exchange rate ${payment.exchangeRateId} is for ${exchangeRate.fromCurrency}, but token is ${token.symbol}`,
+        );
+      }
+
+      const sellPrice = new Decimal(productPrice.sellPrice.toString());
+      const rate = new Decimal(exchangeRate.rate.toString());
+      const tokenAmount = sellPrice.div(rate);
+
+      const booking = await tx.bookingOrder.create({
+        data: {
+          walletAddress,
+          productVariantId,
+          productPriceId: productPrice.id,
+          payment: {
+            tokenAddress: payment.tokenAddress,
+            blockchainNetworkId: blockchain.id,
+            amount: tokenAmount.toString(),
+          },
+          exchangeRate: {
+            id: exchangeRate.id,
+            rate: Number(exchangeRate.rate),
+            fromCurrency: token.symbol,
+            toCurrency: exchangeRate.toCurrency,
+            lockedAt: new Date().toISOString(),
+          },
+          status: "PENDING" as BookingStatus,
+          expiresAt: new Date(
+            Date.now() + this.BOOKING_EXPIRY_MINUTES * 60 * 1000,
+          ),
+        },
+        include: {
+          productVariant: {
+            include: {
+              product: true,
+            },
+          },
+          productPrice: true,
+        },
+      });
+
+      return this.formatBookingResponse(booking as unknown as DbBooking);
     });
 
-    return this.formatBookingResponse(booking as unknown as DbBooking);
+    return booking;
   }
 
   async getLatestBooking(walletAddress: string) {
@@ -201,7 +209,7 @@ export class BookingService {
     });
   }
 
-  async markBookingExecuted(bookingId: string, purchaseId: string) {
+  async markBookingExecuted(bookingId: string) {
     const booking = await this.prisma.bookingOrder.findUnique({
       where: { id: bookingId },
     });
@@ -223,8 +231,7 @@ export class BookingService {
     return this.prisma.bookingOrder.update({
       where: { id: bookingId },
       data: {
-        status: BookingStatus.EXECUTED as BookingStatus,
-        purchaseId,
+        status: "EXECUTED" as BookingStatus,
       },
     });
   }

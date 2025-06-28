@@ -1,4 +1,13 @@
-import { Controller, Post, Get, Body, Param, Put, Query } from "@nestjs/common";
+import {
+  Controller,
+  Post,
+  Get,
+  Body,
+  Param,
+  Put,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { BookingService } from "./booking.service";
 import { CreateBookingDto, ExecuteBookingDto } from "./dto/booking.dto";
@@ -11,6 +20,7 @@ import {
   ApiExecuteBooking,
   ApiCancelBooking,
 } from "../decorators/swagger/booking.decorators";
+import { BookingRateLimitGuard } from "./guards/booking-rate-limit.guard";
 
 @Controller("bookings")
 @ApiTags("bookings")
@@ -18,6 +28,7 @@ export class BookingController {
   constructor(private readonly bookingService: BookingService) {}
 
   @Post()
+  @UseGuards(BookingRateLimitGuard)
   @ApiCreateBooking()
   createBooking(@Body() createBookingDto: CreateBookingDto) {
     return this.bookingService.createBooking(createBookingDto);
@@ -46,14 +57,8 @@ export class BookingController {
 
   @Put(":id/execute")
   @ApiExecuteBooking()
-  executeBooking(
-    @Param("id") id: string,
-    @Body() executeBookingDto: ExecuteBookingDto,
-  ) {
-    return this.bookingService.markBookingExecuted(
-      id,
-      executeBookingDto.purchaseId,
-    );
+  executeBooking(@Param("id") id: string) {
+    return this.bookingService.markBookingExecuted(id);
   }
 
   @Put(":id/cancel")

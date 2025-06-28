@@ -172,7 +172,6 @@ model Purchase {
   apiLogs          ApiRequestLog[]
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
-  bookingOrder     BookingOrder?
 }
 
 // TODO: find a better way to store the api request log
@@ -357,9 +356,6 @@ model BookingOrder {
   expiresAt DateTime
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
-
-  purchase   Purchase @relation(fields: [purchaseId], references: [id])
-  purchaseId String   @unique
 
   @@index([walletAddress])
   @@index([status])

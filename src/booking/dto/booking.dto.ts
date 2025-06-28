@@ -25,6 +25,14 @@ export class PaymentDetailsDto {
   @IsString()
   @IsNotEmpty()
   blockchainId: string;
+
+  @ApiProperty({
+    description: "ID of the exchange rate to use for this booking",
+    example: "01JX2FJZ7Y37Y9XXDHYP323P0X",
+  })
+  @IsString()
+  @IsNotEmpty()
+  exchangeRateId: string;
 }
 
 export class CreateBookingDto {
