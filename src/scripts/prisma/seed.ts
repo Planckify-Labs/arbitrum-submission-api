@@ -7,6 +7,7 @@ async function main() {
   await prisma.purchase.deleteMany({});
   await prisma.transactionHistory.deleteMany({});
   await prisma.productPrice.deleteMany({});
+  await prisma.productVariant.deleteMany({});
   await prisma.product.deleteMany({});
   await prisma.vendorAPI.deleteMany({});
   await prisma.vendor.deleteMany({});
@@ -357,6 +358,8 @@ async function main() {
         categoryId: categories[2].id,
         description: "XL mobile data packages for Indonesia",
         imageUrl: "https://example.com/xl-data.png",
+        inputType: "NUMBER",
+        inputDescription: "Please enter your phone number",
       },
     }),
   ]);

@@ -26,19 +26,26 @@ model Category {
 }
 
 model Product {
-  id          String           @id @default(ulid())
-  name        String
-  description String?
-  imageUrl    String?
-  code        String           @unique
-  category    Category         @relation(fields: [categoryId], references: [id])
-  categoryId  String
-  isActive    Boolean          @default(true)
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
-  variants    ProductVariant[]
+  id               String            @id @default(ulid())
+  name             String
+  description      String?
+  imageUrl         String?
+  inputType        ProductInputType?
+  inputDescription String?
+  code             String            @unique
+  category         Category          @relation(fields: [categoryId], references: [id])
+  categoryId       String
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  variants         ProductVariant[]
 
   @@index([code])
+}
+
+enum ProductInputType {
+  TEXT
+  NUMBER
 }
 
 model ProductVariant {
