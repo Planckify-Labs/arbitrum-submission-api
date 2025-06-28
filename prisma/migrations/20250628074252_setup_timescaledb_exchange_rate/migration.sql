@@ -1,11 +1,6 @@
-/*
-  Warnings:
+-- CreateEnum
+CREATE TYPE "ProductInputType" AS ENUM ('TEXT', 'NUMBER');
 
-  - You are about to drop the `Products` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `Vendors` table. If the table is not empty, all the data it contains will be lost.
-  - A unique constraint covering the columns `[name]` on the table `Category` will be added. If there are existing duplicate values, this will fail.
-
-*/
 -- CreateEnum
 CREATE TYPE "TransactionType" AS ENUM ('PAYMENT', 'REFUND');
 
@@ -18,29 +13,51 @@ CREATE TYPE "PurchaseStatus" AS ENUM ('PENDING', 'PROCESSING', 'COMPLETED', 'FAI
 -- CreateEnum
 CREATE TYPE "AuthProvider" AS ENUM ('WALLET', 'GOOGLE', 'APPLE', 'EMAIL');
 
--- DropForeignKey
-ALTER TABLE "Products" DROP CONSTRAINT "Products_categoryId_fkey";
+-- CreateEnum
+CREATE TYPE "BookingStatus" AS ENUM ('PENDING', 'EXPIRED', 'EXECUTED', 'CANCELLED');
 
--- DropForeignKey
-ALTER TABLE "Products" DROP CONSTRAINT "Products_vendorId_fkey";
+-- CreateTable
+CREATE TABLE "Category" (
+    "id" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "description" TEXT,
+    "imageUrl" TEXT,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
 
--- DropTable
-DROP TABLE "Products";
-
--- DropTable
-DROP TABLE "Vendors";
+    CONSTRAINT "Category_pkey" PRIMARY KEY ("id")
+);
 
 -- CreateTable
 CREATE TABLE "Product" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
-    "vendorId" TEXT NOT NULL,
+    "description" TEXT,
+    "imageUrl" TEXT,
+    "inputType" "ProductInputType",
+    "inputDescription" TEXT,
     "code" TEXT NOT NULL,
     "categoryId" TEXT NOT NULL,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "Product_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "ProductVariant" (
+    "id" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "description" TEXT,
+    "sku" TEXT NOT NULL,
+    "productId" TEXT NOT NULL,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "ProductVariant_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -91,10 +108,11 @@ CREATE TABLE "Token" (
     "symbol" TEXT NOT NULL,
     "decimals" INTEGER NOT NULL,
     "blockchainId" TEXT NOT NULL,
-    "contractAddress" TEXT,
+    "contractAddress" TEXT NOT NULL,
     "logoUrl" TEXT,
     "isStablecoin" BOOLEAN NOT NULL DEFAULT false,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "isNativeCurrency" BOOLEAN NOT NULL DEFAULT false,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -104,7 +122,7 @@ CREATE TABLE "Token" (
 -- CreateTable
 CREATE TABLE "ProductPrice" (
     "id" TEXT NOT NULL,
-    "productId" TEXT NOT NULL,
+    "productVariantId" TEXT NOT NULL,
     "vendorId" TEXT NOT NULL,
     "realValue" DECIMAL(65,30) NOT NULL,
     "priceFromVendor" DECIMAL(65,30) NOT NULL,
@@ -138,8 +156,7 @@ CREATE TABLE "TransactionHistory" (
 CREATE TABLE "Purchase" (
     "id" TEXT NOT NULL,
     "transactionId" TEXT NOT NULL,
-    "productId" TEXT NOT NULL,
-    "productPriceId" TEXT NOT NULL,
+    "productVariantId" TEXT NOT NULL,
     "status" "PurchaseStatus" NOT NULL DEFAULT 'PENDING',
     "customerInfo" JSONB NOT NULL,
     "vendorResponse" JSONB,
@@ -175,7 +192,7 @@ CREATE TABLE "ApiRequestLog" (
 
 -- CreateTable
 CREATE TABLE "ExchangeRate" (
-    "id" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
     "fromCurrency" TEXT NOT NULL,
     "toCurrency" TEXT NOT NULL,
     "rate" DECIMAL(65,30) NOT NULL,
@@ -185,9 +202,8 @@ CREATE TABLE "ExchangeRate" (
     "markup" DECIMAL(65,30),
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "ExchangeRate_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "ExchangeRate_pkey" PRIMARY KEY ("id", "createdAt")
 );
 
 -- CreateTable
@@ -284,6 +300,37 @@ CREATE TABLE "RegionAvailableToken" (
     CONSTRAINT "RegionAvailableToken_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "BookingOrder" (
+    "id" TEXT NOT NULL,
+    "walletAddress" TEXT NOT NULL,
+    "productVariantId" TEXT NOT NULL,
+    "productPriceId" TEXT NOT NULL,
+    "payment" JSONB NOT NULL,
+    "exchangeRate" JSONB NOT NULL,
+    "status" "BookingStatus" NOT NULL DEFAULT 'PENDING',
+    "expiresAt" TIMESTAMP(3) NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "BookingOrder_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Category_name_key" ON "Category"("name");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Product_code_key" ON "Product"("code");
+
+-- CreateIndex
+CREATE INDEX "Product_code_idx" ON "Product"("code");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "ProductVariant_sku_key" ON "ProductVariant"("sku");
+
+-- CreateIndex
+CREATE INDEX "ProductVariant_sku_idx" ON "ProductVariant"("sku");
+
 -- CreateIndex
 CREATE UNIQUE INDEX "Vendor_name_key" ON "Vendor"("name");
 
@@ -303,7 +350,7 @@ CREATE UNIQUE INDEX "Blockchain_name_key" ON "Blockchain"("name");
 CREATE UNIQUE INDEX "Blockchain_chainId_key" ON "Blockchain"("chainId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Token_blockchainId_symbol_key" ON "Token"("blockchainId", "symbol");
+CREATE UNIQUE INDEX "Token_contractAddress_key" ON "Token"("contractAddress");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Token_blockchainId_contractAddress_key" ON "Token"("blockchainId", "contractAddress");
@@ -315,7 +362,7 @@ CREATE UNIQUE INDEX "Purchase_transactionId_key" ON "Purchase"("transactionId");
 CREATE UNIQUE INDEX "ApiRequestLog_requestId_key" ON "ApiRequestLog"("requestId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "ExchangeRate_fromCurrency_toCurrency_region_provider_key" ON "ExchangeRate"("fromCurrency", "toCurrency", "region", "provider");
+CREATE UNIQUE INDEX "ExchangeRate_fromCurrency_toCurrency_region_provider_createdAt_key" ON "ExchangeRate"("fromCurrency", "toCurrency", "region", "provider", "createdAt");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "ExchangeSource_name_key" ON "ExchangeSource"("name");
@@ -333,13 +380,16 @@ CREATE UNIQUE INDEX "Region_code_key" ON "Region"("code");
 CREATE UNIQUE INDEX "RegionAvailableToken_regionId_tokenId_key" ON "RegionAvailableToken"("regionId", "tokenId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Category_name_key" ON "Category"("name");
+CREATE INDEX "BookingOrder_walletAddress_idx" ON "BookingOrder"("walletAddress");
 
--- AddForeignKey
-ALTER TABLE "Product" ADD CONSTRAINT "Product_vendorId_fkey" FOREIGN KEY ("vendorId") REFERENCES "Vendor"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+-- CreateIndex
+CREATE INDEX "BookingOrder_status_idx" ON "BookingOrder"("status");
 
 -- AddForeignKey
 ALTER TABLE "Product" ADD CONSTRAINT "Product_categoryId_fkey" FOREIGN KEY ("categoryId") REFERENCES "Category"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ProductVariant" ADD CONSTRAINT "ProductVariant_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "User" ADD CONSTRAINT "User_regionId_fkey" FOREIGN KEY ("regionId") REFERENCES "Region"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -348,7 +398,7 @@ ALTER TABLE "User" ADD CONSTRAINT "User_regionId_fkey" FOREIGN KEY ("regionId") 
 ALTER TABLE "Token" ADD CONSTRAINT "Token_blockchainId_fkey" FOREIGN KEY ("blockchainId") REFERENCES "Blockchain"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "ProductPrice" ADD CONSTRAINT "ProductPrice_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "ProductPrice" ADD CONSTRAINT "ProductPrice_productVariantId_fkey" FOREIGN KEY ("productVariantId") REFERENCES "ProductVariant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ProductPrice" ADD CONSTRAINT "ProductPrice_vendorId_fkey" FOREIGN KEY ("vendorId") REFERENCES "Vendor"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -363,10 +413,7 @@ ALTER TABLE "TransactionHistory" ADD CONSTRAINT "TransactionHistory_tokenId_fkey
 ALTER TABLE "Purchase" ADD CONSTRAINT "Purchase_transactionId_fkey" FOREIGN KEY ("transactionId") REFERENCES "TransactionHistory"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Purchase" ADD CONSTRAINT "Purchase_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "Purchase" ADD CONSTRAINT "Purchase_productPriceId_fkey" FOREIGN KEY ("productPriceId") REFERENCES "ProductPrice"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "Purchase" ADD CONSTRAINT "Purchase_productVariantId_fkey" FOREIGN KEY ("productVariantId") REFERENCES "ProductVariant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ApiRequestLog" ADD CONSTRAINT "ApiRequestLog_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -391,3 +438,18 @@ ALTER TABLE "RegionAvailableToken" ADD CONSTRAINT "RegionAvailableToken_regionId
 
 -- AddForeignKey
 ALTER TABLE "RegionAvailableToken" ADD CONSTRAINT "RegionAvailableToken_tokenId_fkey" FOREIGN KEY ("tokenId") REFERENCES "Token"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "BookingOrder" ADD CONSTRAINT "BookingOrder_productVariantId_fkey" FOREIGN KEY ("productVariantId") REFERENCES "ProductVariant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "BookingOrder" ADD CONSTRAINT "BookingOrder_productPriceId_fkey" FOREIGN KEY ("productPriceId") REFERENCES "ProductPrice"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- Create TimescaleDB extension if it doesn't exist
+CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
+
+-- Convert to TimescaleDB hypertable
+SELECT create_hypertable('"ExchangeRate"', 'createdAt', chunk_time_interval => INTERVAL '1 day');
+
+-- Create index on time and commonly queried fields
+CREATE INDEX "idx_exchange_rate_time_lookup" ON "ExchangeRate" ("createdAt" DESC, "fromCurrency", "toCurrency", "region", "provider");

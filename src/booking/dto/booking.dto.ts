@@ -28,11 +28,12 @@ export class PaymentDetailsDto {
 
   @ApiProperty({
     description: "ID of the exchange rate to use for this booking",
-    example: "01JX2FJZ7Y37Y9XXDHYP323P0X",
+    example: 1,
   })
-  @IsString()
+  @IsNumber()
   @IsNotEmpty()
-  exchangeRateId: string;
+  @Type(() => Number)
+  exchangeRateId: number;
 }
 
 export class CreateBookingDto {

@@ -13,6 +13,7 @@ import { SmartContractsModule } from "./smart-contracts/smart-contracts.module";
 import { PurchasesModule } from "./purchases/purchases.module";
 import { ApiLogsModule } from "./api-logs/api-logs.module";
 import { BookingModule } from "./booking/booking.module";
+import { ExchangeRateModule } from "./exchange-rate/exchange-rate.module";
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { BookingModule } from "./booking/booking.module";
     PurchasesModule,
     ApiLogsModule,
     BookingModule,
+    ExchangeRateModule,
   ],
   controllers: [AppController],
   providers: [AppService],

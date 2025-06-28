@@ -200,7 +200,7 @@ model ApiRequestLog {
 
 // TODO: for better performance, we can use timescaledb to store the exchange rate
 model ExchangeRate {
-  id               String         @id @default(ulid())
+  id               Int            @default(autoincrement())
   fromCurrency     String
   toCurrency       String
   rate             Decimal
@@ -211,9 +211,9 @@ model ExchangeRate {
   markup           Decimal?
   isActive         Boolean        @default(true)
   createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
 
-  @@unique([fromCurrency, toCurrency, region, provider])
+  @@id([id, createdAt])
+  @@unique([fromCurrency, toCurrency, region, provider, createdAt])
 }
 
 model ExchangeSource {

@@ -102,7 +102,10 @@ export class BookingService {
 
       const exchangeRate = await tx.exchangeRate.findUnique({
         where: {
-          id: payment.exchangeRateId,
+          id_createdAt: {
+            id: payment.exchangeRateId,
+            createdAt: new Date(),
+          },
         },
       });
 

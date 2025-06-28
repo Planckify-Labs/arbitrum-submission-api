@@ -19,7 +19,7 @@ export interface TokenDetails {
 }
 
 export interface BookingExchangeRate {
-  id: string;
+  id: number;
   rate: number;
   fromCurrency: string;
   toCurrency: string;
