@@ -168,6 +168,7 @@ model Purchase {
   productVariantId String
   status           PurchaseStatus     @default(PENDING)
   vendorResponse   Json?
+  customerInfo     Json?
   vendorRefId      String?
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
