@@ -180,8 +180,32 @@ export class TransactionsService {
       cursor: cursor ? { id: cursor } : undefined,
       where,
       include: {
-        token: true,
-        purchase: true,
+        token: {
+          select: {
+            blockchain: {
+              select: {
+                name: true,
+              },
+            },
+            contractAddress: true,
+            name: true,
+            symbol: true,
+          },
+        },
+        purchase: {
+          include: {
+            productVariant: {
+              select: {
+                name: true,
+                product: {
+                  select: {
+                    imageUrl: true,
+                  },
+                },
+              },
+            },
+          },
+        },
       },
       orderBy: {
         createdAt: "desc",
