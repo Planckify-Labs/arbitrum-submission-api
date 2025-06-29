@@ -142,21 +142,21 @@ model ProductPrice {
 }
 
 model TransactionHistory {
-  id          String            @id @default(ulid())
-  user        User              @relation(fields: [userId], references: [id])
-  userId      String
-  token       Token             @relation(fields: [tokenId], references: [id])
-  tokenId     String
-  type        TransactionType
-  status      TransactionStatus @default(PENDING)
-  amount      Decimal
-  amountInIDR Decimal
-  txHash      String?
-  fromAddress String?
-  toAddress   String?
-  purchase    Purchase?
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  id               String            @id @default(ulid())
+  user             User              @relation(fields: [userId], references: [id])
+  userId           String
+  token            Token             @relation(fields: [tokenId], references: [id])
+  tokenId          String
+  type             TransactionType
+  status           TransactionStatus @default(PENDING)
+  amount           Decimal
+  amountInIDR      Decimal
+  txHash           String?
+  senderAddress    String?
+  recipientAddress String?
+  purchase         Purchase?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
 }
 
 model Purchase {
@@ -166,10 +166,8 @@ model Purchase {
   productVariant   ProductVariant     @relation(fields: [productVariantId], references: [id])
   productVariantId String
   status           PurchaseStatus     @default(PENDING)
-  customerInfo     Json
   vendorResponse   Json?
   vendorRefId      String?
-  apiLogs          ApiRequestLog[]
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
 }
@@ -193,9 +191,6 @@ model ApiRequestLog {
   userId       String?
   metadata     Json?
   createdAt    DateTime @default(now())
-
-  purchase   Purchase? @relation(fields: [purchaseId], references: [id])
-  purchaseId String?
 }
 
 // TODO: for better performance, we can use timescaledb to store the exchange rate
@@ -273,6 +268,7 @@ model ContractABI {
 enum TransactionType {
   PAYMENT
   REFUND
+  TRANSFER
 }
 
 enum TransactionStatus {
@@ -281,6 +277,7 @@ enum TransactionStatus {
   COMPLETED
   FAILED
   REFUNDED
+  TRANSFERRED
 }
 
 enum PurchaseStatus {
