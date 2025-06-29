@@ -1,46 +1,183 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreatePurchaseDto, UpdatePurchaseDto } from "./dto/purchase.dto";
 import { SearchPurchaseDto } from "./dto/search-purchase.dto";
-import { Prisma } from "@generated/prisma";
+import {
+  Prisma,
+  PurchaseStatus,
+  TransactionType,
+  TransactionStatus,
+} from "@generated/prisma";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
+import { BookingStatus } from "../booking/enums/booking-status.enum";
 
 @Injectable()
 export class PurchasesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(createPurchaseDto: CreatePurchaseDto) {
-    const transaction = await this.prisma.transactionHistory.findUnique({
-      where: { id: createPurchaseDto.transactionId },
+    const { bookingId, walletAddress, networkId, contractAddress } =
+      createPurchaseDto;
+
+    const blockchain = await this.prisma.blockchain.findUnique({
+      where: { id: networkId },
     });
 
-    if (!transaction) {
-      throw new NotFoundException(
-        `Transaction with ID ${createPurchaseDto.transactionId} not found`,
+    if (!blockchain) {
+      throw new NotFoundException(`Network with ID ${networkId} not found`);
+    }
+
+    if (!blockchain.isActive) {
+      throw new BadRequestException(`Network ${blockchain.name} is not active`);
+    }
+
+    const smartContract = await this.prisma.smartContract.findUnique({
+      where: {
+        blockchainId_address: {
+          blockchainId: networkId,
+          address: contractAddress,
+        },
+      },
+    });
+
+    if (!smartContract) {
+      throw new BadRequestException(
+        `Smart contract with address ${contractAddress} not found on network ${blockchain.name}`,
       );
     }
 
-    const productVariant = await this.prisma.productVariant.findUnique({
-      where: { id: createPurchaseDto.productVariantId },
-    });
-
-    if (!productVariant) {
-      throw new NotFoundException(
-        `Product variant with ID ${createPurchaseDto.productVariantId} not found`,
+    if (!smartContract.isActive) {
+      throw new BadRequestException(
+        `Smart contract ${smartContract.name} is not active on network ${blockchain.name}`,
       );
     }
 
-    return this.prisma.purchase.create({
-      data: createPurchaseDto,
+    const booking = await this.prisma.bookingOrder.findUnique({
+      where: { id: bookingId },
       include: {
-        transaction: true,
         productVariant: {
           include: {
             product: true,
           },
         },
+        productPrice: {
+          include: {
+            vendor: true,
+          },
+        },
       },
     });
+
+    if (!booking) {
+      throw new NotFoundException(`Booking with ID ${bookingId} not found`);
+    }
+
+    if (booking.status !== BookingStatus.PENDING) {
+      throw new BadRequestException(
+        `Booking is ${booking.status.toLowerCase()}, must be PENDING`,
+      );
+    }
+
+    if (booking.expiresAt < new Date()) {
+      throw new BadRequestException("Booking has expired");
+    }
+
+    if (booking.walletAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+      throw new BadRequestException(
+        `Wallet address mismatch: booking belongs to ${booking.walletAddress}`,
+      );
+    }
+
+    const payment = booking.payment as {
+      tokenAddress: string;
+      blockchainNetworkId: string;
+      amount: string;
+    };
+
+    if (payment.blockchainNetworkId !== networkId) {
+      throw new BadRequestException(
+        `Network ID mismatch: booking uses network ${payment.blockchainNetworkId}, but ${networkId} was provided`,
+      );
+    }
+
+    let user = await this.prisma.user.findUnique({
+      where: { walletAddress },
+    });
+
+    if (!user) {
+      user = await this.prisma.user.create({
+        data: {
+          walletAddress,
+          authProvider: "WALLET",
+        },
+      });
+    }
+
+    const token = await this.prisma.token.findUnique({
+      where: {
+        blockchainId_contractAddress: {
+          blockchainId: networkId,
+          contractAddress: payment.tokenAddress,
+        },
+      },
+    });
+
+    if (!token) {
+      throw new BadRequestException(
+        `Token with address ${payment.tokenAddress} not found on network ${blockchain.name}`,
+      );
+    }
+
+    const exchangeRateObj = booking.exchangeRate as { rate: number } | null;
+    const exchangeRate = exchangeRateObj?.rate || 0;
+
+    const sellPrice = booking.productPrice?.sellPrice?.toString() || "0";
+    const amountInFiat =
+      exchangeRate && sellPrice
+        ? (Number(sellPrice) * exchangeRate).toString()
+        : "0";
+
+    const transaction = await this.prisma.transactionHistory.create({
+      data: {
+        user: {
+          connect: { id: user.id },
+        },
+        token: {
+          connect: { id: token.id },
+        },
+        amount: payment.amount,
+        amountInFiat,
+        fiatCurrency: "USD",
+        type: TransactionType.PAYMENT,
+        status: TransactionStatus.PENDING,
+      },
+    });
+
+    const purchaseData: Prisma.PurchaseCreateInput = {
+      transaction: {
+        connect: { id: transaction.id },
+      },
+      productVariant: {
+        connect: { id: booking.productVariantId },
+      },
+      status: PurchaseStatus.PENDING,
+    };
+
+    const purchase = await this.prisma.purchase.create({
+      data: purchaseData,
+    });
+
+    await this.prisma.bookingOrder.update({
+      where: { id: bookingId },
+      data: {
+        status: BookingStatus.EXECUTED,
+      },
+    });
+    return `${purchase.id}#${booking.id}#${booking.productVariantId}`;
   }
 
   async findAll(paginationDto: CursorPaginationDto) {

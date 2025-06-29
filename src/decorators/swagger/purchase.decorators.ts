@@ -8,25 +8,45 @@ import {
 } from "@nestjs/swagger";
 import { PurchaseStatus } from "@generated/prisma";
 
-// Document the actual implementation without changing it
 export function ApiCreatePurchase() {
   return applyDecorators(
     ApiBearerAuth(),
     ApiOperation({
-      summary: "Create a new purchase",
-      description: "Creates a new purchase record in the system",
+      summary: "Create a new purchase from booking",
+      description: `Creates a new purchase record based on a booking.
+      
+Response Format: "purchaseId#bookingId#productVariantId"
+
+IMPORTANT: The order and format of these IDs must be preserved exactly as returned.
+This string is used to maintain data integrity between on-chain and off-chain systems.
+
+Response Components:
+1. purchaseId: Unique identifier for the newly created purchase record
+2. bookingId: Reference to the original booking that initiated this purchase
+3. productVariantId: Identifier of the specific product variant being purchased
+
+Example: "01HN8V...#01HN8T...#01HN8R..."
+
+Note: Do not modify or reorder these IDs as they are used to verify and track the purchase onchain`,
     }),
     ApiResponse({
       status: 201,
-      description: "Purchase created successfully",
+      description:
+        "Purchase created successfully. Returns a string containing purchaseId, bookingId, and productVariantId in a specific format.",
+      schema: {
+        type: "string",
+        example: "01HN8V...#01HN8T...#01HN8R...",
+        description: "Format: purchaseId#bookingId#productVariantId",
+      },
     }),
     ApiResponse({
       status: 400,
-      description: "Invalid input data",
+      description:
+        "Invalid input data, booking expired, wallet address mismatch, or network/smart contract validation failed",
     }),
     ApiResponse({
       status: 404,
-      description: "Transaction or product variant not found",
+      description: "Booking not found or token not found",
     }),
   );
 }

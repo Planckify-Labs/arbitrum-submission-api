@@ -23,28 +23,44 @@ interface VendorResponse {
 
 export class CreatePurchaseDto {
   @ApiProperty({
-    description: "Transaction ID associated with the purchase",
-    example: "01H1G5V...",
+    description: "Wallet address of the user",
+    example: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
   })
   @IsString()
   @IsNotEmpty()
-  transactionId: string;
+  walletAddress: string;
 
   @ApiProperty({
-    description: "Product variant ID being purchased",
+    description: "Booking ID associated with the purchase",
     example: "01H1G5V...",
   })
   @IsString()
   @IsNotEmpty()
-  productVariantId: string;
+  bookingId: string;
+
+  @ApiProperty({
+    description: "Smart contract address that made the request",
+    example: "0x1234567890abcdef1234567890abcdef12345678",
+  })
+  @IsString()
+  @IsNotEmpty()
+  contractAddress: string;
+
+  @ApiProperty({
+    description: "Network ID from the database",
+    example: "01JX2FJZ7Y37Y9XXDHYP323P0X",
+  })
+  @IsString()
+  @IsNotEmpty()
+  networkId: string;
 
   @ApiProperty({
     description: "Customer information for the purchase",
     example: { gameId: "12345678", serverID: "9999" },
   })
   @IsObject()
-  @IsNotEmpty()
-  customerInfo: CustomerInfo;
+  @IsOptional()
+  customerInfo?: CustomerInfo;
 }
 
 export class UpdatePurchaseDto {
