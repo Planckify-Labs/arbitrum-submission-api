@@ -168,7 +168,6 @@ model Purchase {
   productVariantId String
   status           PurchaseStatus     @default(PENDING)
   vendorResponse   Json?
-  customerInfo     Json?
   vendorRefId      String?
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
@@ -347,14 +346,13 @@ model BookingOrder {
   productVariantId String
   productPrice     ProductPrice   @relation(fields: [productPriceId], references: [id])
   productPriceId   String
-
-  payment      Json
-  exchangeRate Json
-
-  status    BookingStatus @default(PENDING)
-  expiresAt DateTime
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
+  customerInfo     Json?
+  payment          Json
+  exchangeRate     Json
+  status           BookingStatus  @default(PENDING)
+  expiresAt        DateTime
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
 
   @@index([walletAddress])
   @@index([status])
