@@ -6,6 +6,7 @@ async function main() {
   await prisma.apiRequestLog.deleteMany({});
   await prisma.purchase.deleteMany({});
   await prisma.transactionHistory.deleteMany({});
+  await prisma.bookingOrder.deleteMany({});
   await prisma.productPrice.deleteMany({});
   await prisma.productVariant.deleteMany({});
   await prisma.product.deleteMany({});
@@ -506,8 +507,8 @@ async function main() {
       amountInIDR: 157000,
       txHash:
         "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-      fromAddress: users[0].walletAddress,
-      toAddress: "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199",
+      senderAddress: users[0].walletAddress,
+      recipientAddress: "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199",
     },
   });
 
@@ -526,7 +527,6 @@ async function main() {
       transactionId: transaction.id,
       productVariantId: productVariants[0].id,
       status: "COMPLETED",
-      customerInfo: JSON.parse('{"gameId": "12345678", "serverID": "9999"}'),
       vendorResponse: JSON.parse(
         '{"success": true, "message": "Top up successful", "transactionId": "VC123456789"}',
       ),

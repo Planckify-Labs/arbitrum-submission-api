@@ -41,11 +41,6 @@ export function ApiSearchLogs() {
       description: "Filter by user ID",
     }),
     ApiQuery({
-      name: "purchaseId",
-      required: false,
-      description: "Filter by purchase ID",
-    }),
-    ApiQuery({
       name: "service",
       required: false,
       description: "Filter by service name",
@@ -118,30 +113,6 @@ export function ApiGetUserLogs() {
     ApiResponse({
       status: 404,
       description: "User not found",
-    }),
-  );
-}
-
-export function ApiGetPurchaseLogs() {
-  return applyDecorators(
-    ApiBearerAuth(),
-    ApiOperation({
-      summary: "Get purchase API logs",
-      description: "Retrieves all API logs for a specific purchase",
-    }),
-    ApiParam({
-      name: "purchaseId",
-      description: "Purchase ID",
-      example: "01H1G5V...",
-    }),
-    ApiResponse({
-      status: 200,
-      description: "List of purchase API logs",
-      type: [ApiLogResponseDto],
-    }),
-    ApiResponse({
-      status: 404,
-      description: "Purchase not found",
     }),
   );
 }

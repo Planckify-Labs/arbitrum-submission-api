@@ -142,8 +142,8 @@ export class TransactionsService {
       status,
       userId,
       tokenId,
-      fromAddress,
-      toAddress,
+      senderAddress,
+      recipientAddress,
       startDate,
       endDate,
     } = searchParams;
@@ -154,8 +154,8 @@ export class TransactionsService {
     if (status) where.status = status;
     if (userId) where.userId = userId;
     if (tokenId) where.tokenId = tokenId;
-    if (fromAddress) where.fromAddress = fromAddress;
-    if (toAddress) where.toAddress = toAddress;
+    if (senderAddress) where.senderAddress = senderAddress;
+    if (recipientAddress) where.recipientAddress = recipientAddress;
 
     if (startDate || endDate) {
       where.createdAt = {};

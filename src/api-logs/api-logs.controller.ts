@@ -8,7 +8,6 @@ import {
   ApiSearchLogs,
   ApiGetLogByRequestId,
   ApiGetUserLogs,
-  ApiGetPurchaseLogs,
 } from "../decorators/swagger/api-log.decorators";
 
 @Controller("api-logs")
@@ -41,11 +40,5 @@ export class ApiLogsController {
   @ApiGetUserLogs()
   findByUser(@Param("userId") userId: string) {
     return this.apiLogsService.findByUser(userId);
-  }
-
-  @Get("purchase/:purchaseId")
-  @ApiGetPurchaseLogs()
-  findByPurchase(@Param("purchaseId") purchaseId: string) {
-    return this.apiLogsService.findByPurchase(purchaseId);
   }
 }

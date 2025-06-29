@@ -16,7 +16,6 @@ export class ApiLogsService {
       cursor: cursor ? { id: cursor } : undefined,
       include: {
         user: true,
-        purchase: true,
       },
       orderBy: {
         createdAt: "desc",
@@ -29,15 +28,8 @@ export class ApiLogsService {
     paginationDto: CursorPaginationDto,
   ) {
     const { cursor, take = 10 } = paginationDto;
-    const {
-      requestId,
-      userId,
-      purchaseId,
-      service,
-      endpoint,
-      method,
-      success,
-    } = searchParams;
+    const { requestId, userId, service, endpoint, method, success } =
+      searchParams;
 
     return await this.prisma.apiRequestLog.findMany({
       take,
@@ -46,7 +38,6 @@ export class ApiLogsService {
       where: {
         ...(requestId && { requestId }),
         ...(userId && { userId }),
-        ...(purchaseId && { purchaseId }),
         ...(service && { service }),
         ...(endpoint && { endpoint }),
         ...(method && { method }),
@@ -54,7 +45,6 @@ export class ApiLogsService {
       },
       include: {
         user: true,
-        purchase: true,
       },
       orderBy: {
         createdAt: "desc",
@@ -67,7 +57,6 @@ export class ApiLogsService {
       where: { requestId },
       include: {
         user: true,
-        purchase: true,
       },
     });
 
@@ -93,25 +82,6 @@ export class ApiLogsService {
       where: { userId },
       include: {
         user: true,
-        purchase: true,
-      },
-    });
-  }
-
-  async findByPurchase(purchaseId: string) {
-    const purchase = await this.prisma.purchase.findUnique({
-      where: { id: purchaseId },
-    });
-
-    if (!purchase) {
-      throw new NotFoundException(`Purchase with ID ${purchaseId} not found`);
-    }
-
-    return await this.prisma.apiRequestLog.findMany({
-      where: { purchaseId },
-      include: {
-        user: true,
-        purchase: true,
       },
     });
   }

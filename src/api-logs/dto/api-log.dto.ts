@@ -1,9 +1,5 @@
 import { ApiProperty } from "@nestjs/swagger";
-import {
-  IsBoolean,
-  IsOptional,
-  IsString,
-} from "class-validator";
+import { IsBoolean, IsOptional, IsString } from "class-validator";
 import { Transform } from "class-transformer";
 
 interface ApiLogMetadata {
@@ -31,15 +27,6 @@ export class SearchApiLogDto {
   @IsString()
   @IsOptional()
   userId?: string;
-
-  @ApiProperty({
-    description: "Purchase ID to filter logs",
-    example: "01H1G5V...",
-    required: false,
-  })
-  @IsString()
-  @IsOptional()
-  purchaseId?: string;
 
   @ApiProperty({
     description: "Service name to filter logs",
@@ -167,12 +154,6 @@ export class ApiLogResponseDto {
     example: "01H1G5V...",
   })
   userId?: string;
-
-  @ApiProperty({
-    description: "Associated purchase ID",
-    example: "01H1G5V...",
-  })
-  purchaseId?: string;
 
   @ApiProperty({
     description: "Additional metadata",

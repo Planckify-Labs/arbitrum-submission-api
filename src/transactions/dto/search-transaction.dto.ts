@@ -26,12 +26,12 @@ export class SearchTransactionDto {
   @ApiProperty({ example: "0x123...abc", required: false })
   @IsOptional()
   @IsString()
-  fromAddress?: string;
+  senderAddress?: string;
 
   @ApiProperty({ example: "0x456...def", required: false })
   @IsOptional()
   @IsString()
-  toAddress?: string;
+  recipientAddress?: string;
 
   @ApiProperty({ example: "2024-03-14T00:00:00.000Z", required: false })
   @IsOptional()

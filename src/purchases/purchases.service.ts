@@ -39,7 +39,6 @@ export class PurchasesService {
             product: true,
           },
         },
-        apiLogs: true,
       },
     });
   }
@@ -58,7 +57,6 @@ export class PurchasesService {
             product: true,
           },
         },
-        apiLogs: true,
       },
       orderBy: {
         createdAt: "desc",
@@ -76,7 +74,6 @@ export class PurchasesService {
             product: true,
           },
         },
-        apiLogs: true,
       },
     });
 
@@ -109,7 +106,6 @@ export class PurchasesService {
             product: true,
           },
         },
-        apiLogs: true,
       },
     });
   }
@@ -199,7 +195,6 @@ export class PurchasesService {
             },
           },
         },
-        apiLogs: true,
       },
       orderBy: {
         createdAt: "desc",
@@ -243,7 +238,6 @@ export class PurchasesService {
             },
           },
         },
-        apiLogs: true,
       },
       orderBy: {
         createdAt: "desc",
@@ -287,7 +281,6 @@ export class PurchasesService {
             },
           },
         },
-        apiLogs: true,
       },
       orderBy: {
         createdAt: "desc",
@@ -338,7 +331,6 @@ export class PurchasesService {
             },
           },
         },
-        apiLogs: true,
       },
       orderBy: {
         createdAt: "desc",
