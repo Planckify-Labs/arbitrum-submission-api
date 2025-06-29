@@ -151,9 +151,11 @@ export class PurchasesService {
         },
         amount: payment.amount,
         amountInFiat,
-        fiatCurrency: "USD",
+        fiatCurrency: "IDR",
         type: TransactionType.PAYMENT,
         status: TransactionStatus.PENDING,
+        senderAddress: walletAddress,
+        recipientAddress: smartContract.address,
       },
     });
 
