@@ -504,7 +504,8 @@ async function main() {
       type: "PAYMENT",
       status: "COMPLETED",
       amount: 10,
-      amountInIDR: 157000,
+      amountInFiat: 157000,
+      fiatCurrency: "IDR",
       txHash:
         "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
       senderAddress: users[0].walletAddress,

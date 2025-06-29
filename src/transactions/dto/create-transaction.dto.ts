@@ -40,7 +40,12 @@ export class CreateTransactionDto {
   @IsNotEmpty()
   @IsNumber()
   @Type(() => Number)
-  amountInIDR: number;
+  amountInFiat: number;
+
+  @ApiProperty({ example: "IDR" })
+  @IsNotEmpty()
+  @IsString()
+  fiatCurrency: string;
 
   @ApiProperty({ example: "0x123...abc", required: false })
   @IsOptional()

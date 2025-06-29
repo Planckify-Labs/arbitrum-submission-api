@@ -150,7 +150,8 @@ model TransactionHistory {
   type             TransactionType
   status           TransactionStatus @default(PENDING)
   amount           Decimal
-  amountInIDR      Decimal
+  amountInFiat     Decimal
+  fiatCurrency     String
   txHash           String?
   senderAddress    String?
   recipientAddress String?

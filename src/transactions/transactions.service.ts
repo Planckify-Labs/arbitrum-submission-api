@@ -12,7 +12,18 @@ export class TransactionsService {
 
   async create(createTransactionDto: CreateTransactionDto) {
     return await this.prisma.transactionHistory.create({
-      data: createTransactionDto,
+      data: {
+        userId: createTransactionDto.userId,
+        tokenId: createTransactionDto.tokenId,
+        type: createTransactionDto.type,
+        status: createTransactionDto.status,
+        amount: createTransactionDto.amount,
+        amountInFiat: createTransactionDto.amountInFiat,
+        fiatCurrency: createTransactionDto.fiatCurrency,
+        txHash: createTransactionDto.txHash,
+        senderAddress: createTransactionDto.fromAddress,
+        recipientAddress: createTransactionDto.toAddress,
+      },
       include: {
         token: true,
         purchase: true,
