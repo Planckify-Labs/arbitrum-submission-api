@@ -53,14 +53,6 @@ export class CreatePurchaseDto {
   @IsString()
   @IsNotEmpty()
   networkId: string;
-
-  @ApiProperty({
-    description: "Customer information for the purchase",
-    example: { gameId: "12345678", serverID: "9999" },
-  })
-  @IsObject()
-  @IsOptional()
-  customerInfo?: CustomerInfo;
 }
 
 export class UpdatePurchaseDto {
