@@ -100,12 +100,13 @@ export class BookingService {
 
       const productPrice = productVariant.ProductPrice[0];
 
-      const exchangeRate = await tx.exchangeRate.findUnique({
+      const exchangeRate = await tx.exchangeRate.findFirst({
         where: {
-          id_createdAt: {
-            id: payment.exchangeRateId,
-            createdAt: new Date(),
-          },
+          id: payment.exchangeRateId,
+          isActive: true,
+        },
+        orderBy: {
+          createdAt: "desc",
         },
       });
 
