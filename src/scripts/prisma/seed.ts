@@ -1,31 +1,29 @@
 import { PrismaClient } from "../../../generated/prisma";
+import { getProductList } from "../../utils/temp/vcGamersAPI";
+
+interface VCGamersProduct {
+  key: string;
+  name: string;
+  image_url: string;
+  description?: string;
+  is_voucher: boolean;
+  is_active: boolean;
+  forms?: Array<{
+    key: string;
+    type: string;
+    alias: string;
+    options?: string[];
+  }>;
+}
 
 const prisma = new PrismaClient();
 
 async function main() {
-  await prisma.apiRequestLog.deleteMany({});
-  await prisma.purchase.deleteMany({});
-  await prisma.transactionHistory.deleteMany({});
-  await prisma.bookingOrder.deleteMany({});
-  await prisma.productPrice.deleteMany({});
-  await prisma.productVariant.deleteMany({});
-  await prisma.product.deleteMany({});
-  await prisma.vendorAPI.deleteMany({});
-  await prisma.vendor.deleteMany({});
-  await prisma.category.deleteMany({});
-  await prisma.regionAvailableToken.deleteMany({});
-  await prisma.token.deleteMany({});
-  await prisma.smartContract.deleteMany({});
-  await prisma.contractABI.deleteMany({});
-  await prisma.user.deleteMany({});
-  await prisma.exchangeRate.deleteMany({});
-  await prisma.exchangeSource.deleteMany({});
-  await prisma.blockchain.deleteMany({});
-  await prisma.region.deleteMany({});
-
   const regions = await Promise.all([
-    prisma.region.create({
-      data: {
+    prisma.region.upsert({
+      where: { code: "ID" },
+      update: {},
+      create: {
         code: "ID",
         name: "Indonesia",
         currencyCode: "IDR",
@@ -35,8 +33,10 @@ async function main() {
         supportPhone: "+62123456789",
       },
     }),
-    prisma.region.create({
-      data: {
+    prisma.region.upsert({
+      where: { code: "SG" },
+      update: {},
+      create: {
         code: "SG",
         name: "Singapore",
         currencyCode: "SGD",
@@ -49,8 +49,10 @@ async function main() {
   ]);
 
   const blockchains = await Promise.all([
-    prisma.blockchain.create({
-      data: {
+    prisma.blockchain.upsert({
+      where: { chainId: 1 },
+      update: {},
+      create: {
         name: "Ethereum",
         chainId: 1,
         rpcUrl: "https://eth-mainnet.g.alchemy.com/v2/demo",
@@ -59,8 +61,10 @@ async function main() {
         isActive: true,
       },
     }),
-    prisma.blockchain.create({
-      data: {
+    prisma.blockchain.upsert({
+      where: { chainId: 137 },
+      update: {},
+      create: {
         name: "Polygon",
         chainId: 137,
         rpcUrl: "https://polygon-rpc.com",
@@ -72,8 +76,10 @@ async function main() {
   ]);
 
   const contractABIs = await Promise.all([
-    prisma.contractABI.create({
-      data: {
+    prisma.contractABI.upsert({
+      where: { name: "ERC20" },
+      update: {},
+      create: {
         name: "ERC20",
         description: "Standard ERC20 token interface",
         version: "1.0.0",
@@ -83,8 +89,10 @@ async function main() {
         isVerified: true,
       },
     }),
-    prisma.contractABI.create({
-      data: {
+    prisma.contractABI.upsert({
+      where: { name: "PaymentProcessor" },
+      update: {},
+      create: {
         name: "PaymentProcessor",
         description: "Payment processor contract",
         version: "1.0.0",
@@ -97,8 +105,11 @@ async function main() {
   ]);
 
   await Promise.all([
-    prisma.smartContract.create({
-      data: {
+    prisma.smartContract.upsert({
+      where: { id: "smart-contract-usdt" },
+      update: {},
+      create: {
+        id: "smart-contract-usdt",
         name: "USDT Contract",
         blockchainId: blockchains[0].id,
         address: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
@@ -106,8 +117,11 @@ async function main() {
         isActive: true,
       },
     }),
-    prisma.smartContract.create({
-      data: {
+    prisma.smartContract.upsert({
+      where: { id: "smart-contract-payment" },
+      update: {},
+      create: {
+        id: "smart-contract-payment",
         name: "Payment Processor",
         blockchainId: blockchains[1].id,
         address: "0x1234567890123456789012345678901234567890",
@@ -118,8 +132,10 @@ async function main() {
   ]);
 
   const tokens = await Promise.all([
-    prisma.token.create({
-      data: {
+    prisma.token.upsert({
+      where: { contractAddress: "0xdAC17F958D2ee523a2206206994597C13D831ec7" },
+      update: {},
+      create: {
         name: "Tether USD",
         symbol: "USDT",
         decimals: 6,
@@ -131,8 +147,10 @@ async function main() {
         isActive: true,
       },
     }),
-    prisma.token.create({
-      data: {
+    prisma.token.upsert({
+      where: { contractAddress: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" },
+      update: {},
+      create: {
         name: "USD Coin",
         symbol: "USDC",
         decimals: 6,
@@ -147,8 +165,10 @@ async function main() {
   ]);
 
   const nativeTokens = await Promise.all([
-    prisma.token.create({
-      data: {
+    prisma.token.upsert({
+      where: { contractAddress: "0x0000000000000000000000000000000000000000" },
+      update: {},
+      create: {
         name: "Ethereum",
         symbol: "ETH",
         decimals: 18,
@@ -161,8 +181,10 @@ async function main() {
         isActive: true,
       },
     }),
-    prisma.token.create({
-      data: {
+    prisma.token.upsert({
+      where: { contractAddress: "0x1230000000000000000000000000000000000000" },
+      update: {},
+      create: {
         name: "Polygon",
         symbol: "MATIC",
         decimals: 18,
@@ -178,8 +200,15 @@ async function main() {
   ]);
 
   await Promise.all([
-    prisma.regionAvailableToken.create({
-      data: {
+    prisma.regionAvailableToken.upsert({
+      where: {
+        regionId_tokenId: {
+          regionId: regions[0].id,
+          tokenId: tokens[0].id,
+        },
+      },
+      update: {},
+      create: {
         regionId: regions[0].id,
         tokenId: tokens[0].id,
         isActive: true,
@@ -190,8 +219,15 @@ async function main() {
         isDefault: true,
       },
     }),
-    prisma.regionAvailableToken.create({
-      data: {
+    prisma.regionAvailableToken.upsert({
+      where: {
+        regionId_tokenId: {
+          regionId: regions[1].id,
+          tokenId: tokens[1].id,
+        },
+      },
+      update: {},
+      create: {
         regionId: regions[1].id,
         tokenId: tokens[1].id,
         isActive: true,
@@ -205,10 +241,17 @@ async function main() {
   ]);
 
   await Promise.all([
-    prisma.regionAvailableToken.create({
-      data: {
-        regionId: regions[0].id, // Indonesia
-        tokenId: nativeTokens[0].id, // ETH
+    prisma.regionAvailableToken.upsert({
+      where: {
+        regionId_tokenId: {
+          regionId: regions[0].id,
+          tokenId: nativeTokens[0].id,
+        },
+      },
+      update: {},
+      create: {
+        regionId: regions[0].id,
+        tokenId: nativeTokens[0].id,
         isActive: true,
         minAmount: 0.01,
         maxAmount: 10,
@@ -217,10 +260,17 @@ async function main() {
         isDefault: false,
       },
     }),
-    prisma.regionAvailableToken.create({
-      data: {
-        regionId: regions[0].id, // Indonesia
-        tokenId: nativeTokens[1].id, // MATIC
+    prisma.regionAvailableToken.upsert({
+      where: {
+        regionId_tokenId: {
+          regionId: regions[0].id,
+          tokenId: nativeTokens[1].id,
+        },
+      },
+      update: {},
+      create: {
+        regionId: regions[0].id,
+        tokenId: nativeTokens[1].id,
         isActive: true,
         minAmount: 10,
         maxAmount: 10000,
@@ -231,8 +281,10 @@ async function main() {
     }),
   ]);
 
-  const exchangeSource = await prisma.exchangeSource.create({
-    data: {
+  const exchangeSource = await prisma.exchangeSource.upsert({
+    where: { name: "CoinGecko" },
+    update: {},
+    create: {
       name: "CoinGecko",
       description: "CoinGecko API for crypto prices",
       apiEndpoint: "https://api.coingecko.com/api/v3",
@@ -269,8 +321,10 @@ async function main() {
   ]);
 
   const users = await Promise.all([
-    prisma.user.create({
-      data: {
+    prisma.user.upsert({
+      where: { walletAddress: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" },
+      update: {},
+      create: {
         walletAddress: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
         email: "user1@example.com",
         name: "User One",
@@ -279,8 +333,10 @@ async function main() {
         regionId: regions[0].id,
       },
     }),
-    prisma.user.create({
-      data: {
+    prisma.user.upsert({
+      where: { email: "user2@example.com" },
+      update: {},
+      create: {
         email: "user2@example.com",
         name: "User Two",
         profileImage: "https://i.pravatar.cc/150?u=user2",
@@ -292,17 +348,24 @@ async function main() {
   ]);
 
   const vendors = await Promise.all([
-    prisma.vendor.create({
-      data: { name: "vcGamer" },
+    prisma.vendor.upsert({
+      where: { name: "vcGamer" },
+      update: {},
+      create: { name: "vcGamer" },
     }),
-    prisma.vendor.create({
-      data: { name: "DigiVoucher" },
+    prisma.vendor.upsert({
+      where: { name: "DigiVoucher" },
+      update: {},
+      create: { name: "DigiVoucher" },
     }),
   ]);
 
   await Promise.all([
-    prisma.vendorAPI.create({
-      data: {
+    prisma.vendorAPI.upsert({
+      where: { id: "vcgamer-api" },
+      update: {},
+      create: {
+        id: "vcgamer-api",
         vendorId: vendors[0].id,
         baseUrl: "https://api.vcgamer.com",
         apiKey: "vcgamer-api-key-123",
@@ -310,8 +373,11 @@ async function main() {
         isActive: true,
       },
     }),
-    prisma.vendorAPI.create({
-      data: {
+    prisma.vendorAPI.upsert({
+      where: { id: "digivoucher-api" },
+      update: {},
+      create: {
+        id: "digivoucher-api",
         vendorId: vendors[1].id,
         baseUrl: "https://api.digivoucher.com",
         apiKey: "digivoucher-api-key-789",
@@ -322,100 +388,110 @@ async function main() {
   ]);
 
   const categories = await Promise.all([
-    prisma.category.create({
-      data: { name: "Gaming Top Up" },
+    prisma.category.upsert({
+      where: { name: "Gaming Top Up" },
+      update: {},
+      create: { name: "Gaming Top Up" },
     }),
-    prisma.category.create({
-      data: { name: "Voucher" },
+    prisma.category.upsert({
+      where: { name: "Voucher" },
+      update: {},
+      create: { name: "Voucher" },
     }),
-    prisma.category.create({
-      data: { name: "Mobile Data" },
+    prisma.category.upsert({
+      where: { name: "Mobile Data" },
+      update: {},
+      create: { name: "Mobile Data" },
     }),
   ]);
 
-  const products = await Promise.all([
-    prisma.product.create({
-      data: {
-        name: "Mobile Legends",
-        code: "MLBB",
-        categoryId: categories[0].id,
-        description: "Mobile Legends: Bang Bang is a mobile MOBA game",
-        imageUrl: "https://example.com/mobile-legends.png",
-      },
-    }),
-    prisma.product.create({
-      data: {
-        name: "Voucher Google Play US",
-        code: "VOGOP",
-        categoryId: categories[1].id,
-        description: "Google Play gift cards for US store",
-        imageUrl: "https://example.com/google-play.png",
-      },
-    }),
-    prisma.product.create({
-      data: {
-        name: "XL Data Packages",
-        code: "XLDATA",
-        categoryId: categories[2].id,
-        description: "XL mobile data packages for Indonesia",
-        imageUrl: "https://example.com/xl-data.png",
-        inputType: "NUMBER",
-        inputDescription: "Please enter your phone number",
-      },
-    }),
-  ]);
+  const vcGamersProducts = await getProductList();
+  if (vcGamersProducts.statusCode !== 200) {
+    throw new Error("Failed to fetch products from vcGamers API");
+  }
+
+  const products = await Promise.all(
+    vcGamersProducts.data.map((product: VCGamersProduct) =>
+      prisma.product.upsert({
+        where: { code: product.key },
+        update: {},
+        create: {
+          name: product.name,
+          code: product.key,
+          categoryId: categories[0].id,
+          description: product.description?.replace(/<[^>]*>/g, "") || "",
+          imageUrl: product.image_url,
+          isActive: false,
+        },
+      }),
+    ),
+  );
 
   const productVariants = await Promise.all([
-    prisma.productVariant.create({
-      data: {
+    prisma.productVariant.upsert({
+      where: { sku: "MLBB-86" },
+      update: {},
+      create: {
         name: "86 Diamonds",
         sku: "MLBB-86",
         description: "86 Diamonds for Mobile Legends",
         productId: products[0].id,
       },
     }),
-    prisma.productVariant.create({
-      data: {
+    prisma.productVariant.upsert({
+      where: { sku: "MLBB-172" },
+      update: {},
+      create: {
         name: "172 Diamonds",
         sku: "MLBB-172",
         description: "172 Diamonds for Mobile Legends",
         productId: products[0].id,
       },
     }),
-    prisma.productVariant.create({
-      data: {
+    prisma.productVariant.upsert({
+      where: { sku: "GOGP-10" },
+      update: {},
+      create: {
         name: "$10 Google Play Card",
         sku: "GOGP-10",
         description: "$10 Google Play Gift Card",
         productId: products[1].id,
       },
     }),
-    prisma.productVariant.create({
-      data: {
+    prisma.productVariant.upsert({
+      where: { sku: "GOGP-25" },
+      update: {},
+      create: {
         name: "$25 Google Play Card",
         sku: "GOGP-25",
         description: "$25 Google Play Gift Card",
         productId: products[1].id,
       },
     }),
-    prisma.productVariant.create({
-      data: {
+    prisma.productVariant.upsert({
+      where: { sku: "XLDB1GB2H" },
+      update: {},
+      create: {
         name: "Data Blue 1 GB 2 Hari",
         sku: "XLDB1GB2H",
         description: "XL Data Blue 1 GB valid for 2 days",
         productId: products[2].id,
       },
     }),
-    prisma.productVariant.create({
-      data: {
+    prisma.productVariant.upsert({
+      where: { sku: "XLHR1GB2H" },
+      update: {},
+      create: {
         name: "HOTROD 1 GB 2 Hari",
         sku: "XLHR1GB2H",
         description: "XL HOTROD 1 GB valid for 2 days",
         productId: products[2].id,
       },
     }),
-    prisma.productVariant.create({
-      data: {
+    prisma.productVariant.upsert({
+      where: { sku: "XLHR500M7H" },
+      update: {},
+      create: {
         name: "HOTROD 500 MB 7 Hari",
         sku: "XLHR500M7H",
         description: "XL HOTROD 500 MB valid for 7 days",
@@ -425,8 +501,11 @@ async function main() {
   ]);
 
   await Promise.all([
-    prisma.productPrice.create({
-      data: {
+    prisma.productPrice.upsert({
+      where: { id: "product-price-1" },
+      update: {},
+      create: {
+        id: "product-price-1",
         productVariantId: productVariants[0].id,
         vendorId: vendors[0].id,
         realValue: 50000,
@@ -435,8 +514,11 @@ async function main() {
         isActive: true,
       },
     }),
-    prisma.productPrice.create({
-      data: {
+    prisma.productPrice.upsert({
+      where: { id: "product-price-2" },
+      update: {},
+      create: {
+        id: "product-price-2",
         productVariantId: productVariants[1].id,
         vendorId: vendors[0].id,
         realValue: 100000,
@@ -445,8 +527,11 @@ async function main() {
         isActive: true,
       },
     }),
-    prisma.productPrice.create({
-      data: {
+    prisma.productPrice.upsert({
+      where: { id: "product-price-3" },
+      update: {},
+      create: {
+        id: "product-price-3",
         productVariantId: productVariants[2].id,
         vendorId: vendors[1].id,
         realValue: 150000,
@@ -455,8 +540,11 @@ async function main() {
         isActive: true,
       },
     }),
-    prisma.productPrice.create({
-      data: {
+    prisma.productPrice.upsert({
+      where: { id: "product-price-4" },
+      update: {},
+      create: {
+        id: "product-price-4",
         productVariantId: productVariants[3].id,
         vendorId: vendors[1].id,
         realValue: 375000,
@@ -465,8 +553,11 @@ async function main() {
         isActive: true,
       },
     }),
-    prisma.productPrice.create({
-      data: {
+    prisma.productPrice.upsert({
+      where: { id: "product-price-5" },
+      update: {},
+      create: {
+        id: "product-price-5",
         productVariantId: productVariants[4].id,
         vendorId: vendors[0].id,
         realValue: 4710,
@@ -475,8 +566,11 @@ async function main() {
         isActive: true,
       },
     }),
-    prisma.productPrice.create({
-      data: {
+    prisma.productPrice.upsert({
+      where: { id: "product-price-6" },
+      update: {},
+      create: {
+        id: "product-price-6",
         productVariantId: productVariants[5].id,
         vendorId: vendors[0].id,
         realValue: 4728,
@@ -485,8 +579,11 @@ async function main() {
         isActive: true,
       },
     }),
-    prisma.productPrice.create({
-      data: {
+    prisma.productPrice.upsert({
+      where: { id: "product-price-7" },
+      update: {},
+      create: {
+        id: "product-price-7",
         productVariantId: productVariants[6].id,
         vendorId: vendors[0].id,
         realValue: 5395,

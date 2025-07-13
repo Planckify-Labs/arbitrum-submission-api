@@ -67,7 +67,7 @@ export class TokenDetailsResponseDto {
   blockchainName: string;
 }
 
-export class ExchangeRateResponseDto {
+export class BookingRateDetailsResponseDto {
   @ApiProperty({
     description: "Exchange rate value",
     example: 15700,
@@ -90,9 +90,9 @@ export class PaymentResponseDto {
 
   @ApiProperty({
     description: "Exchange rate details",
-    type: ExchangeRateResponseDto,
+    type: BookingRateDetailsResponseDto,
   })
-  exchangeRate: ExchangeRateResponseDto;
+  exchangeRate: BookingRateDetailsResponseDto;
 }
 
 export class BookingResponseDto {

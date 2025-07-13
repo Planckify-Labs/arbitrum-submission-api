@@ -8,7 +8,9 @@ import {
 import { CreateCategoryDto, UpdateCategoryDto } from "./dto/category.dto";
 import { Prisma } from "generated/prisma";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
+import * as crypto from "crypto";
 import { SearchProductVariantDto } from "./dto/search-product-variant.dto";
+import { VCGamersService } from "../providers/vendor-api/implementations/vcgamers/vcgamers.service";
 
 interface SearchProductsParams {
   query?: string;
@@ -22,11 +24,16 @@ interface SearchProductsParams {
 
 @Injectable()
 export class ProductsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly vcGamersService: VCGamersService,
+  ) {}
 
-  findAll(paginationDto: CursorPaginationDto) {
+  async findAll(paginationDto: CursorPaginationDto) {
     const { cursor, take = 10 } = paginationDto;
 
+    const responseBrand = await this.vcGamersService.getProducts();
+    console.log("responseBrand:", responseBrand);
     return this.prisma.product.findMany({
       take,
       skip: cursor ? 1 : 0,
@@ -518,9 +525,22 @@ export class ProductsService {
 
   async findAllGroupedByCategories(take?: number) {
     const categories = await this.prisma.category.findMany({
-      include: {
+      select: {
+        id: true,
+        name: true,
         Product: {
           take: take ? take : 6,
+          where: {
+            isActive: true,
+          },
+        },
+      },
+      where: {
+        isActive: true,
+        Product: {
+          some: {
+            isActive: true,
+          },
         },
       },
       orderBy: {
@@ -528,12 +548,14 @@ export class ProductsService {
       },
     });
 
-    return categories.map((category) => ({
-      category: {
-        id: category.id,
-        name: category.name,
-      },
-      products: category.Product,
-    }));
+    return categories.map((category) => {
+      return {
+        category: {
+          id: category.id,
+          name: category.name,
+        },
+        products: category.Product,
+      };
+    });
   }
 }

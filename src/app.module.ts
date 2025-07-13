@@ -14,6 +14,7 @@ import { PurchasesModule } from "./purchases/purchases.module";
 import { ApiLogsModule } from "./api-logs/api-logs.module";
 import { BookingModule } from "./booking/booking.module";
 import { ExchangeRateModule } from "./exchange-rate/exchange-rate.module";
+import { VendorAPIModule } from "./providers/vendor-api/vendor-api.module";
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { ExchangeRateModule } from "./exchange-rate/exchange-rate.module";
     ApiLogsModule,
     BookingModule,
     ExchangeRateModule,
+    VendorAPIModule,
   ],
   controllers: [AppController],
   providers: [AppService],
