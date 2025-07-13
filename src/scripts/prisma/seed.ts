@@ -1,5 +1,5 @@
 import { PrismaClient } from "../../../generated/prisma";
-import { getProductList } from "../../utils/temp/vcGamersAPI";
+import * as crypto from "crypto";
 
 interface VCGamersProduct {
   key: string;
@@ -15,6 +15,110 @@ interface VCGamersProduct {
     options?: string[];
   }>;
 }
+
+interface VCGamersVariant {
+  key: string;
+  variation_name: string;
+  brand_name: string;
+  price: number;
+  is_active: boolean;
+  sla: number;
+  is_new: boolean;
+}
+
+const vcGamersAPI = {
+  createSignature: (params: string): string => {
+    const secret = "8aa3a704a9c2af43c636df2e59828777";
+    const hmac = crypto
+      .createHmac("sha512", secret)
+      .update(params)
+      .digest("hex");
+    return Buffer.from(hmac).toString("base64");
+  },
+
+  getProducts: async (): Promise<{
+    statusCode: number;
+    data?: VCGamersProduct[];
+  }> => {
+    try {
+      const paramsSignature = "8aa3a704a9c2af43c636df2e59828777" + "brand";
+      const signature = vcGamersAPI.createSignature(paramsSignature);
+      const URL_BRAND = `https://mitra-api.vcgamers.com/v2/public/brands?sign=${signature}`;
+
+      const fetchResponse = await fetch(URL_BRAND, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization:
+            "Bearer 4d5855d626b5558e155ce6eddb7f370e7749f2e6fee891556e879d46cadb276e8c7a25a4b841efb5972e6d3d9aa2f201bb4d",
+        },
+      });
+
+      const response = await fetchResponse.json();
+      console.log("VCGamers API response:", response);
+
+      if (response.code !== 200) {
+        return {
+          statusCode: 400,
+        };
+      }
+
+      return {
+        statusCode: 200,
+        data: response?.data,
+      };
+    } catch (err) {
+      console.error("Error fetching VCGamers products:", err);
+      return {
+        statusCode: 500,
+      };
+    }
+  },
+
+  getProductVariants: async (
+    brandKey: string,
+  ): Promise<{
+    statusCode: number;
+    data?: VCGamersVariant[];
+  }> => {
+    try {
+      const paramsSignature =
+        "8aa3a704a9c2af43c636df2e59828777" + "variation" + brandKey;
+      const signature = vcGamersAPI.createSignature(paramsSignature);
+      const URL_VARIATION = `https://mitra-api.vcgamers.com/v2/public/variations?brand_key=${brandKey}&sign=${signature}`;
+
+      const fetchResponse = await fetch(URL_VARIATION, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization:
+            "Bearer 4d5855d626b5558e155ce6eddb7f370e7749f2e6fee891556e879d46cadb276e8c7a25a4b841efb5972e6d3d9aa2f201bb4d",
+        },
+      });
+
+      const response = await fetchResponse.json();
+      console.log(`VCGamers variants for ${brandKey}:`, response);
+
+      if (response.code !== 200) {
+        return {
+          statusCode: 400,
+        };
+      }
+
+      return {
+        statusCode: 200,
+        data: response?.data,
+      };
+    } catch (err) {
+      console.error(`Error fetching VCGamers variants for ${brandKey}:`, err);
+      return {
+        statusCode: 500,
+      };
+    }
+  },
+};
 
 const prisma = new PrismaClient();
 
@@ -405,27 +509,95 @@ async function main() {
     }),
   ]);
 
-  const vcGamersProducts = await getProductList();
-  if (vcGamersProducts.statusCode !== 200) {
+  const vcGamersProducts = await vcGamersAPI.getProducts();
+  if (vcGamersProducts.statusCode !== 200 || !vcGamersProducts.data) {
     throw new Error("Failed to fetch products from vcGamers API");
   }
 
-  const products = await Promise.all(
-    vcGamersProducts.data.map((product: VCGamersProduct) =>
-      prisma.product.upsert({
-        where: { code: product.key },
-        update: {},
-        create: {
-          name: product.name,
-          code: product.key,
-          categoryId: categories[0].id,
-          description: product.description?.replace(/<[^>]*>/g, "") || "",
-          imageUrl: product.image_url,
-          isActive: false,
-        },
-      }),
-    ),
-  );
+  const productsMap = new Map();
+  for (const product of vcGamersProducts.data) {
+    const createdProduct = await prisma.product.upsert({
+      where: { code: product.key },
+      update: {},
+      create: {
+        name: product.name,
+        code: product.key,
+        categoryId: categories[0].id,
+        description: product.description?.replace(/<[^>]*>/g, "") || "",
+        imageUrl: product.image_url,
+        isActive: false,
+      },
+    });
+    productsMap.set(product.key, createdProduct);
+
+    const vcGamerVendor = await prisma.vendor.findFirst({
+      where: { name: "vcGamer" },
+    });
+
+    if (!vcGamerVendor) {
+      console.warn(
+        "VCGamer vendor not found, skipping variants for this product",
+      );
+      continue;
+    }
+
+    console.log(
+      `Fetching variants for product: ${product.name} (${product.key})`,
+    );
+    const variantsResponse = await vcGamersAPI.getProductVariants(product.key);
+
+    if (
+      variantsResponse.statusCode !== 200 ||
+      !variantsResponse.data ||
+      variantsResponse.data.length === 0
+    ) {
+      console.warn(`No variants found for product: ${product.key}`);
+      continue;
+    }
+
+    console.log(
+      `Found ${variantsResponse.data.length} variants for product: ${product.name}`,
+    );
+
+    for (const variant of variantsResponse.data) {
+      try {
+        const createdVariant = await prisma.productVariant.upsert({
+          where: { sku: variant.key },
+          update: {},
+          create: {
+            name: variant.variation_name,
+            sku: variant.key,
+            description: `${variant.variation_name} for ${variant.brand_name}`,
+            productId: createdProduct.id,
+          },
+        });
+
+        const sellPrice = Math.round(variant.price * 1.05);
+
+        await prisma.productPrice.upsert({
+          where: { id: `price-${variant.key}` },
+          update: {},
+          create: {
+            id: `price-${variant.key}`,
+            productVariantId: createdVariant.id,
+            vendorId: vcGamerVendor.id,
+            priceFromVendor: variant.price,
+            realValue: variant.price,
+            sellPrice: sellPrice,
+            isActive: variant.is_active,
+          },
+        });
+
+        console.log(
+          `Added variant: ${variant.variation_name} (${variant.key})`,
+        );
+      } catch (error) {
+        console.error(`Error creating variant ${variant.key}:`, error);
+      }
+    }
+  }
+
+  const firstProduct = Array.from(productsMap.values())[0];
 
   const productVariants = await Promise.all([
     prisma.productVariant.upsert({
@@ -435,7 +607,7 @@ async function main() {
         name: "86 Diamonds",
         sku: "MLBB-86",
         description: "86 Diamonds for Mobile Legends",
-        productId: products[0].id,
+        productId: firstProduct.id,
       },
     }),
     prisma.productVariant.upsert({
@@ -445,7 +617,7 @@ async function main() {
         name: "172 Diamonds",
         sku: "MLBB-172",
         description: "172 Diamonds for Mobile Legends",
-        productId: products[0].id,
+        productId: firstProduct.id,
       },
     }),
     prisma.productVariant.upsert({
@@ -455,7 +627,7 @@ async function main() {
         name: "$10 Google Play Card",
         sku: "GOGP-10",
         description: "$10 Google Play Gift Card",
-        productId: products[1].id,
+        productId: firstProduct.id,
       },
     }),
     prisma.productVariant.upsert({
@@ -465,7 +637,7 @@ async function main() {
         name: "$25 Google Play Card",
         sku: "GOGP-25",
         description: "$25 Google Play Gift Card",
-        productId: products[1].id,
+        productId: firstProduct.id,
       },
     }),
     prisma.productVariant.upsert({
@@ -475,7 +647,7 @@ async function main() {
         name: "Data Blue 1 GB 2 Hari",
         sku: "XLDB1GB2H",
         description: "XL Data Blue 1 GB valid for 2 days",
-        productId: products[2].id,
+        productId: firstProduct.id,
       },
     }),
     prisma.productVariant.upsert({
@@ -485,7 +657,7 @@ async function main() {
         name: "HOTROD 1 GB 2 Hari",
         sku: "XLHR1GB2H",
         description: "XL HOTROD 1 GB valid for 2 days",
-        productId: products[2].id,
+        productId: firstProduct.id,
       },
     }),
     prisma.productVariant.upsert({
@@ -495,7 +667,7 @@ async function main() {
         name: "HOTROD 500 MB 7 Hari",
         sku: "XLHR500M7H",
         description: "XL HOTROD 500 MB valid for 7 days",
-        productId: products[2].id,
+        productId: firstProduct.id,
       },
     }),
   ]);
