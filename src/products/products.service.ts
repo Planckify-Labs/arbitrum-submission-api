@@ -29,11 +29,9 @@ export class ProductsService {
     private readonly vcGamersService: VCGamersService,
   ) {}
 
-  async findAll(paginationDto: CursorPaginationDto) {
+  findAll(paginationDto: CursorPaginationDto) {
     const { cursor, take = 10 } = paginationDto;
 
-    const responseBrand = await this.vcGamersService.getProducts();
-    console.log("responseBrand:", responseBrand);
     return this.prisma.product.findMany({
       take,
       skip: cursor ? 1 : 0,

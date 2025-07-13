@@ -50,8 +50,7 @@ export abstract class BaseVendorService {
     retries = 3,
   ): Promise<TVCgamerResponse<T>> {
     try {
-      const signature = this.createSignature("brand");
-      const url = `${this.config.baseUrl}${endpoint}?sign=${signature}`;
+      const url = `${this.config.baseUrl}${endpoint}`;
       const headers = {
         Authorization: `Bearer ${this.config.apiKey}`,
         "Content-Type": "application/json",

@@ -32,19 +32,20 @@ export class VCGamersService extends BaseVendorService {
   }
 
   protected createSignature(params: string): string {
-    const secretWithParams = this.config.apiSecret + params || "";
-    console.log("secret", secretWithParams);
+    console.log("Creating signature with params:", params);
     const hmac = crypto
       .createHmac("sha512", this.config.apiSecret || "")
-      .update(secretWithParams)
+      .update(params)
       .digest("hex");
     return Buffer.from(hmac).toString("base64");
   }
 
   async getProducts(): Promise<TVCgamerResponse<TVCGamerProduct[]>> {
+    const params = `${this.config.apiSecret}brand`;
+    const signature = this.createSignature(params);
     const response = await this.makeRequest<VCGamersProductResponse[]>(
       "GET",
-      "/v2/public/brands",
+      `/v2/public/brands?sign=${signature}`,
     );
 
     console.log(
@@ -65,33 +66,14 @@ export class VCGamersService extends BaseVendorService {
     };
   }
 
-  async getRawProducts(): Promise<TVCgamerResponse<VCGamersProductResponse[]>> {
-    const response = await this.makeRequest<VCGamersProductResponse[]>(
-      "GET",
-      "/v2/public/brands",
-    );
-
-    console.log(
-      "Raw VCGamers Products Response:",
-      JSON.stringify(response, null, 2),
-    );
-
-    if (!response.success || !response.data) {
-      return {
-        ...response,
-        data: [],
-      };
-    }
-
-    return response;
-  }
-
   async getProductVariants(
-    productId: string,
+    brandKey: string,
   ): Promise<TVCgamerResponse<TVCGamerProductVariant[]>> {
+    const params = `${this.config.apiSecret}variation${brandKey}`;
+    const signature = this.createSignature(params);
     const response = await this.makeRequest<TVCGamerProductVariantResponse>(
       "GET",
-      `/v2/public/variations?brand_key=${productId}`,
+      `/v2/public/variations?brand_key=${brandKey}&sign=${signature}`,
     );
 
     console.log(
