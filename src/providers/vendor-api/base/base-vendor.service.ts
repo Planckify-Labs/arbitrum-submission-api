@@ -5,6 +5,7 @@ import {
   TVCgamerResponse,
   TVCGamerProduct,
   TVCGamerProductVariant,
+  TVCGamerOrderResponse,
 } from "../types/vcgamer-api.types";
 import { PrismaService } from "../../../prisma/prisma.service";
 import * as crypto from "crypto";
@@ -110,4 +111,12 @@ export abstract class BaseVendorService {
   abstract getProductVariants(
     productId: string,
   ): Promise<TVCgamerResponse<TVCGamerProductVariant[]>>;
+
+  abstract createOrder(
+    brandKey: string,
+    variationKey: string,
+    price: number,
+    data: Array<{ key: string; value: string }>,
+    refId: string,
+  ): Promise<TVCgamerResponse<TVCGamerOrderResponse>>;
 }

@@ -37,3 +37,23 @@ export interface TVCGamerProductVariantResponse {
   status: string;
   data: TVCGamerProductVariant[];
 }
+
+export interface TVCGamerOrderRequest {
+  brand_key: string;
+  variation_key: string;
+  price: number;
+  data: Array<{ key: string; value: string }>;
+  ref_id: string;
+  timestamp: string;
+}
+
+export interface TVCGamerOrderResponse {
+  code: number;
+  rc_code: string;
+  status: string;
+  data: {
+    selling_total: number;
+    transaction_status: string;
+    trx_code: string;
+  };
+}

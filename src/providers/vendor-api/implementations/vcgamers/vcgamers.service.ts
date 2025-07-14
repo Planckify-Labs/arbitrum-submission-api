@@ -6,6 +6,8 @@ import {
   TVCGamerProduct,
   TVCGamerProductVariant,
   TVCGamerProductVariantResponse,
+  TVCGamerOrderRequest,
+  TVCGamerOrderResponse,
 } from "../../types/vcgamer-api.types";
 import { PrismaService } from "../../../../prisma/prisma.service";
 import * as crypto from "crypto";
@@ -93,6 +95,53 @@ export class VCGamersService extends BaseVendorService {
       statusCode: response.statusCode,
       message: response.message,
       data: response.data.data || [],
+      error: response.error,
+    };
+  }
+
+  async createOrder(
+    brandKey: string,
+    variationKey: string,
+    price: number,
+    data: Array<{ key: string; value: string }>,
+    refId: string,
+  ): Promise<TVCgamerResponse<TVCGamerOrderResponse>> {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const orderData: TVCGamerOrderRequest = {
+      brand_key: brandKey,
+      variation_key: variationKey,
+      price,
+      data,
+      ref_id: refId,
+      timestamp,
+    };
+
+    const params = `${this.config.apiSecret}order${brandKey}${variationKey}${price}${refId}${timestamp}`;
+    const signature = this.createSignature(params);
+
+    const response = await this.makeRequest<TVCGamerOrderResponse>(
+      "POST",
+      `/v2/public/order?sign=${signature}`,
+      orderData,
+    );
+
+    console.log(
+      "Raw VCGamers Order Response:",
+      JSON.stringify(response, null, 2),
+    );
+
+    if (!response.success) {
+      return {
+        ...response,
+        data: undefined,
+      };
+    }
+
+    return {
+      success: response.success,
+      statusCode: response.statusCode,
+      message: response.message,
+      data: response.data,
       error: response.error,
     };
   }
