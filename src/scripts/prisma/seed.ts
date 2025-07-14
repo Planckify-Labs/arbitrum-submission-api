@@ -803,26 +803,6 @@ async function main() {
       vendorRefId: "VC123456789",
     },
   });
-
-  await prisma.apiRequestLog.create({
-    data: {
-      requestId: "req_123456789",
-      endpoint: "/api/v1/products",
-      method: "GET",
-      service: "product-service",
-      requestBody: JSON.parse('{"category": "Gaming Top Up"}'),
-      responseBody: JSON.parse(
-        '{"success": true, "data": [{"id": "1", "name": "Mobile Legends"}]}',
-      ),
-      statusCode: 200,
-      success: true,
-      duration: 120,
-      ipAddress: "192.168.1.1",
-      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      userId: users[0].id,
-    },
-  });
-
   console.log("Seed data created successfully");
 }
 
