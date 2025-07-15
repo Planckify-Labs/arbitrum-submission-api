@@ -7,7 +7,6 @@ import {
   ApiQuery,
   ApiBody,
 } from "@nestjs/swagger";
-import { CreateBookingDto } from "../../booking/dto/booking.dto";
 import { BookingResponseDto } from "../../booking/dto/booking-response.dto";
 import { BookingStatsResponseDto } from "../../booking/dto/booking-query.dto";
 import { BookingStatus } from "../../booking/enums/booking-status.enum";
@@ -55,6 +54,27 @@ export function ApiCreateBooking() {
             description: "ID of the product price",
             example: "01H1G5V...",
           },
+          customerInfo: {
+            type: "object",
+            description:
+              "Customer information required for the product (varies by product type)",
+            example: {
+              no_hp: "6281234567890",
+              email: "user@example.com",
+              region: "Asia-Pacific",
+            },
+            additionalProperties: {
+              oneOf: [
+                { type: "string" },
+                { type: "number" },
+                { type: "boolean" },
+                {
+                  type: "array",
+                  items: { type: "string" },
+                },
+              ],
+            },
+          },
           payment: {
             type: "object",
             required: ["tokenAddress", "blockchainId", "exchangeRateId"],
@@ -72,10 +92,10 @@ export function ApiCreateBooking() {
                 example: "01JX2FJZ7Y37Y9XXDHYP323P0X",
               },
               exchangeRateId: {
-                type: "string",
+                type: "number",
                 description:
                   "The ID of the exchange rate to lock for this booking",
-                example: "01JX2FJZ7Y37Y9XXDHYP323P0X",
+                example: 1,
               },
             },
           },

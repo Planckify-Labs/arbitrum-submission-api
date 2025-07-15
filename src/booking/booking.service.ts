@@ -17,6 +17,7 @@ import { BookingQueryDto } from "./dto/booking-query.dto";
 import { Decimal } from "@prisma/client/runtime/library";
 import { BookingStatus } from "./enums/booking-status.enum";
 import { BlockchainsService } from "../blockchains/blockchains.service";
+import { ProductInputValidatorService } from "../products/services/product-input-validator.service";
 
 @Injectable()
 export class BookingService {
@@ -27,6 +28,7 @@ export class BookingService {
     private readonly configService: ConfigService,
     private readonly prismaService: PrismaService,
     private readonly blockchainsService: BlockchainsService,
+    private readonly productInputValidator: ProductInputValidatorService,
   ) {
     this.prisma = new PrismaClient();
     this.BOOKING_EXPIRY_MINUTES = this.configService.get(
@@ -36,7 +38,13 @@ export class BookingService {
   }
 
   async createBooking(createBookingDto: CreateBookingDto) {
-    const { walletAddress, productVariantId, payment } = createBookingDto;
+    const {
+      walletAddress,
+      productVariantId,
+      productPriceId,
+      payment,
+      customerInfo,
+    } = createBookingDto;
 
     const booking = await this.prisma.$transaction(async (tx) => {
       const blockchain = await this.blockchainsService.findOne(
@@ -98,6 +106,13 @@ export class BookingService {
         );
       }
 
+      // Validate customer info against product requirements
+      const validatedCustomerInfo =
+        await this.productInputValidator.validateCustomerInfo(
+          productVariant.product.id,
+          customerInfo,
+        );
+
       const productPrice = productVariant.ProductPrice[0];
 
       const exchangeRate = await tx.exchangeRate.findFirst({
@@ -136,7 +151,7 @@ export class BookingService {
         data: {
           walletAddress,
           productVariantId,
-          productPriceId: productPrice.id,
+          productPriceId,
           payment: {
             tokenAddress: payment.tokenAddress,
             blockchainNetworkId: blockchain.id,
@@ -149,6 +164,7 @@ export class BookingService {
             toCurrency: exchangeRate.toCurrency,
             lockedAt: new Date().toISOString(),
           },
+          customerInfo: validatedCustomerInfo,
           status: "PENDING" as BookingStatus,
           expiresAt: new Date(
             Date.now() + this.BOOKING_EXPIRY_MINUTES * 60 * 1000,

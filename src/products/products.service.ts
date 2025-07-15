@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateProductDto, UpdateProductDto } from "./dto/product.dto";
 import {
@@ -8,19 +12,13 @@ import {
 import { CreateCategoryDto, UpdateCategoryDto } from "./dto/category.dto";
 import { Prisma } from "generated/prisma";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
-import * as crypto from "crypto";
 import { SearchProductVariantDto } from "./dto/search-product-variant.dto";
 import { VCGamersService } from "../providers/vendor-api/implementations/vcgamers/vcgamers.service";
-
-interface SearchProductsParams {
-  query?: string;
-  vendorId?: string;
-  active?: boolean;
-  code?: string;
-  id?: string;
-  name?: string;
-  vendorName?: string;
-}
+import { SearchProductDto } from "./dto/search-product.dto";
+import {
+  CreateProductInputFieldDto,
+  UpdateProductInputFieldDto,
+} from "./dto/product-input-field.dto";
 
 @Injectable()
 export class ProductsService {
@@ -42,7 +40,7 @@ export class ProductsService {
     });
   }
 
-  search(params: SearchProductsParams, paginationDto: CursorPaginationDto) {
+  search(params: SearchProductDto, paginationDto: CursorPaginationDto) {
     const { cursor, take = 10 } = paginationDto;
     const { query, vendorId, active, code, id, name, vendorName } = params;
 
@@ -554,6 +552,80 @@ export class ProductsService {
         },
         products: category.Product,
       };
+    });
+  }
+
+  async createProductInputField(
+    productId: string,
+    createInputFieldDto: CreateProductInputFieldDto,
+  ) {
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+    });
+
+    if (!product) {
+      throw new NotFoundException(`Product with ID ${productId} not found`);
+    }
+
+    return this.prisma.productInputField.create({
+      data: {
+        product: {
+          connect: { id: productId },
+        },
+        forms: JSON.parse(JSON.stringify(createInputFieldDto.fields)),
+      },
+    });
+  }
+
+  async updateProductInputField(
+    productId: string,
+    fieldId: string,
+    updateInputFieldDto: UpdateProductInputFieldDto,
+  ) {
+    const existingField = await this.prisma.productInputField.findFirst({
+      where: {
+        id: fieldId,
+        productId,
+      },
+    });
+
+    if (!existingField) {
+      throw new NotFoundException(
+        `Input field with ID ${fieldId} not found for product ${productId}`,
+      );
+    }
+
+    if (
+      !updateInputFieldDto.fields ||
+      updateInputFieldDto.fields.length === 0
+    ) {
+      throw new BadRequestException("No form fields provided for update");
+    }
+
+    return this.prisma.productInputField.update({
+      where: { id: fieldId },
+      data: {
+        forms: JSON.parse(JSON.stringify(updateInputFieldDto.fields)),
+      },
+    });
+  }
+
+  async deleteProductInputField(productId: string, fieldId: string) {
+    const existingField = await this.prisma.productInputField.findFirst({
+      where: {
+        id: fieldId,
+        productId,
+      },
+    });
+
+    if (!existingField) {
+      throw new NotFoundException(
+        `Input field with ID ${fieldId} not found for product ${productId}`,
+      );
+    }
+
+    return this.prisma.productInputField.delete({
+      where: { id: fieldId },
     });
   }
 }

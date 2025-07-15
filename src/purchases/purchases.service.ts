@@ -14,10 +14,16 @@ import {
 } from "@generated/prisma";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import { BookingStatus } from "../booking/enums/booking-status.enum";
+import { VCGamersService } from "../providers/vendor-api/implementations/vcgamers/vcgamers.service";
+import { ProductInputValidatorService } from "../products/services/product-input-validator.service";
 
 @Injectable()
 export class PurchasesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly vcGamersService: VCGamersService,
+    private readonly productInputValidator: ProductInputValidatorService,
+  ) {}
 
   async create(createPurchaseDto: CreatePurchaseDto) {
     const { bookingId, walletAddress, networkId, contractAddress } =
@@ -159,6 +165,68 @@ export class PurchasesService {
       },
     });
 
+    let vendorRefId: string | undefined = undefined;
+    let vendorResponse: Prisma.JsonValue | undefined = undefined;
+
+    if (booking.productPrice?.vendor?.name === "vcGamer") {
+      const customerInfo = booking.customerInfo as Record<
+        string,
+        string | number | boolean | string[]
+      > | null;
+
+      if (!customerInfo) {
+        throw new BadRequestException(
+          `Customer information is required for ${booking.productVariant.product.name}`,
+        );
+      }
+
+      try {
+        console.log(
+          `Processing VCGamers order for product: ${booking.productVariant.product.code}`,
+        );
+
+        const brandKey = booking.productVariant.product.code;
+        const variationKey = booking.productVariant.sku;
+        const price = Number(booking.productPrice.sellPrice);
+
+        const refId = "TRX239231";
+
+        const formData = Object.entries(customerInfo).map(([key, value]) => ({
+          key,
+          value: String(value),
+        }));
+
+        if (!formData.length) {
+          throw new BadRequestException(
+            "Required customer information is missing",
+          );
+        }
+
+        const orderResponse = await this.vcGamersService.createOrder(
+          brandKey,
+          variationKey,
+          price,
+          formData,
+          refId,
+        );
+
+        if (!orderResponse.success) {
+          console.error(`VCGamers API error: ${JSON.stringify(orderResponse)}`);
+          throw new BadRequestException(
+            `Failed to process order: ${orderResponse.message}`,
+          );
+        }
+
+        vendorRefId = orderResponse.data?.data.trx_code;
+        vendorResponse = orderResponse.data as unknown as Prisma.JsonValue;
+      } catch (error) {
+        console.error(`Error processing vendor order: ${error.message}`);
+        throw new BadRequestException(
+          `Error processing order: ${error.message}`,
+        );
+      }
+    }
+
     const purchaseData: Prisma.PurchaseCreateInput = {
       transaction: {
         connect: { id: transaction.id },
@@ -167,6 +235,8 @@ export class PurchasesService {
         connect: { id: booking.productVariantId },
       },
       status: PurchaseStatus.PENDING,
+      ...(vendorRefId && { vendorRefId }),
+      ...(vendorResponse && { vendorResponse }),
     };
 
     const purchase = await this.prisma.purchase.create({

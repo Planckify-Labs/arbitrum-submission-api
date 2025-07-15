@@ -121,6 +121,18 @@ export class BookingResponseDto {
   payment: PaymentResponseDto;
 
   @ApiProperty({
+    description:
+      "Customer information required for the product (varies by product type)",
+    example: {
+      no_hp: "6281234567890",
+      email: "user@example.com",
+      region: "Asia-Pacific",
+    },
+    required: false,
+  })
+  customerInfo?: Record<string, string | number | boolean | string[]>;
+
+  @ApiProperty({
     description: "Booking status",
     enum: BookingStatus,
     example: BookingStatus.PENDING,

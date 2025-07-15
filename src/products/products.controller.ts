@@ -9,11 +9,12 @@ import {
   HttpCode,
   HttpStatus,
   Query,
+  NotFoundException,
 } from "@nestjs/common";
 import { Transform } from "class-transformer";
 
 import { ProductsService } from "./products.service";
-import { ApiTags } from "@nestjs/swagger";
+import { ApiTags, ApiOperation, ApiParam, ApiBody } from "@nestjs/swagger";
 import { CreateProductDto, UpdateProductDto } from "./dto/product.dto";
 import {
   CreateProductPriceDto,
@@ -43,14 +44,26 @@ import {
   ApiSearchProductVariants,
   ApiGetProductVariant,
   ApiGetProductsGroupedByCategories,
+  ApiGetProductInputField,
+  ApiCreateProductInputField,
+  ApiUpdateProductInputField,
+  ApiDeleteProductInputField,
 } from "../decorators/swagger/product.decorators";
 import { SearchProductDto } from "./dto/search-product.dto";
 import { SearchProductVariantDto } from "./dto/search-product-variant.dto";
+import { ProductInputValidatorService } from "./services/product-input-validator.service";
+import {
+  CreateProductInputFieldDto,
+  UpdateProductInputFieldDto,
+} from "./dto/product-input-field.dto";
 
 @Controller("products")
 @ApiTags("products")
 export class ProductsController {
-  constructor(private readonly productsService: ProductsService) {}
+  constructor(
+    private readonly productsService: ProductsService,
+    private readonly productInputValidator: ProductInputValidatorService,
+  ) {}
 
   @Get("search")
   @ApiSearchProducts()
@@ -194,5 +207,73 @@ export class ProductsController {
   @ApiGetProductVariant()
   findOneVariant(@Param("id") id: string) {
     return this.productsService.findOneVariant(id);
+  }
+
+  @Get(":id/input-fields")
+  @ApiGetProductInputField()
+  async getProductInputFields(@Param("id") id: string) {
+    const product = await this.productsService.findOne(id);
+    if (!product) {
+      throw new NotFoundException(`Product with ID ${id} not found`);
+    }
+
+    const inputFields =
+      await this.productInputValidator.getProductInputFields(id);
+    return {
+      productId: id,
+      productName: product.name,
+      forms: inputFields,
+    };
+  }
+
+  @Post(":id/input-fields")
+  @ApiCreateProductInputField()
+  async createProductInputField(
+    @Param("id") id: string,
+    @Body() createInputFieldDto: CreateProductInputFieldDto,
+  ) {
+    const product = await this.productsService.findOne(id);
+    if (!product) {
+      throw new NotFoundException(`Product with ID ${id} not found`);
+    }
+
+    return this.productsService.createProductInputField(
+      id,
+      createInputFieldDto,
+    );
+  }
+
+  @Put(":id/input-fields/:fieldId")
+  @ApiUpdateProductInputField()
+  async updateProductInputField(
+    @Param("id") id: string,
+    @Param("fieldId") fieldId: string,
+    @Body() updateInputFieldDto: UpdateProductInputFieldDto,
+  ) {
+    const product = await this.productsService.findOne(id);
+    if (!product) {
+      throw new NotFoundException(`Product with ID ${id} not found`);
+    }
+
+    return this.productsService.updateProductInputField(
+      id,
+      fieldId,
+      updateInputFieldDto,
+    );
+  }
+
+  @Delete(":id/input-fields/:fieldId")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiDeleteProductInputField()
+  async deleteProductInputField(
+    @Param("id") id: string,
+    @Param("fieldId") fieldId: string,
+  ) {
+    const product = await this.productsService.findOne(id);
+    if (!product) {
+      throw new NotFoundException(`Product with ID ${id} not found`);
+    }
+
+    return this.productsService.deleteProductInputField(id, fieldId);
   }
 }

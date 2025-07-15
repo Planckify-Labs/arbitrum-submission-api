@@ -33,6 +33,40 @@ const productSchema = {
         },
       },
     },
+    inputFields: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string", example: "01H1G5V..." },
+          forms: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                key: { type: "string", example: "no_hp" },
+                type: {
+                  type: "string",
+                  enum: ["TEXT", "NUMBER", "EMAIL", "OPTION", "DATE"],
+                  example: "TEXT",
+                },
+                alias: { type: "string", example: "Phone Number" },
+                description: {
+                  type: "string",
+                  example: "Enter your phone number in international format",
+                },
+                isRequired: { type: "boolean", example: true },
+                options: {
+                  type: "array",
+                  items: { type: "string" },
+                  example: ["Option 1", "Option 2"],
+                },
+              },
+            },
+          },
+        },
+      },
+    },
   },
 };
 
@@ -785,5 +819,269 @@ export function ApiGetProductsGroupedByCategories() {
       description: "total product to take from each categories",
       example: 10,
     }),
+  );
+}
+
+export function ApiGetProductInputField() {
+  return applyDecorators(
+    ApiOperation({
+      summary: "Get product input fields",
+      description:
+        "Retrieves input fields configuration for a specific product",
+    }),
+    ApiParam({
+      name: "id",
+      description: "Product ID",
+      example: "01H1G5V...",
+      required: true,
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns the input fields for the specified product",
+      schema: {
+        type: "object",
+        properties: {
+          id: { type: "string", example: "01H1G5V..." },
+          productId: { type: "string", example: "01H1G5V..." },
+          forms: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                key: { type: "string", example: "no_hp" },
+                type: {
+                  type: "string",
+                  enum: ["TEXT", "NUMBER", "EMAIL", "OPTION", "DATE"],
+                  example: "TEXT",
+                },
+                alias: { type: "string", example: "Phone Number" },
+                description: {
+                  type: "string",
+                  example: "Enter your phone number in international format",
+                },
+                isRequired: { type: "boolean", example: true },
+                options: {
+                  type: "array",
+                  items: { type: "string" },
+                  example: ["Option 1", "Option 2"],
+                },
+              },
+            },
+          },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+        },
+      },
+    }),
+    ApiResponse(notFoundResponse),
+  );
+}
+
+export function ApiCreateProductInputField() {
+  return applyDecorators(
+    ApiOperation({
+      summary: "Create product input fields",
+      description: "Creates input fields configuration for a specific product",
+    }),
+    ApiParam({
+      name: "id",
+      description: "Product ID",
+      example: "01H1G5V...",
+      required: true,
+    }),
+    ApiBody({
+      schema: {
+        type: "object",
+        required: ["fields"],
+        properties: {
+          fields: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["key", "type", "alias"],
+              properties: {
+                key: { type: "string", example: "no_hp" },
+                type: {
+                  type: "string",
+                  enum: ["TEXT", "NUMBER", "EMAIL", "OPTION", "DATE"],
+                  example: "TEXT",
+                },
+                alias: { type: "string", example: "Phone Number" },
+                description: {
+                  type: "string",
+                  example: "Enter your phone number in international format",
+                },
+                isRequired: { type: "boolean", example: true },
+                options: {
+                  type: "array",
+                  items: { type: "string" },
+                  example: ["Option 1", "Option 2"],
+                },
+              },
+            },
+          },
+        },
+      },
+    }),
+    ApiResponse({
+      status: 201,
+      description: "Input fields configuration has been successfully created",
+      schema: {
+        type: "object",
+        properties: {
+          id: { type: "string", example: "01H1G5V..." },
+          productId: { type: "string", example: "01H1G5V..." },
+          forms: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                key: { type: "string", example: "no_hp" },
+                type: {
+                  type: "string",
+                  enum: ["TEXT", "NUMBER", "EMAIL", "OPTION", "DATE"],
+                  example: "TEXT",
+                },
+                alias: { type: "string", example: "Phone Number" },
+                description: {
+                  type: "string",
+                  example: "Enter your phone number in international format",
+                },
+                isRequired: { type: "boolean", example: true },
+                options: {
+                  type: "array",
+                  items: { type: "string" },
+                  example: ["Option 1", "Option 2"],
+                },
+              },
+            },
+          },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+        },
+      },
+    }),
+    ApiResponse(badRequestResponse),
+    ApiResponse(notFoundResponse),
+  );
+}
+
+export function ApiUpdateProductInputField() {
+  return applyDecorators(
+    ApiOperation({
+      summary: "Update product input fields",
+      description: "Updates input fields configuration for a specific product",
+    }),
+    ApiParam({
+      name: "id",
+      description: "Product ID",
+      example: "01H1G5V...",
+      required: true,
+    }),
+    ApiParam({
+      name: "fieldId",
+      description: "Input Field ID",
+      example: "01H1G5V...",
+      required: true,
+    }),
+    ApiBody({
+      schema: {
+        type: "object",
+        properties: {
+          fields: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["key", "type", "alias"],
+              properties: {
+                key: { type: "string", example: "no_hp" },
+                type: {
+                  type: "string",
+                  enum: ["TEXT", "NUMBER", "EMAIL", "OPTION", "DATE"],
+                  example: "TEXT",
+                },
+                alias: { type: "string", example: "Phone Number" },
+                description: {
+                  type: "string",
+                  example: "Enter your phone number in international format",
+                },
+                isRequired: { type: "boolean", example: true },
+                options: {
+                  type: "array",
+                  items: { type: "string" },
+                  example: ["Option 1", "Option 2"],
+                },
+              },
+            },
+          },
+        },
+      },
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Input fields configuration has been successfully updated",
+      schema: {
+        type: "object",
+        properties: {
+          id: { type: "string", example: "01H1G5V..." },
+          productId: { type: "string", example: "01H1G5V..." },
+          forms: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                key: { type: "string", example: "no_hp" },
+                type: {
+                  type: "string",
+                  enum: ["TEXT", "NUMBER", "EMAIL", "OPTION", "DATE"],
+                  example: "TEXT",
+                },
+                alias: { type: "string", example: "Phone Number" },
+                description: {
+                  type: "string",
+                  example: "Enter your phone number in international format",
+                },
+                isRequired: { type: "boolean", example: true },
+                options: {
+                  type: "array",
+                  items: { type: "string" },
+                  example: ["Option 1", "Option 2"],
+                },
+              },
+            },
+          },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+        },
+      },
+    }),
+    ApiResponse(badRequestResponse),
+    ApiResponse(notFoundResponse),
+  );
+}
+
+export function ApiDeleteProductInputField() {
+  return applyDecorators(
+    ApiOperation({
+      summary: "Delete product input fields",
+      description: "Removes input fields configuration for a specific product",
+    }),
+    ApiParam({
+      name: "id",
+      description: "Product ID",
+      example: "01H1G5V...",
+      required: true,
+    }),
+    ApiParam({
+      name: "fieldId",
+      description: "Input Field ID",
+      example: "01H1G5V...",
+      required: true,
+    }),
+    ApiResponse({
+      status: 204,
+      description: "Input fields configuration has been successfully deleted",
+    }),
+    ApiResponse(notFoundResponse),
   );
 }

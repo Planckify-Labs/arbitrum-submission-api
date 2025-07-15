@@ -525,7 +525,7 @@ async function main() {
         categoryId: categories[0].id,
         description: product.description?.replace(/<[^>]*>/g, "") || "",
         imageUrl: product.image_url,
-        isActive: false,
+        isActive: true,
       },
     });
     productsMap.set(product.key, createdProduct);
@@ -539,6 +539,28 @@ async function main() {
         "VCGamer vendor not found, skipping variants for this product",
       );
       continue;
+    }
+
+    if (
+      product.forms &&
+      Array.isArray(product.forms) &&
+      product.forms.length > 0
+    ) {
+      await prisma.productInputField.upsert({
+        where: {
+          id: `input-field-${product.key}`,
+        },
+        update: {
+          forms: product.forms,
+        },
+        create: {
+          id: `input-field-${product.key}`,
+          productId: createdProduct.id,
+          forms: product.forms,
+        },
+      });
+
+      console.log(`Added input fields for product: ${product.name}`);
     }
 
     console.log(

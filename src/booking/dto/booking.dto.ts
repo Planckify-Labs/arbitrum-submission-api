@@ -69,6 +69,16 @@ export class CreateBookingDto {
   @ValidateNested()
   @Type(() => PaymentDetailsDto)
   payment: PaymentDetailsDto;
+
+  @ApiProperty({
+    description:
+      "Customer information required for the product (varies by product type)",
+    example: { phoneNumber: "6281234567890" },
+    required: false,
+  })
+  @IsObject()
+  @IsOptional()
+  customerInfo?: Record<string, string | number | boolean | string[]>;
 }
 
 export class ExecuteBookingDto {
