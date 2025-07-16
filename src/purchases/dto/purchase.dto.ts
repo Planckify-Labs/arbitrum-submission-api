@@ -8,11 +8,16 @@ import {
 } from "class-validator";
 import { PurchaseStatus } from "@generated/prisma";
 
-interface CustomerInfo {
-  gameId: string;
-  serverID: string;
-  [key: string]: string;
+interface CustomerInfoObject {
+  [key: string]: string | number | boolean | string[];
 }
+
+interface CustomerInfoKeyValue {
+  key: string;
+  value: string;
+}
+
+type CustomerInfo = CustomerInfoObject | CustomerInfoKeyValue[];
 
 interface VendorResponse {
   success: boolean;
@@ -119,8 +124,18 @@ export class PurchaseResponseDto {
   status: PurchaseStatus;
 
   @ApiProperty({
-    description: "Customer information for the purchase",
-    example: { gameId: "12345678", serverID: "9999" },
+    description:
+      "Customer information for the purchase. Can be either an object with key-value pairs or an array of {key, value} objects for vendor-specific formats like VCGamers",
+    examples: {
+      objectFormat: {
+        value: { gameId: "12345678", serverID: "9999" },
+        description: "Object format",
+      },
+      arrayFormat: {
+        value: [{ key: "user_id", value: "085930970697" }],
+        description: "Array format (VCGamers)",
+      },
+    },
   })
   customerInfo: CustomerInfo;
 

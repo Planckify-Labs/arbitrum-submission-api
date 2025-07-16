@@ -9,15 +9,36 @@ export interface TVcGamerForms {
   options?: string[];
 }
 
+export interface CustomerInfoKeyValue {
+  key: string;
+  value: string;
+}
+
+export type CustomerInfoObject = Record<
+  string,
+  string | number | boolean | string[]
+>;
+
+export type CustomerInfo = CustomerInfoObject | CustomerInfoKeyValue[];
+
 @Injectable()
 export class ProductInputValidatorService {
   constructor(private readonly prisma: PrismaService) {}
 
   async validateCustomerInfo(
     productId: string,
-    customerInfo?: Record<string, string | number | boolean | string[]>,
-  ): Promise<Record<string, string | number | boolean | string[]>> {
-    const info = customerInfo || {};
+    customerInfo?: CustomerInfo,
+  ): Promise<CustomerInfo> {
+    if (!customerInfo) {
+      return {};
+    }
+
+    const infoObject: CustomerInfoObject = Array.isArray(customerInfo)
+      ? customerInfo.reduce((obj, item) => {
+          obj[item.key] = item.value;
+          return obj;
+        }, {} as CustomerInfoObject)
+      : customerInfo;
 
     const inputField = await this.prisma.productInputField.findFirst({
       where: {
@@ -26,7 +47,7 @@ export class ProductInputValidatorService {
     });
 
     if (!inputField) {
-      return info;
+      return customerInfo;
     }
 
     let formFields: TVcGamerForms[] = [];
@@ -34,11 +55,11 @@ export class ProductInputValidatorService {
       formFields = inputField.forms as unknown as TVcGamerForms[];
 
       if (!Array.isArray(formFields)) {
-        return info;
+        return customerInfo;
       }
     } catch (error) {
       console.error("Error parsing form fields:", error);
-      return info;
+      return customerInfo;
     }
 
     const missingFields: string[] = [];
@@ -47,12 +68,12 @@ export class ProductInputValidatorService {
     for (const field of formFields) {
       const { key, alias, type } = field;
 
-      if (!info[key]) {
+      if (!infoObject[key]) {
         missingFields.push(alias || key);
         continue;
       }
 
-      const value = info[key];
+      const value = infoObject[key];
 
       switch (type) {
         case InputFieldType.NUMBER:
@@ -94,7 +115,7 @@ export class ProductInputValidatorService {
       );
     }
 
-    return info;
+    return customerInfo;
   }
 
   async getProductInputFields(productId: string) {

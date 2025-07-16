@@ -17,7 +17,11 @@ import { BookingQueryDto } from "./dto/booking-query.dto";
 import { Decimal } from "@prisma/client/runtime/library";
 import { BookingStatus } from "./enums/booking-status.enum";
 import { BlockchainsService } from "../blockchains/blockchains.service";
-import { ProductInputValidatorService } from "../products/services/product-input-validator.service";
+import {
+  ProductInputValidatorService,
+  CustomerInfo,
+} from "../products/services/product-input-validator.service";
+import { Prisma } from "@generated/prisma";
 
 @Injectable()
 export class BookingService {
@@ -106,7 +110,6 @@ export class BookingService {
         );
       }
 
-      // Validate customer info against product requirements
       const validatedCustomerInfo =
         await this.productInputValidator.validateCustomerInfo(
           productVariant.product.id,
@@ -164,7 +167,8 @@ export class BookingService {
             toCurrency: exchangeRate.toCurrency,
             lockedAt: new Date().toISOString(),
           },
-          customerInfo: validatedCustomerInfo,
+          customerInfo:
+            validatedCustomerInfo as unknown as Prisma.InputJsonValue,
           status: "PENDING" as BookingStatus,
           expiresAt: new Date(
             Date.now() + this.BOOKING_EXPIRY_MINUTES * 60 * 1000,

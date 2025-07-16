@@ -169,10 +169,7 @@ export class PurchasesService {
     let vendorResponse: Prisma.JsonValue | undefined = undefined;
 
     if (booking.productPrice?.vendor?.name === "vcGamer") {
-      const customerInfo = booking.customerInfo as Record<
-        string,
-        string | number | boolean | string[]
-      > | null;
+      const customerInfo = booking.customerInfo;
 
       if (!customerInfo) {
         throw new BadRequestException(
@@ -187,14 +184,23 @@ export class PurchasesService {
 
         const brandKey = booking.productVariant.product.code;
         const variationKey = booking.productVariant.sku;
-        const price = Number(booking.productPrice.sellPrice);
+        const price = Number(booking.productPrice.priceFromVendor);
 
-        const refId = "TRX239231";
+        let formData;
 
-        const formData = Object.entries(customerInfo).map(([key, value]) => ({
-          key,
-          value: String(value),
-        }));
+        if (Array.isArray(customerInfo)) {
+          formData = customerInfo;
+        } else {
+          formData = Object.entries(
+            customerInfo as Record<
+              string,
+              string | number | boolean | string[]
+            >,
+          ).map(([key, value]) => ({
+            key,
+            value: String(value),
+          }));
+        }
 
         if (!formData.length) {
           throw new BadRequestException(
@@ -207,7 +213,6 @@ export class PurchasesService {
           variationKey,
           price,
           formData,
-          refId,
         );
 
         if (!orderResponse.success) {

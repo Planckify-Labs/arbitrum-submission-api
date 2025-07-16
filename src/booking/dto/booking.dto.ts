@@ -6,8 +6,24 @@ import {
   ValidateNested,
   IsNumber,
   IsOptional,
+  IsArray,
 } from "class-validator";
 import { Type } from "class-transformer";
+
+// Define types for customer info formats
+// Object format
+interface CustomerInfoObject {
+  [key: string]: string | number | boolean | string[];
+}
+
+// Array format (VCGamers format)
+interface CustomerInfoKeyValue {
+  key: string;
+  value: string;
+}
+
+// Customer info can be either format
+type CustomerInfo = CustomerInfoObject | CustomerInfoKeyValue[];
 
 export class PaymentDetailsDto {
   @ApiProperty({
@@ -73,12 +89,20 @@ export class CreateBookingDto {
   @ApiProperty({
     description:
       "Customer information required for the product (varies by product type)",
-    example: { phoneNumber: "6281234567890" },
+    examples: {
+      objectFormat: {
+        value: { phoneNumber: "6281234567890" },
+        description: "Object format with direct key-value pairs",
+      },
+      arrayFormat: {
+        value: [{ key: "user_id", value: "085930970697" }],
+        description: "Array format with key-value objects (VCGamers format)",
+      },
+    },
     required: false,
   })
-  @IsObject()
   @IsOptional()
-  customerInfo?: Record<string, string | number | boolean | string[]>;
+  customerInfo?: CustomerInfo;
 }
 
 export class ExecuteBookingDto {
@@ -261,6 +285,22 @@ export class BookingResponseDto {
   @ValidateNested()
   @Type(() => PaymentResponseDto)
   payment: PaymentResponseDto;
+
+  @ApiProperty({
+    description: "Customer information for the product",
+    examples: {
+      objectFormat: {
+        value: { phoneNumber: "6281234567890" },
+        description: "Object format with direct key-value pairs",
+      },
+      arrayFormat: {
+        value: [{ key: "user_id", value: "085930970697" }],
+        description: "Array format with key-value objects (VCGamers format)",
+      },
+    },
+    required: false,
+  })
+  customerInfo?: CustomerInfo;
 
   @ApiProperty({
     description: "Booking status",

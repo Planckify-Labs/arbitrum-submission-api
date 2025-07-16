@@ -8,7 +8,6 @@ import {
   TVCGamerOrderResponse,
 } from "../types/vcgamer-api.types";
 import { PrismaService } from "../../../prisma/prisma.service";
-import * as crypto from "crypto";
 
 @Injectable()
 export abstract class BaseVendorService {
@@ -42,6 +41,14 @@ export abstract class BaseVendorService {
     };
   }
 
+  protected generateUniqueRefId(): string {
+    const timestamp = Date.now().toString().slice(-6);
+    const randomDigits = Math.floor(Math.random() * 1000)
+      .toString()
+      .padStart(3, "0");
+    return `TRX${timestamp}${randomDigits}`;
+  }
+
   protected abstract createSignature(params: string): string;
 
   protected async makeRequest<T>(
@@ -62,7 +69,7 @@ export abstract class BaseVendorService {
         url,
         method,
         headers,
-        data: data || undefined,
+        data: JSON.stringify(data) || undefined,
       });
 
       const response = await fetch(url, {
@@ -117,6 +124,5 @@ export abstract class BaseVendorService {
     variationKey: string,
     price: number,
     data: Array<{ key: string; value: string }>,
-    refId: string,
   ): Promise<TVCgamerResponse<TVCGamerOrderResponse>>;
 }
