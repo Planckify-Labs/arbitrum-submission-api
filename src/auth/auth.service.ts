@@ -30,7 +30,11 @@ export class AuthService {
 
   generateNonce(walletAddress: string): string {
     const nonce = randomBytes(32).toString("hex");
-    const expires = new Date(Date.now() + 5 * 60 * 1000);
+    const nonceExpireMinutes = parseInt(
+      this.configService.get<string>("NONCE_EXPIRE_TIME_MINUTES") || "5",
+      10,
+    );
+    const expires = new Date(Date.now() + nonceExpireMinutes * 60 * 1000);
 
     this.nonceCache.set(walletAddress.toLowerCase(), { nonce, expires });
     return nonce;
@@ -45,9 +49,9 @@ export class AuthService {
       throw new BadRequestException("Invalid Ethereum wallet address format");
     }
 
-    const domain = "com.cstralpt.takumipay";
-    const uri = "takumipay://wallet-auth";
-    const statement = "Sign in to TakumiPay Mobile App";
+    const domain = this.configService.get<string>("SIWE_DOMAIN");
+    const uri = this.configService.get<string>("SIWE_URI");
+    const statement = this.configService.get<string>("SIWE_STATEMENT");
     const issuedAt = new Date().toISOString();
 
     try {
@@ -80,7 +84,7 @@ export class AuthService {
         return false;
       }
 
-      if (fields.domain !== "com.cstralpt.takumipay") {
+      if (fields.domain !== this.configService.get<string>("SIWE_DOMAIN")) {
         this.logger.error(`Domain mismatch: ${fields.domain}`);
         return false;
       }
@@ -125,11 +129,11 @@ export class AuthService {
 
     return {
       access_token: this.jwtService.sign(payload, {
-        expiresIn: "7d",
+        expiresIn: process.env.JWT_EXPIRATION_TIME,
       }),
       refresh_token: this.jwtService.sign(
         { sub: user.id, type: "refresh" },
-        { expiresIn: "30d" },
+        { expiresIn: process.env.REFRESH_TOKEN_EXPIRATION_TIME },
       ),
       user: {
         id: user.id,
@@ -160,7 +164,7 @@ export class AuthService {
             sub: user.id,
             walletAddress: user.walletAddress || "",
           },
-          { expiresIn: "7d" },
+          { expiresIn: process.env.JWT_EXPIRATION_TIME },
         ),
       };
     } catch (error) {
