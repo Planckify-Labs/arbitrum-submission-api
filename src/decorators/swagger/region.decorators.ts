@@ -5,6 +5,7 @@ import {
   ApiResponse,
   ApiParam,
   ApiQuery,
+  ApiHeader,
 } from "@nestjs/swagger";
 import { RegionResponseDto } from "../../regions/dto/region-response.dto";
 import { RegionTokenResponseDto } from "../../regions/dto/region-token-response.dto";
@@ -12,6 +13,12 @@ import { RegionTokenResponseDto } from "../../regions/dto/region-token-response.
 export function ApiGetRegions() {
   return applyDecorators(
     ApiBearerAuth(),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({ summary: "Get all regions" }),
     ApiResponse({
       status: 200,
@@ -25,6 +32,12 @@ export function ApiGetRegions() {
 export function ApiGetRegion() {
   return applyDecorators(
     ApiBearerAuth(),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({ summary: "Get region by ID" }),
     ApiParam({ name: "id", type: "string" }),
     ApiResponse({
@@ -39,6 +52,12 @@ export function ApiGetRegion() {
 export function ApiCreateRegion() {
   return applyDecorators(
     ApiBearerAuth(),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({ summary: "Create new region" }),
     ApiResponse({
       status: 201,
@@ -52,6 +71,12 @@ export function ApiCreateRegion() {
 export function ApiUpdateRegion() {
   return applyDecorators(
     ApiBearerAuth(),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({ summary: "Update region" }),
     ApiParam({ name: "id", type: "string" }),
     ApiResponse({
@@ -68,6 +93,12 @@ export function ApiDeleteRegion() {
   return applyDecorators(
     ApiBearerAuth(),
     ApiOperation({ summary: "Delete region" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiParam({ name: "id", type: "string" }),
     ApiResponse({ status: 204, description: "Region deleted successfully" }),
     ApiResponse({ status: 404, description: "Region not found" }),
@@ -77,6 +108,12 @@ export function ApiDeleteRegion() {
 export function ApiGetRegionTokens() {
   return applyDecorators(
     ApiBearerAuth(),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({ summary: "Get region available tokens" }),
     ApiParam({ name: "id", type: "string" }),
     ApiResponse({
@@ -93,6 +130,12 @@ export function ApiCreateRegionToken() {
   return applyDecorators(
     ApiBearerAuth(),
     ApiOperation({ summary: "Add token to region" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiParam({ name: "id", type: "string" }),
     ApiResponse({
       status: 201,
@@ -108,6 +151,12 @@ export function ApiUpdateRegionToken() {
   return applyDecorators(
     ApiBearerAuth(),
     ApiOperation({ summary: "Update region token settings" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiParam({ name: "id", type: "string" }),
     ApiParam({ name: "tokenId", type: "string" }),
     ApiResponse({
@@ -124,6 +173,12 @@ export function ApiDeleteRegionToken() {
   return applyDecorators(
     ApiBearerAuth(),
     ApiOperation({ summary: "Remove token from region" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiParam({ name: "id", type: "string" }),
     ApiParam({ name: "tokenId", type: "string" }),
     ApiResponse({
@@ -138,6 +193,12 @@ export function ApiSearchRegions() {
   return applyDecorators(
     ApiBearerAuth(),
     ApiOperation({ summary: "Search regions with filters" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiQuery({ name: "code", type: String, required: false }),
     ApiQuery({ name: "name", type: String, required: false }),
     ApiQuery({ name: "currencyCode", type: String, required: false }),

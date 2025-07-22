@@ -5,14 +5,19 @@ import {
   ApiResponse,
   ApiParam,
   ApiQuery,
+  ApiHeader,
 } from "@nestjs/swagger";
 import { TokenResponseDto } from "../../tokens/dto/token-response.dto";
-import { CreateTokenDto } from "../../tokens/dto/create-token.dto";
-import { UpdateTokenDto } from "../../tokens/dto/update-token.dto";
 
 export function ApiGetTokens() {
   return applyDecorators(
     ApiBearerAuth(),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({ summary: "Get all tokens" }),
     ApiResponse({
       status: 200,
@@ -27,6 +32,12 @@ export function ApiGetToken() {
   return applyDecorators(
     ApiBearerAuth(),
     ApiOperation({ summary: "Get token by ID" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiParam({ name: "id", type: "string" }),
     ApiResponse({
       status: 200,
@@ -41,6 +52,12 @@ export function ApiCreateToken() {
   return applyDecorators(
     ApiBearerAuth(),
     ApiOperation({ summary: "Create new token" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiResponse({
       status: 201,
       description: "Token created successfully",
@@ -54,6 +71,12 @@ export function ApiUpdateToken() {
   return applyDecorators(
     ApiBearerAuth(),
     ApiOperation({ summary: "Update token" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiParam({ name: "id", type: "string" }),
     ApiResponse({
       status: 200,
@@ -69,6 +92,12 @@ export function ApiDeleteToken() {
   return applyDecorators(
     ApiBearerAuth(),
     ApiOperation({ summary: "Delete token" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiParam({ name: "id", type: "string" }),
     ApiResponse({ status: 204, description: "Token deleted successfully" }),
     ApiResponse({ status: 404, description: "Token not found" }),
@@ -79,6 +108,12 @@ export function ApiSearchTokens() {
   return applyDecorators(
     ApiBearerAuth(),
     ApiOperation({ summary: "Search tokens with filters" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiQuery({ name: "symbol", type: String, required: false }),
     ApiQuery({ name: "name", type: String, required: false }),
     ApiQuery({ name: "blockchainId", type: String, required: false }),

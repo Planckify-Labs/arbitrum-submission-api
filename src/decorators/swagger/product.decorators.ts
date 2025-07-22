@@ -5,6 +5,7 @@ import {
   ApiParam,
   ApiQuery,
   ApiBody,
+  ApiHeader,
 } from "@nestjs/swagger";
 
 const productSchema = {
@@ -141,6 +142,11 @@ const productsGroupedByCategoriesResponse = {
 
 export function ApiGetProducts() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Get all products",
       description:
@@ -159,6 +165,11 @@ export function ApiGetProducts() {
 
 export function ApiGetProductsByCategory() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Get products by category",
       description: "Retrieves a list of products filtered by category ID",
@@ -183,6 +194,11 @@ export function ApiGetProductsByCategory() {
 
 export function ApiGetProduct() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Get a product by ID",
       description: "Retrieves detailed information about a specific product",
@@ -204,6 +220,11 @@ export function ApiGetProduct() {
 
 export function ApiCreateProduct() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Create a new product",
       description: "Creates a new product with the provided details",
@@ -219,6 +240,11 @@ export function ApiCreateProduct() {
 
 export function ApiUpdateProduct() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Update a product",
       description: "Updates an existing product with the provided details",
@@ -261,6 +287,11 @@ export function ApiDeleteProduct() {
 
 export function ApiGetCategories() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Get all product categories",
       description: "Retrieves a list of all available product categories",
@@ -278,6 +309,11 @@ export function ApiGetCategories() {
 
 export function ApiGetProductByCode() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Get a product by code",
       description:
@@ -300,6 +336,11 @@ export function ApiGetProductByCode() {
 
 export function ApiSearchProducts() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Search products",
       description:
@@ -365,6 +406,11 @@ export function ApiSearchProducts() {
 
 export function ApiGetProductPrices() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Get product prices",
       description: "Get all prices for a specific product",
@@ -389,6 +435,11 @@ export function ApiGetProductPrices() {
 
 export function ApiCreateProductPrice() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Create a new product price",
       description: "Creates a new price for a product variant",
@@ -448,6 +499,11 @@ export function ApiCreateProductPrice() {
 
 export function ApiUpdateProductPrice() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Update product price",
       description: "Update an existing product price",
@@ -470,6 +526,11 @@ export function ApiUpdateProductPrice() {
 
 export function ApiDeleteProductPrice() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Delete product price",
       description: "Delete an existing product price",
@@ -490,6 +551,11 @@ export function ApiDeleteProductPrice() {
 
 export function ApiCreateCategory() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Create category",
       description: "Create a new product category",
@@ -522,6 +588,11 @@ export function ApiCreateCategory() {
 
 export function ApiGetCategory() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Get category",
       description: "Get a specific category by ID",
@@ -559,6 +630,11 @@ export function ApiGetCategory() {
 
 export function ApiUpdateCategory() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Update category",
       description: "Update an existing category",
@@ -597,6 +673,11 @@ export function ApiUpdateCategory() {
 
 export function ApiDeleteCategory() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Delete category",
       description: "Delete an existing category",
@@ -616,6 +697,11 @@ export function ApiDeleteCategory() {
 
 export function ApiGetProductVariants() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Get product variants",
       description: "Retrieves all variants for a specific product",
@@ -676,6 +762,11 @@ export function ApiGetProductVariants() {
 
 export function ApiSearchProductVariants() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Search product variants",
       description: "Search product variants using various criteria",
@@ -735,6 +826,12 @@ export function ApiSearchProductVariants() {
 
 export function ApiGetProductVariant() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Get a product variant by ID",
       description:
@@ -801,6 +898,12 @@ export function ApiGetProductVariant() {
 
 export function ApiGetProductsGroupedByCategories() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Get all products grouped by categories",
       description:
@@ -824,6 +927,12 @@ export function ApiGetProductsGroupedByCategories() {
 
 export function ApiGetProductInputField() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Get product input fields",
       description:
@@ -879,6 +988,11 @@ export function ApiGetProductInputField() {
 
 export function ApiCreateProductInputField() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Create product input fields",
       description: "Creates input fields configuration for a specific product",
@@ -968,6 +1082,12 @@ export function ApiCreateProductInputField() {
 
 export function ApiUpdateProductInputField() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Update product input fields",
       description: "Updates input fields configuration for a specific product",

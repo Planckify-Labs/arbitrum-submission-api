@@ -1,5 +1,10 @@
 import { applyDecorators } from "@nestjs/common";
-import { ApiOperation, ApiResponse, ApiParam } from "@nestjs/swagger";
+import {
+  ApiOperation,
+  ApiResponse,
+  ApiParam,
+  ApiHeader,
+} from "@nestjs/swagger";
 import { SmartContractResponseDto } from "../../smart-contracts/dto/smart-contract-response.dto";
 
 const notFoundResponse = {
@@ -10,6 +15,12 @@ const notFoundResponse = {
 export function ApiGetSmartContracts() {
   return applyDecorators(
     ApiOperation({ summary: "Get all smart contracts" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiResponse({
       status: 200,
       description: "Returns a list of smart contracts",
@@ -28,6 +39,12 @@ export function ApiSearchSmartContracts() {
       - Blockchain filters: name, chain ID, EVM compatibility
       Results are ordered by blockchain name and then contract name.`,
     }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiResponse({
       status: 200,
       description: "Returns filtered list of smart contracts",
@@ -40,6 +57,12 @@ export function ApiSearchSmartContracts() {
 export function ApiGetSmartContract() {
   return applyDecorators(
     ApiOperation({ summary: "Get smart contract by ID" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiParam({
       name: "id",
       description: "Smart Contract ID",
@@ -57,6 +80,12 @@ export function ApiGetSmartContract() {
 export function ApiCreateSmartContract() {
   return applyDecorators(
     ApiOperation({ summary: "Create a new smart contract" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiResponse({
       status: 201,
       description: "Smart contract created successfully",
@@ -72,6 +101,12 @@ export function ApiCreateSmartContract() {
 export function ApiUpdateSmartContract() {
   return applyDecorators(
     ApiOperation({ summary: "Update smart contract" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiParam({
       name: "id",
       description: "Smart Contract ID",
@@ -93,6 +128,12 @@ export function ApiUpdateSmartContract() {
 export function ApiDeleteSmartContract() {
   return applyDecorators(
     ApiOperation({ summary: "Delete smart contract" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiParam({
       name: "id",
       description: "Smart Contract ID",

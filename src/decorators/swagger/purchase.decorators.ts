@@ -1,6 +1,6 @@
 import { applyDecorators } from "@nestjs/common";
 import {
-  ApiBearerAuth,
+  ApiHeader,
   ApiOperation,
   ApiParam,
   ApiQuery,
@@ -10,7 +10,12 @@ import { PurchaseStatus } from "@generated/prisma";
 
 export function ApiCreatePurchase() {
   return applyDecorators(
-    ApiBearerAuth(),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Create a new purchase from booking",
       description: `Creates a new purchase record based on a booking.
@@ -53,7 +58,12 @@ Note: Do not modify or reorder these IDs as they are used to verify and track th
 
 export function ApiGetPurchases() {
   return applyDecorators(
-    ApiBearerAuth(),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Get all purchases",
       description: "Retrieves a paginated list of all purchases",
@@ -78,7 +88,12 @@ export function ApiGetPurchases() {
 
 export function ApiGetPurchase() {
   return applyDecorators(
-    ApiBearerAuth(),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Get purchase by ID",
       description: "Retrieves a specific purchase by its ID",
@@ -101,7 +116,12 @@ export function ApiGetPurchase() {
 
 export function ApiSearchPurchases() {
   return applyDecorators(
-    ApiBearerAuth(),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Search purchases",
       description: "Search purchases with various filters",
@@ -161,7 +181,12 @@ export function ApiSearchPurchases() {
 
 export function ApiUpdatePurchaseStatus() {
   return applyDecorators(
-    ApiBearerAuth(),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Update purchase status",
       description: "Updates the status of a purchase",
@@ -188,7 +213,12 @@ export function ApiUpdatePurchaseStatus() {
 
 export function ApiGetPurchaseStatus() {
   return applyDecorators(
-    ApiBearerAuth(),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Get purchase status",
       description: "Retrieves the current status of a purchase",
@@ -211,7 +241,12 @@ export function ApiGetPurchaseStatus() {
 
 export function ApiGetUserPurchases() {
   return applyDecorators(
-    ApiBearerAuth(),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Get user purchases",
       description: "Retrieves all purchases for a specific user",
@@ -244,7 +279,12 @@ export function ApiGetUserPurchases() {
 
 export function ApiGetTokenPurchases() {
   return applyDecorators(
-    ApiBearerAuth(),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Get token purchases",
       description: "Retrieves all purchases made with a specific token",
@@ -277,7 +317,12 @@ export function ApiGetTokenPurchases() {
 
 export function ApiGetBlockchainPurchases() {
   return applyDecorators(
-    ApiBearerAuth(),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Get blockchain purchases",
       description: "Retrieves all purchases made on a specific blockchain",

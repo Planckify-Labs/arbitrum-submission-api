@@ -7,10 +7,12 @@ import {
   Put,
   Query,
   UseGuards,
+  Request,
+  ForbiddenException,
 } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { BookingService } from "./booking.service";
-import { CreateBookingDto, ExecuteBookingDto } from "./dto/booking.dto";
+import { CreateBookingDto } from "./dto/booking.dto";
 import { BookingQueryDto } from "./dto/booking-query.dto";
 import {
   ApiCreateBooking,
@@ -21,6 +23,7 @@ import {
   ApiCancelBooking,
 } from "../decorators/swagger/booking.decorators";
 import { BookingRateLimitGuard } from "./guards/booking-rate-limit.guard";
+import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 
 @Controller("bookings")
 @ApiTags("bookings")
@@ -35,23 +38,42 @@ export class BookingController {
   }
 
   @Get("wallet/:walletAddress")
+  @UseGuards(JwtAuthGuard)
   @ApiGetWalletBookings()
   getBookings(
     @Param("walletAddress") walletAddress: string,
     @Query() query: BookingQueryDto,
+    @Request() req,
   ) {
+    if (req.user.walletAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+      throw new ForbiddenException("You can only access your own wallet data");
+    }
     return this.bookingService.getBookings(walletAddress, query);
   }
 
   @Get("wallet/:walletAddress/latest")
+  @UseGuards(JwtAuthGuard)
   @ApiGetLatestBooking()
-  getLatestBooking(@Param("walletAddress") walletAddress: string) {
+  getLatestBooking(
+    @Param("walletAddress") walletAddress: string,
+    @Request() req,
+  ) {
+    if (req.user.walletAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+      throw new ForbiddenException("You can only access your own wallet data");
+    }
     return this.bookingService.getLatestBooking(walletAddress);
   }
 
   @Get("wallet/:walletAddress/stats")
+  @UseGuards(JwtAuthGuard)
   @ApiGetBookingStats()
-  getBookingStats(@Param("walletAddress") walletAddress: string) {
+  getBookingStats(
+    @Param("walletAddress") walletAddress: string,
+    @Request() req,
+  ) {
+    if (req.user.walletAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+      throw new ForbiddenException("You can only access your own wallet data");
+    }
     return this.bookingService.getBookingStats(walletAddress);
   }
 

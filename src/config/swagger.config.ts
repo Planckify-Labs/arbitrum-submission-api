@@ -15,7 +15,15 @@ export function setupSwagger(app: INestApplication) {
       - Product Prices: Vendor-specific pricing for variants
       
       ## Authentication
-      Most endpoints require Bearer token authentication.
+      Authentication is handled using Sign-In with Ethereum (SIWE).
+      1. Get a nonce from \`GET /auth/nonce/{walletAddress}\`
+      2. Sign the message with your Ethereum wallet
+      3. Verify the signature with \`POST /auth/verify\`
+      4. Use the returned JWT token in the Authorization header
+      
+      **Note: All routes require authentication except:**
+      - Authentication routes (/auth/nonce, /auth/verify, /auth/refresh)
+      - Purchase routes (/purchases/*)
       
       ## Pagination
       All GET endpoints that return multiple items use cursor-based pagination:
@@ -39,8 +47,19 @@ export function setupSwagger(app: INestApplication) {
       "support@takumipay.com",
     )
     .setLicense("Proprietary", "https://takumipay.com/license")
-    .addBearerAuth()
+    .addBearerAuth({
+      type: "http",
+      scheme: "bearer",
+      bearerFormat: "JWT",
+      name: "Authorization",
+      description: "Enter JWT token",
+      in: "header",
+    })
     .addTag("app", "Application information endpoints")
+    .addTag(
+      "auth",
+      "Authentication endpoints using Sign-In with Ethereum (SIWE)",
+    )
     .addTag("products", "Product management endpoints")
     .addTag("tokens", "Token management endpoints")
     .addTag("regions", "Region management endpoints")
@@ -53,7 +72,7 @@ export function setupSwagger(app: INestApplication) {
     .addTag("users", "User management endpoints")
     .addTag("vendors", "Vendor management endpoints")
     .addTag("transactions", "Transaction management endpoints")
-    .addTag("purchases", "Purchase management endpoints")
+    .addTag("purchases", "Purchase management endpoints (public access)")
     .addTag("api-logs", "API logs management endpoints")
     .addServer("http://localhost:4000", "Local development")
     .addServer("https://api.takumipay.com", "Production")

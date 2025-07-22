@@ -6,6 +6,7 @@ import {
   ApiParam,
   ApiQuery,
   ApiBody,
+  ApiHeader,
 } from "@nestjs/swagger";
 import { BookingResponseDto } from "../../booking/dto/booking-response.dto";
 import { BookingStatsResponseDto } from "../../booking/dto/booking-query.dto";
@@ -24,6 +25,12 @@ const invalidInputResponse = {
 export function ApiCreateBooking() {
   return applyDecorators(
     ApiBearerAuth(),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Create a new booking",
       description:
@@ -118,6 +125,12 @@ export function ApiCreateBooking() {
 export function ApiGetWalletBookings() {
   return applyDecorators(
     ApiBearerAuth(),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Get wallet bookings",
       description:
@@ -164,6 +177,12 @@ export function ApiGetWalletBookings() {
 export function ApiGetLatestBooking() {
   return applyDecorators(
     ApiBearerAuth(),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Get latest active booking",
       description:
@@ -185,6 +204,12 @@ export function ApiGetLatestBooking() {
 export function ApiGetBookingStats() {
   return applyDecorators(
     ApiBearerAuth(),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Get booking statistics",
       description:
@@ -206,6 +231,12 @@ export function ApiGetBookingStats() {
 export function ApiExecuteBooking() {
   return applyDecorators(
     ApiBearerAuth(),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Execute booking",
       description: "Marks a booking as executed and links it to a purchase",
@@ -241,6 +272,12 @@ export function ApiExecuteBooking() {
 export function ApiCancelBooking() {
   return applyDecorators(
     ApiBearerAuth(),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Cancel booking",
       description: "Cancels a pending booking",

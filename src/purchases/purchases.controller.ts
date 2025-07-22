@@ -15,9 +15,11 @@ import {
   ApiGetTokenPurchases,
   ApiGetBlockchainPurchases,
 } from "../decorators/swagger/purchase.decorators";
+import { Public } from "../decorators/public.decorator";
 
 @Controller("purchases")
 @ApiTags("purchases")
+@Public()
 export class PurchasesController {
   constructor(private readonly purchasesService: PurchasesService) {}
 

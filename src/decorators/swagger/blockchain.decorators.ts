@@ -1,5 +1,10 @@
 import { applyDecorators } from "@nestjs/common";
-import { ApiOperation, ApiResponse, ApiParam } from "@nestjs/swagger";
+import {
+  ApiOperation,
+  ApiResponse,
+  ApiParam,
+  ApiHeader,
+} from "@nestjs/swagger";
 import { BlockchainResponseDto } from "../../blockchains/dto/blockchain-response.dto";
 
 const notFoundResponse = {
@@ -9,6 +14,12 @@ const notFoundResponse = {
 
 export function ApiGetBlockchains() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({ summary: "Get all blockchains with their native tokens" }),
     ApiResponse({
       status: 200,
@@ -21,6 +32,12 @@ export function ApiGetBlockchains() {
 
 export function ApiSearchBlockchains() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Search blockchains",
       description:
@@ -37,6 +54,11 @@ export function ApiSearchBlockchains() {
 
 export function ApiGetBlockchain() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({ summary: "Get blockchain by ID with its native token" }),
     ApiParam({
       name: "id",
@@ -54,6 +76,12 @@ export function ApiGetBlockchain() {
 
 export function ApiCreateBlockchain() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({ summary: "Create a new blockchain" }),
     ApiResponse({
       status: 201,
@@ -69,6 +97,12 @@ export function ApiCreateBlockchain() {
 
 export function ApiUpdateBlockchain() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({ summary: "Update blockchain" }),
     ApiParam({
       name: "id",
@@ -90,6 +124,12 @@ export function ApiUpdateBlockchain() {
 
 export function ApiDeleteBlockchain() {
   return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({ summary: "Delete blockchain" }),
     ApiParam({
       name: "id",

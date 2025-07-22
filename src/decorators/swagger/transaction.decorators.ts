@@ -1,11 +1,23 @@
 import { applyDecorators } from "@nestjs/common";
-import { ApiOperation, ApiResponse, ApiParam, ApiQuery } from "@nestjs/swagger";
+import {
+  ApiOperation,
+  ApiResponse,
+  ApiParam,
+  ApiQuery,
+  ApiHeader,
+} from "@nestjs/swagger";
 import { TransactionResponseDto } from "../../transactions/dto/transaction-response.dto";
 import { TransactionStatus, TransactionType } from "@generated/prisma";
 
 export function ApiGetTransactions() {
   return applyDecorators(
     ApiOperation({ summary: "Get all transactions" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiResponse({
       status: 200,
       description: "Returns a list of transactions",
@@ -18,6 +30,12 @@ export function ApiGetTransactions() {
 export function ApiGetTransaction() {
   return applyDecorators(
     ApiOperation({ summary: "Get transaction by ID" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiParam({ name: "id", description: "Transaction ID" }),
     ApiResponse({
       status: 200,
@@ -45,6 +63,12 @@ export function ApiCreateTransaction() {
 export function ApiUpdateTransactionStatus() {
   return applyDecorators(
     ApiOperation({ summary: "Update transaction status" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiParam({ name: "id", description: "Transaction ID" }),
     ApiResponse({
       status: 200,
@@ -61,6 +85,12 @@ export function ApiUpdateTransactionStatus() {
 export function ApiGetUserTransactions() {
   return applyDecorators(
     ApiOperation({ summary: "Get user's transactions" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiParam({ name: "userId", description: "User ID" }),
     ApiResponse({
       status: 200,
@@ -78,6 +108,12 @@ export function ApiGetUserTransactions() {
 export function ApiSearchTransactions() {
   return applyDecorators(
     ApiOperation({ summary: "Search transactions with filters" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiQuery({ name: "type", enum: TransactionType, required: false }),
     ApiQuery({ name: "status", enum: TransactionStatus, required: false }),
     ApiQuery({ name: "userId", type: String, required: false }),
@@ -98,6 +134,12 @@ export function ApiSearchTransactions() {
 export function ApiGetBlockchainTransactions() {
   return applyDecorators(
     ApiOperation({ summary: "Get blockchain's transactions" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiParam({ name: "blockchainId", description: "Blockchain ID" }),
     ApiResponse({
       status: 200,
@@ -115,6 +157,12 @@ export function ApiGetBlockchainTransactions() {
 export function ApiGetTokenTransactions() {
   return applyDecorators(
     ApiOperation({ summary: "Get token's transactions" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiParam({ name: "tokenId", description: "Token ID" }),
     ApiResponse({
       status: 200,

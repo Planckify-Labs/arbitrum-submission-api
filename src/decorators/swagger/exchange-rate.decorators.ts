@@ -1,5 +1,11 @@
 import { applyDecorators } from "@nestjs/common";
-import { ApiOperation, ApiResponse, ApiBody, ApiQuery } from "@nestjs/swagger";
+import {
+  ApiOperation,
+  ApiResponse,
+  ApiBody,
+  ApiQuery,
+  ApiHeader,
+} from "@nestjs/swagger";
 import {
   CreateExchangeRateDto,
   ExchangeRateResponseDto,
@@ -10,6 +16,11 @@ import {
 
 export const ApiCreateExchangeRate = () =>
   applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({ summary: "Create a new exchange rate" }),
     ApiBody({ type: CreateExchangeRateDto }),
     ApiResponse({
@@ -21,6 +32,12 @@ export const ApiCreateExchangeRate = () =>
 
 export const ApiGetLatestExchangeRate = () =>
   applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Get latest exchange rate",
       description:
@@ -47,6 +64,12 @@ export const ApiGetLatestExchangeRate = () =>
 
 export const ApiGetAllExchangeRates = () =>
   applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({
       summary: "Get all exchange rates with cursor-based pagination",
     }),
@@ -60,6 +83,12 @@ export const ApiGetAllExchangeRates = () =>
 
 export const ApiGetAverageExchangeRate = () =>
   applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiOperation({ summary: "Get average exchange rate" }),
     ApiQuery({ type: QueryExchangeRateDto }),
     ApiResponse({
