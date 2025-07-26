@@ -146,3 +146,81 @@ export function ApiDeleteSmartContract() {
     ApiResponse(notFoundResponse),
   );
 }
+
+// Public API Key versions for public endpoints
+export function ApiGetSmartContractsPublic() {
+  return applyDecorators(
+    ApiHeader({
+      name: "X-API-Key",
+      required: true,
+      description: "API Key for public access",
+      example: "your-api-key-here",
+    }),
+    ApiOperation({ summary: "Get all smart contracts (Public API)" }),
+    ApiResponse({
+      status: 200,
+      description: "Returns a list of smart contracts",
+      type: SmartContractResponseDto,
+      isArray: true,
+    }),
+    ApiResponse({
+      status: 401,
+      description: "Invalid or missing API key",
+    }),
+  );
+}
+
+export function ApiSearchSmartContractsPublic() {
+  return applyDecorators(
+    ApiHeader({
+      name: "X-API-Key",
+      required: true,
+      description: "API Key for public access",
+      example: "your-api-key-here",
+    }),
+    ApiOperation({
+      summary: "Search smart contracts (Public API)",
+      description: `Search smart contracts with various filters:
+      - Contract filters: name, address, ABI ID, active status
+      - Blockchain filters: name, chain ID, EVM compatibility
+      Results are ordered by blockchain name and then contract name.`,
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns filtered list of smart contracts",
+      type: SmartContractResponseDto,
+      isArray: true,
+    }),
+    ApiResponse({
+      status: 401,
+      description: "Invalid or missing API key",
+    }),
+  );
+}
+
+export function ApiGetSmartContractPublic() {
+  return applyDecorators(
+    ApiHeader({
+      name: "X-API-Key",
+      required: true,
+      description: "API Key for public access",
+      example: "your-api-key-here",
+    }),
+    ApiOperation({ summary: "Get smart contract by ID (Public API)" }),
+    ApiParam({
+      name: "id",
+      description: "Smart Contract ID",
+      example: "01H1G5V...",
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns a smart contract",
+      type: SmartContractResponseDto,
+    }),
+    ApiResponse(notFoundResponse),
+    ApiResponse({
+      status: 401,
+      description: "Invalid or missing API key",
+    }),
+  );
+}

@@ -24,7 +24,17 @@ export function setupSwagger(app: INestApplication) {
       **Note: All routes require authentication except:**
       - Authentication routes (/auth/nonce, /auth/verify, /auth/refresh)
       - Purchase routes (/purchases/*)
-      
+      - Public API routes (require API key instead of JWT)
+
+      ## Public API Access
+      Some endpoints are available for public access using API keys:
+      - Blockchains: GET /blockchains, /blockchains/search, /blockchains/{id}
+      - Tokens: GET /tokens, /tokens/search, /tokens/{id}
+      - Smart Contracts: GET /smart-contracts, /smart-contracts/search, /smart-contracts/{id}
+      - Products: GET /products, /products/search, /products/grouped-by-categories
+
+      For public API access, include your API key in the X-API-Key header.
+
       ## Pagination
       All GET endpoints that return multiple items use cursor-based pagination:
       - \`take\`: Controls how many items to return in one response (default: 10)
@@ -55,6 +65,15 @@ export function setupSwagger(app: INestApplication) {
       description: "Enter JWT token",
       in: "header",
     })
+    .addApiKey(
+      {
+        type: "apiKey",
+        name: "X-API-Key",
+        in: "header",
+        description: "API Key for public endpoints",
+      },
+      "ApiKey",
+    )
     .addTag("app", "Application information endpoints")
     .addTag(
       "auth",

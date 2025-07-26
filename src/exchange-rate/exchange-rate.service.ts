@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   CreateExchangeRateDto,
@@ -51,6 +51,24 @@ export class ExchangeRateService {
     return result ? this.transformExchangeRate(result) : null;
   }
 
+  async findOne(id: number) {
+    const result = await this.prisma.exchangeRate.findFirst({
+      where: { id },
+      include: {
+        sourceProvider: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    if (!result) {
+      throw new NotFoundException(`Exchange rate with ID ${id} not found`);
+    }
+
+    return this.transformExchangeRate(result);
+  }
+
   async findAll(
     query: QueryExchangeRateDto,
   ): Promise<CursorPaginatedExchangeRateResponse> {
@@ -64,7 +82,6 @@ export class ExchangeRateService {
     const where = this.buildWhereClause(query);
     console.log("Where clause:", where);
 
-    // Add cursor conditions to where clause if cursor exists
     if (cursor) {
       where.OR = [
         {
@@ -79,7 +96,6 @@ export class ExchangeRateService {
 
     console.log("Final where clause:", where);
 
-    // Get n + 1 items to know if there are more
     const rates = await this.prisma.exchangeRate.findMany({
       take: take + 1,
       where,
@@ -91,7 +107,6 @@ export class ExchangeRateService {
 
     console.log("Found rates:", rates.length);
 
-    // Check if there are more items
     const hasMore = rates.length > take;
     const items = rates.slice(0, take);
     console.log("Items after slice:", items.length);
@@ -100,7 +115,6 @@ export class ExchangeRateService {
       this.transformExchangeRate(rate),
     );
 
-    // Generate next cursor from the last item if there are more
     const nextCursor =
       hasMore && items.length > 0
         ? this.encodeCursor(items[items.length - 1])

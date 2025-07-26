@@ -129,3 +129,78 @@ export function ApiSearchTokens() {
     }),
   );
 }
+
+// Public API Key versions for public endpoints
+export function ApiGetTokensPublic() {
+  return applyDecorators(
+    ApiHeader({
+      name: "X-API-Key",
+      required: true,
+      description: "API Key for public access",
+      example: "your-api-key-here",
+    }),
+    ApiOperation({ summary: "Get all tokens (Public API)" }),
+    ApiResponse({
+      status: 200,
+      description: "Returns all tokens",
+      type: TokenResponseDto,
+      isArray: true,
+    }),
+    ApiResponse({
+      status: 401,
+      description: "Invalid or missing API key",
+    }),
+  );
+}
+
+export function ApiGetTokenPublic() {
+  return applyDecorators(
+    ApiHeader({
+      name: "X-API-Key",
+      required: true,
+      description: "API Key for public access",
+      example: "your-api-key-here",
+    }),
+    ApiOperation({ summary: "Get token by ID (Public API)" }),
+    ApiParam({ name: "id", type: "string" }),
+    ApiResponse({
+      status: 200,
+      description: "Returns the token",
+      type: TokenResponseDto,
+    }),
+    ApiResponse({ status: 404, description: "Token not found" }),
+    ApiResponse({
+      status: 401,
+      description: "Invalid or missing API key",
+    }),
+  );
+}
+
+export function ApiSearchTokensPublic() {
+  return applyDecorators(
+    ApiHeader({
+      name: "X-API-Key",
+      required: true,
+      description: "API Key for public access",
+      example: "your-api-key-here",
+    }),
+    ApiOperation({ summary: "Search tokens with filters (Public API)" }),
+    ApiQuery({ name: "symbol", type: String, required: false }),
+    ApiQuery({ name: "name", type: String, required: false }),
+    ApiQuery({ name: "blockchainId", type: String, required: false }),
+    ApiQuery({ name: "contractAddress", type: String, required: false }),
+    ApiQuery({ name: "isStablecoin", type: Boolean, required: false }),
+    ApiQuery({ name: "isActive", type: Boolean, required: false }),
+    ApiQuery({ name: "isNativeCurrency", type: Boolean, required: false }),
+    ApiResponse({
+      status: 200,
+      description: "Returns filtered tokens",
+      type: TokenResponseDto,
+      isArray: true,
+    }),
+    ApiResponse({
+      status: 401,
+      description: "Invalid or missing API key",
+    }),
+  );
+}

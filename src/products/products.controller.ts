@@ -11,10 +11,8 @@ import {
   Query,
   NotFoundException,
 } from "@nestjs/common";
-import { Transform } from "class-transformer";
-
 import { ProductsService } from "./products.service";
-import { ApiTags, ApiOperation, ApiParam, ApiBody } from "@nestjs/swagger";
+import { ApiTags } from "@nestjs/swagger";
 import { CreateProductDto, UpdateProductDto } from "./dto/product.dto";
 import {
   CreateProductPriceDto,
@@ -25,13 +23,10 @@ import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import {
   ApiCreateProduct,
   ApiDeleteProduct,
-  ApiGetProduct,
-  ApiGetProducts,
   ApiGetProductsByCategory,
   ApiGetCategories,
   ApiGetProductByCode,
   ApiUpdateProduct,
-  ApiSearchProducts,
   ApiGetProductPrices,
   ApiCreateProductPrice,
   ApiUpdateProductPrice,
@@ -42,13 +37,18 @@ import {
   ApiGetCategory,
   ApiGetProductVariants,
   ApiSearchProductVariants,
-  ApiGetProductVariant,
-  ApiGetProductsGroupedByCategories,
-  ApiGetProductInputField,
   ApiCreateProductInputField,
   ApiUpdateProductInputField,
   ApiDeleteProductInputField,
+  ApiGetProductsPublic,
+  ApiSearchProductsPublic,
+  ApiGetProductsGroupedByCategoriesPublic,
+  ApiGetProductPublic,
+  ApiGetProductInputFieldPublic,
+  ApiGetProductVariantPublic,
 } from "../decorators/swagger/product.decorators";
+import { Public } from "../decorators/public.decorator";
+import { ApiKey } from "../decorators/api-key.decorator";
 import { SearchProductDto } from "./dto/search-product.dto";
 import { SearchProductVariantDto } from "./dto/search-product-variant.dto";
 import { ProductInputValidatorService } from "./services/product-input-validator.service";
@@ -66,7 +66,9 @@ export class ProductsController {
   ) {}
 
   @Get("search")
-  @ApiSearchProducts()
+  @Public()
+  @ApiKey()
+  @ApiSearchProductsPublic()
   search(
     @Query() searchDto: SearchProductDto,
     @Query() paginationDto: CursorPaginationDto = new CursorPaginationDto(),
@@ -75,13 +77,17 @@ export class ProductsController {
   }
 
   @Get()
-  @ApiGetProducts()
+  @Public()
+  @ApiKey()
+  @ApiGetProductsPublic()
   findAll(@Query() paginationDto: CursorPaginationDto) {
     return this.productsService.findAll(paginationDto);
   }
 
   @Get("grouped-by-categories")
-  @ApiGetProductsGroupedByCategories()
+  @Public()
+  @ApiKey()
+  @ApiGetProductsGroupedByCategoriesPublic()
   findAllGroupedByCategories(@Query("take") take?: number) {
     return this.productsService.findAllGroupedByCategories(take);
   }
@@ -105,7 +111,9 @@ export class ProductsController {
   }
 
   @Get(":id")
-  @ApiGetProduct()
+  @Public()
+  @ApiKey()
+  @ApiGetProductPublic()
   findOne(@Param("id") id: string) {
     return this.productsService.findOne(id);
   }
@@ -204,13 +212,17 @@ export class ProductsController {
   }
 
   @Get("variants/:id")
-  @ApiGetProductVariant()
+  @Public()
+  @ApiKey()
+  @ApiGetProductVariantPublic()
   findOneVariant(@Param("id") id: string) {
     return this.productsService.findOneVariant(id);
   }
 
   @Get(":id/input-fields")
-  @ApiGetProductInputField()
+  @Public()
+  @ApiKey()
+  @ApiGetProductInputFieldPublic()
   async getProductInputFields(@Param("id") id: string) {
     const product = await this.productsService.findOne(id);
     if (!product) {

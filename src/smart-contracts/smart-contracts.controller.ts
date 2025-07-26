@@ -23,7 +23,12 @@ import {
   ApiGetSmartContracts,
   ApiSearchSmartContracts,
   ApiUpdateSmartContract,
+  ApiGetSmartContractsPublic,
+  ApiSearchSmartContractsPublic,
+  ApiGetSmartContractPublic,
 } from "../decorators/swagger/smart-contract.decorators";
+import { Public } from "../decorators/public.decorator";
+import { ApiKey } from "../decorators/api-key.decorator";
 
 @Controller("smart-contracts")
 @ApiTags("smart-contracts")
@@ -37,13 +42,17 @@ export class SmartContractsController {
   }
 
   @Get()
-  @ApiGetSmartContracts()
+  @Public()
+  @ApiKey()
+  @ApiGetSmartContractsPublic()
   findAll(@Query() paginationDto: CursorPaginationDto) {
     return this.smartContractsService.findAll(paginationDto);
   }
 
   @Get("search")
-  @ApiSearchSmartContracts()
+  @Public()
+  @ApiKey()
+  @ApiSearchSmartContractsPublic()
   search(
     @Query() searchParams: SearchSmartContractDto,
     @Query() paginationDto: CursorPaginationDto,
@@ -52,7 +61,9 @@ export class SmartContractsController {
   }
 
   @Get(":id")
-  @ApiGetSmartContract()
+  @Public()
+  @ApiKey()
+  @ApiGetSmartContractPublic()
   findOne(@Param("id") id: string) {
     return this.smartContractsService.findOne(id);
   }

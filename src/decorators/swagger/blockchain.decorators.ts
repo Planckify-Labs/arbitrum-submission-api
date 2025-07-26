@@ -143,3 +143,83 @@ export function ApiDeleteBlockchain() {
     ApiResponse(notFoundResponse),
   );
 }
+
+// Public API Key versions for public endpoints
+export function ApiGetBlockchainsPublic() {
+  return applyDecorators(
+    ApiHeader({
+      name: "X-API-Key",
+      required: true,
+      description: "API Key for public access",
+      example: "your-api-key-here",
+    }),
+    ApiOperation({
+      summary: "Get all blockchains with their native tokens (Public API)",
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns a list of blockchains with their native tokens",
+      type: BlockchainResponseDto,
+      isArray: true,
+    }),
+    ApiResponse({
+      status: 401,
+      description: "Invalid or missing API key",
+    }),
+  );
+}
+
+export function ApiSearchBlockchainsPublic() {
+  return applyDecorators(
+    ApiHeader({
+      name: "X-API-Key",
+      required: true,
+      description: "API Key for public access",
+      example: "your-api-key-here",
+    }),
+    ApiOperation({
+      summary: "Search blockchains (Public API)",
+      description:
+        "Search blockchains with filters for name, chainId, isEVM, and isActive",
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns filtered list of blockchains",
+      type: BlockchainResponseDto,
+      isArray: true,
+    }),
+    ApiResponse({
+      status: 401,
+      description: "Invalid or missing API key",
+    }),
+  );
+}
+
+export function ApiGetBlockchainPublic() {
+  return applyDecorators(
+    ApiHeader({
+      name: "X-API-Key",
+      required: true,
+      description: "API Key for public access",
+      example: "your-api-key-here",
+    }),
+    ApiOperation({
+      summary: "Get blockchain by ID with its native token (Public API)",
+    }),
+    ApiParam({
+      name: "id",
+      description: "Blockchain ID",
+      example: "01H1G5V...",
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns a blockchain with its native token",
+      type: BlockchainResponseDto,
+    }),
+    ApiResponse(notFoundResponse),
+    ApiResponse({
+      status: 401,
+      description: "Invalid or missing API key",
+    }),
+  );
+}

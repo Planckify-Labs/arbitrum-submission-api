@@ -1205,3 +1205,301 @@ export function ApiDeleteProductInputField() {
     ApiResponse(notFoundResponse),
   );
 }
+
+// Public API Key versions for public endpoints
+export function ApiGetProductsPublic() {
+  return applyDecorators(
+    ApiHeader({
+      name: "X-API-Key",
+      required: true,
+      description: "API Key for public access",
+      example: "your-api-key-here",
+    }),
+    ApiOperation({
+      summary: "Get all products (Public API)",
+      description:
+        "Retrieves a list of all products with their complete details",
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns all products with their related data",
+      schema: {
+        type: "array",
+        items: productSchema,
+      },
+    }),
+    ApiResponse({
+      status: 401,
+      description: "Invalid or missing API key",
+    }),
+  );
+}
+
+export function ApiSearchProductsPublic() {
+  return applyDecorators(
+    ApiHeader({
+      name: "X-API-Key",
+      required: true,
+      description: "API Key for public access",
+      example: "your-api-key-here",
+    }),
+    ApiOperation({
+      summary: "Search products (Public API)",
+      description:
+        "Search products using various criteria. You can search by ID, code, name, vendor name, or use a general query term. Additional filters for vendor ID and active status are also available.",
+    }),
+    ApiQuery({
+      name: "id",
+      required: false,
+      description: "Search by exact product ID",
+      type: "string",
+      example: "01JWN873BV2XXFVVMYR1JMY71E",
+    }),
+    ApiQuery({
+      name: "code",
+      required: false,
+      description: "Search by product code (case insensitive)",
+      type: "string",
+      example: "MLBB",
+    }),
+    ApiQuery({
+      name: "name",
+      required: false,
+      description: "Search by product name (case insensitive)",
+      type: "string",
+      example: "Mobile Legends",
+    }),
+    ApiQuery({
+      name: "vendorName",
+      required: false,
+      description: "Search by vendor name (case insensitive)",
+      type: "string",
+      example: "Game Publisher Inc",
+    }),
+    ApiQuery({
+      name: "query",
+      required: false,
+      description:
+        "General search term that matches against name, code, or vendor name (used only if specific search fields are not provided)",
+      type: "string",
+    }),
+    ApiQuery({
+      name: "vendorId",
+      required: false,
+      description: "Filter by vendor ID",
+      type: "string",
+    }),
+    ApiQuery({
+      name: "active",
+      required: false,
+      description: "Filter by active status",
+      type: "boolean",
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns matching products",
+      schema: {
+        type: "array",
+        items: productSchema,
+      },
+    }),
+    ApiResponse({
+      status: 401,
+      description: "Invalid or missing API key",
+    }),
+  );
+}
+
+export function ApiGetProductsGroupedByCategoriesPublic() {
+  return applyDecorators(
+    ApiHeader({
+      name: "X-API-Key",
+      required: true,
+      description: "API Key for public access",
+      example: "your-api-key-here",
+    }),
+    ApiOperation({
+      summary: "Get all products grouped by categories (Public API)",
+      description:
+        "Retrieves a list of all products organized by their categories.",
+    }),
+    ApiResponse({
+      status: 200,
+      description:
+        "Returns all products grouped by their respective categories.",
+      schema: productsGroupedByCategoriesResponse,
+    }),
+    ApiResponse({
+      status: 401,
+      description: "Invalid or missing API key",
+    }),
+  );
+}
+
+export function ApiGetProductPublic() {
+  return applyDecorators(
+    ApiHeader({
+      name: "X-API-Key",
+      required: true,
+      description: "API Key for public access",
+      example: "your-api-key-here",
+    }),
+    ApiOperation({
+      summary: "Get a product by ID (Public API)",
+      description: "Retrieves detailed information about a specific product",
+    }),
+    ApiParam({
+      name: "id",
+      description: "Product ID",
+      example: "01H1G5V...",
+      required: true,
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns the product with the specified ID",
+      schema: productSchema,
+    }),
+    ApiResponse(notFoundResponse),
+    ApiResponse({
+      status: 401,
+      description: "Invalid or missing API key",
+    }),
+  );
+}
+
+export function ApiGetProductInputFieldPublic() {
+  return applyDecorators(
+    ApiHeader({
+      name: "X-API-Key",
+      required: true,
+      description: "API Key for public access",
+      example: "your-api-key-here",
+    }),
+    ApiOperation({
+      summary: "Get product input fields (Public API)",
+      description:
+        "Retrieves input fields configuration for a specific product",
+    }),
+    ApiParam({
+      name: "id",
+      description: "Product ID",
+      example: "01H1G5V...",
+      required: true,
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns the input fields configuration for the product",
+      schema: {
+        type: "object",
+        properties: {
+          productId: { type: "string", example: "01H1G5V..." },
+          productName: { type: "string", example: "Mobile Legends" },
+          forms: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string", example: "01H1G5V..." },
+                name: { type: "string", example: "User ID" },
+                type: { type: "string", example: "text" },
+                required: { type: "boolean", example: true },
+                placeholder: { type: "string", example: "Enter your User ID" },
+                validation: {
+                  type: "object",
+                  properties: {
+                    minLength: { type: "number", example: 1 },
+                    maxLength: { type: "number", example: 50 },
+                    pattern: { type: "string", example: "^[0-9]+$" },
+                  },
+                },
+                createdAt: { type: "string", format: "date-time" },
+                updatedAt: { type: "string", format: "date-time" },
+              },
+            },
+          },
+        },
+      },
+    }),
+    ApiResponse(notFoundResponse),
+    ApiResponse({
+      status: 401,
+      description: "Invalid or missing API key",
+    }),
+  );
+}
+
+export function ApiGetProductVariantPublic() {
+  return applyDecorators(
+    ApiHeader({
+      name: "X-API-Key",
+      required: true,
+      description: "API Key for public access",
+      example: "your-api-key-here",
+    }),
+    ApiOperation({
+      summary: "Get a product variant by ID (Public API)",
+      description:
+        "Retrieves detailed information about a specific product variant",
+    }),
+    ApiParam({
+      name: "id",
+      description: "Product Variant ID",
+      example: "01H1G5V...",
+      required: true,
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns the product variant with the specified ID",
+      schema: {
+        type: "object",
+        properties: {
+          id: { type: "string", example: "01H1G5V..." },
+          name: { type: "string", example: "60 Diamonds" },
+          description: {
+            type: "string",
+            example: "60 Mobile Legends Diamonds",
+          },
+          sku: { type: "string", example: "MLBB-60D" },
+          productId: { type: "string", example: "01H1G5V..." },
+          isActive: { type: "boolean", example: true },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+          product: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              name: { type: "string" },
+              code: { type: "string" },
+            },
+          },
+          ProductPrice: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                vendorId: { type: "string" },
+                realValue: { type: "number" },
+                priceFromVendor: { type: "number" },
+                sellPrice: { type: "number" },
+                isActive: { type: "boolean" },
+                vendor: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    name: { type: "string" },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    }),
+    ApiResponse(notFoundResponse),
+    ApiResponse({
+      status: 401,
+      description: "Invalid or missing API key",
+    }),
+  );
+}

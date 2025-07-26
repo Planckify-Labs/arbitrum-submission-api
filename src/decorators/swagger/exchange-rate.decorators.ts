@@ -5,6 +5,7 @@ import {
   ApiBody,
   ApiQuery,
   ApiHeader,
+  ApiParam,
 } from "@nestjs/swagger";
 import {
   CreateExchangeRateDto,
@@ -95,5 +96,40 @@ export const ApiGetAverageExchangeRate = () =>
       status: 200,
       description: "Average exchange rate retrieved successfully",
       type: Number,
+    }),
+  );
+
+export const ApiGetExchangeRatePublic = () =>
+  applyDecorators(
+    ApiHeader({
+      name: "X-API-Key",
+      required: true,
+      description: "API Key for public access",
+      example: "your-api-key-here",
+    }),
+    ApiOperation({
+      summary: "Get exchange rate by ID (Public API)",
+      description:
+        "Retrieves detailed information about a specific exchange rate",
+    }),
+    ApiParam({
+      name: "id",
+      description: "Exchange Rate ID",
+      example: "123",
+      required: true,
+      type: "number",
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns the exchange rate with the specified ID",
+      type: ExchangeRateResponseDto,
+    }),
+    ApiResponse({
+      status: 404,
+      description: "Exchange rate not found",
+    }),
+    ApiResponse({
+      status: 401,
+      description: "Invalid or missing API key",
     }),
   );

@@ -19,11 +19,13 @@ import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import {
   ApiCreateBlockchain,
   ApiDeleteBlockchain,
-  ApiGetBlockchain,
-  ApiGetBlockchains,
-  ApiSearchBlockchains,
   ApiUpdateBlockchain,
+  ApiGetBlockchainsPublic,
+  ApiSearchBlockchainsPublic,
+  ApiGetBlockchainPublic,
 } from "../decorators/swagger/blockchain.decorators";
+import { Public } from "../decorators/public.decorator";
+import { ApiKey } from "../decorators/api-key.decorator";
 
 @Controller("blockchains")
 @ApiTags("blockchains")
@@ -37,13 +39,17 @@ export class BlockchainsController {
   }
 
   @Get()
-  @ApiGetBlockchains()
+  @Public()
+  @ApiKey()
+  @ApiGetBlockchainsPublic()
   findAll(@Query() paginationDto: CursorPaginationDto) {
     return this.blockchainsService.findAll(paginationDto);
   }
 
   @Get("search")
-  @ApiSearchBlockchains()
+  @Public()
+  @ApiKey()
+  @ApiSearchBlockchainsPublic()
   search(
     @Query() searchParams: SearchBlockchainDto,
     @Query() paginationDto: CursorPaginationDto,
@@ -52,7 +58,9 @@ export class BlockchainsController {
   }
 
   @Get(":id")
-  @ApiGetBlockchain()
+  @Public()
+  @ApiKey()
+  @ApiGetBlockchainPublic()
   findOne(@Param("id") id: string) {
     return this.blockchainsService.findOne(id);
   }

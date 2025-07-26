@@ -19,11 +19,13 @@ import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import {
   ApiCreateToken,
   ApiDeleteToken,
-  ApiGetToken,
-  ApiGetTokens,
-  ApiSearchTokens,
   ApiUpdateToken,
+  ApiGetTokensPublic,
+  ApiSearchTokensPublic,
+  ApiGetTokenPublic,
 } from "../decorators/swagger/token.decorators";
+import { Public } from "../decorators/public.decorator";
+import { ApiKey } from "../decorators/api-key.decorator";
 
 @Controller("tokens")
 @ApiTags("tokens")
@@ -37,13 +39,17 @@ export class TokensController {
   }
 
   @Get()
-  @ApiGetTokens()
+  @Public()
+  @ApiKey()
+  @ApiGetTokensPublic()
   findAll(@Query() paginationDto: CursorPaginationDto) {
     return this.tokensService.findAll(paginationDto);
   }
 
   @Get("search")
-  @ApiSearchTokens()
+  @Public()
+  @ApiKey()
+  @ApiSearchTokensPublic()
   search(
     @Query() searchParams: SearchTokenDto,
     @Query() paginationDto: CursorPaginationDto,
@@ -52,7 +58,9 @@ export class TokensController {
   }
 
   @Get(":id")
-  @ApiGetToken()
+  @Public()
+  @ApiKey()
+  @ApiGetTokenPublic()
   findOne(@Param("id") id: string) {
     return this.tokensService.findOne(id);
   }
