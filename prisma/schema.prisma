@@ -14,15 +14,21 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum CategoryType {
+  SUBCATEGORY
+  MAINCATEGORY
+}
+
 model Category {
-  id          String    @id @default(ulid())
-  name        String    @unique
-  description String?
-  imageUrl    String?
-  isActive    Boolean   @default(true)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  Product     Product[]
+  id           String       @id @default(ulid())
+  name         String       @unique
+  description  String?
+  imageUrl     String?
+  isActive     Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  Product      Product[]
+  categoryType CategoryType
 }
 
 model Product {
@@ -180,8 +186,11 @@ model Purchase {
   status           PurchaseStatus     @default(PENDING)
   vendorResponse   Json?
   vendorRefId      String?
+  refId            String?
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
+
+  @@index([refId])
 }
 
 // TODO: find a better way to store the api request log
@@ -348,6 +357,25 @@ enum BookingStatus {
   EXPIRED
   EXECUTED
   CANCELLED
+}
+
+enum ReferenceIdStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model ReferenceId {
+  id        String            @id @default(ulid())
+  refId     String            @unique
+  status    ReferenceIdStatus @default(PENDING)
+  metadata  Json?
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  @@index([refId])
+  @@index([status])
 }
 
 model BookingOrder {

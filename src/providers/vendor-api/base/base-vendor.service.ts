@@ -124,5 +124,6 @@ export abstract class BaseVendorService {
     variationKey: string,
     price: number,
     data: Array<{ key: string; value: string }>,
+    customRefId?: string,
   ): Promise<TVCgamerResponse<TVCGamerOrderResponse>>;
 }

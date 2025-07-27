@@ -5,6 +5,7 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  Matches,
 } from "class-validator";
 import { PurchaseStatus } from "@generated/prisma";
 
@@ -27,6 +28,20 @@ interface VendorResponse {
 }
 
 export class CreatePurchaseDto {
+  @ApiProperty({
+    description:
+      "Unique reference ID to prevent duplicate processing. Must follow format: TRX-{unique_identifier}",
+    example: "TRX-USER123-20240726-001",
+    pattern: "^TRX-.+$",
+  })
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^TRX-.+$/, {
+    message:
+      "Reference ID must start with 'TRX-' followed by a unique identifier",
+  })
+  refId: string;
+
   @ApiProperty({
     description: "Wallet address of the user",
     example: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",

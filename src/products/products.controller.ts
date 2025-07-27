@@ -98,7 +98,7 @@ export class ProductsController {
     return this.productsService.findAllCategories(paginationDto);
   }
 
-  @Get("categories/:categoryId")
+  @Get("categories/:categoryId/products")
   @ApiGetProductsByCategory()
   findByCategory(@Param("categoryId") categoryId: string) {
     return this.productsService.findByCategory(categoryId);

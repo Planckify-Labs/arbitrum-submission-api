@@ -1,5 +1,12 @@
 import { ApiProperty, PartialType } from "@nestjs/swagger";
-import { IsNotEmpty, IsString, IsOptional, IsBoolean } from "class-validator";
+import {
+  IsNotEmpty,
+  IsString,
+  IsOptional,
+  IsBoolean,
+  IsEnum,
+} from "class-validator";
+import { CategoryType } from "generated/prisma";
 
 export class CreateCategoryDto {
   @ApiProperty({ example: "Games" })
@@ -24,6 +31,15 @@ export class CreateCategoryDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiProperty({
+    example: "MAINCATEGORY",
+    enum: CategoryType,
+    description: "Type of category - MAINCATEGORY or SUBCATEGORY",
+  })
+  @IsNotEmpty()
+  @IsEnum(CategoryType)
+  categoryType: CategoryType;
 }
 
 export class UpdateCategoryDto extends PartialType(CreateCategoryDto) {}

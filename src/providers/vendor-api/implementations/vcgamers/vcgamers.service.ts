@@ -104,20 +104,21 @@ export class VCGamersService extends BaseVendorService {
     variationKey: string,
     price: number,
     data: Array<{ key: string; value: string }>,
+    customRefId?: string,
   ): Promise<TVCgamerResponse<TVCGamerOrderResponse>> {
     const timestamp = Math.floor(Date.now() / 1000).toString();
-    const uniqueRefId = this.generateUniqueRefId();
+    const refId = customRefId || this.generateUniqueRefId();
 
     const orderData: TVCGamerOrderRequest = {
       brand_key: brandKey,
       variation_key: variationKey,
       price,
       data,
-      ref_id: uniqueRefId,
+      ref_id: refId,
       timestamp,
     };
 
-    const params = `${this.config.apiSecret}order${brandKey}${variationKey}${price}${uniqueRefId}${timestamp}`;
+    const params = `${this.config.apiSecret}order${brandKey}${variationKey}${price}${refId}${timestamp}`;
     const signature = this.createSignature(params);
 
     const response = await this.makeRequest<TVCGamerOrderResponse>(

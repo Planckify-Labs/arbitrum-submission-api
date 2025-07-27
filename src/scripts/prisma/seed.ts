@@ -469,11 +469,11 @@ async function main() {
       where: { id: "vcgamer-api" },
       update: {},
       create: {
-        id: "vcgamer-api",
         vendorId: vendors[0].id,
-        baseUrl: "https://api.vcgamer.com",
-        apiKey: "vcgamer-api-key-123",
-        apiSecret: "vcgamer-api-secret-456",
+        baseUrl: "https://mitra-api.vcgamers.com",
+        apiKey:
+          "4d5855d626b5558e155ce6eddb7f370e7749f2e6fee891556e879d46cadb276e8c7a25a4b841efb5972e6d3d9aa2f201bb4d",
+        apiSecret: "8aa3a704a9c2af43c636df2e59828777",
         isActive: true,
       },
     }),
@@ -481,7 +481,6 @@ async function main() {
       where: { id: "digivoucher-api" },
       update: {},
       create: {
-        id: "digivoucher-api",
         vendorId: vendors[1].id,
         baseUrl: "https://api.digivoucher.com",
         apiKey: "digivoucher-api-key-789",
@@ -495,17 +494,26 @@ async function main() {
     prisma.category.upsert({
       where: { name: "Gaming Top Up" },
       update: {},
-      create: { name: "Gaming Top Up" },
+      create: {
+        name: "Gaming Top Up",
+        categoryType: "MAINCATEGORY",
+      },
     }),
     prisma.category.upsert({
       where: { name: "Voucher" },
       update: {},
-      create: { name: "Voucher" },
+      create: {
+        name: "Voucher",
+        categoryType: "MAINCATEGORY",
+      },
     }),
     prisma.category.upsert({
       where: { name: "Mobile Data" },
       update: {},
-      create: { name: "Mobile Data" },
+      create: {
+        name: "Mobile Data",
+        categoryType: "MAINCATEGORY",
+      },
     }),
   ]);
 
