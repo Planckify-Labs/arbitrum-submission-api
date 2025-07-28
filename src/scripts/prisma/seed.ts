@@ -1,4 +1,8 @@
-import { PrismaClient } from "../../../generated/prisma";
+import {
+  PrismaClient,
+  ApiKeyType,
+  ApiKeyStatus,
+} from "../../../generated/prisma";
 import * as crypto from "crypto";
 
 interface VCGamersProduct {
@@ -121,6 +125,172 @@ const vcGamersAPI = {
 };
 
 const prisma = new PrismaClient();
+
+function generateApiKey(): string {
+  const prefix = "tk_";
+  const randomBytes = crypto.randomBytes(32).toString("hex");
+  return `${prefix}${randomBytes}`;
+}
+
+async function seedApiKeys() {
+  console.log("🌱 Seeding API keys...");
+
+  // Create sample API keys for different use cases
+  const apiKeys = [
+    {
+      id: "smart-contract-api-key",
+      name: "Smart Contract API Key",
+      description:
+        "API key for smart contract interactions and blockchain operations",
+      keyValue: generateApiKey(),
+      type: ApiKeyType.SMART_CONTRACT,
+      status: ApiKeyStatus.ACTIVE,
+      permissions: [
+        "blockchains:read",
+        "tokens:read",
+        "smart-contracts:read",
+        "transactions:read",
+      ],
+      rateLimit: 1000, // 1000 requests per minute
+      metadata: {
+        environment: "production",
+        ipRestrictions: [],
+        allowedOrigins: ["*"],
+      },
+    },
+    {
+      id: "mobile-app-api-key",
+      name: "Mobile App API Key",
+      description: "API key for TakumiPay mobile application",
+      keyValue: generateApiKey(),
+      type: ApiKeyType.MOBILE_APP,
+      status: ApiKeyStatus.ACTIVE,
+      permissions: [
+        "products:read",
+        "purchases:create",
+        "tokens:read",
+        "blockchains:read",
+        "regions:read",
+      ],
+      rateLimit: 500, // 500 requests per minute
+      metadata: {
+        environment: "production",
+        platform: "mobile",
+        version: "1.0.0",
+      },
+    },
+    {
+      id: "web-app-api-key",
+      name: "Web App API Key",
+      description: "API key for TakumiPay web application",
+      keyValue: generateApiKey(),
+      type: ApiKeyType.WEB_APP,
+      status: ApiKeyStatus.ACTIVE,
+      permissions: [
+        "products:read",
+        "purchases:create",
+        "tokens:read",
+        "blockchains:read",
+        "smart-contracts:read",
+        "regions:read",
+      ],
+      rateLimit: 300, // 300 requests per minute
+      metadata: {
+        environment: "production",
+        platform: "web",
+        allowedOrigins: ["https://takumipay.com", "https://app.takumipay.com"],
+      },
+    },
+    {
+      id: "third-party-api-key",
+      name: "Third Party Integration",
+      description: "API key for third-party integrations and partners",
+      keyValue: generateApiKey(),
+      type: ApiKeyType.THIRD_PARTY,
+      status: ApiKeyStatus.ACTIVE,
+      permissions: ["products:read", "tokens:read", "blockchains:read"],
+      rateLimit: 100, // 100 requests per minute
+      expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year from now
+      metadata: {
+        partner: "example-partner",
+        contact: "partner@example.com",
+      },
+    },
+    {
+      id: "internal-api-key",
+      name: "Internal Services",
+      description: "API key for internal microservices communication",
+      keyValue: generateApiKey(),
+      type: ApiKeyType.INTERNAL,
+      status: ApiKeyStatus.ACTIVE,
+      permissions: [
+        "products:read",
+        "products:write",
+        "tokens:read",
+        "tokens:write",
+        "blockchains:read",
+        "blockchains:write",
+        "smart-contracts:read",
+        "smart-contracts:write",
+        "transactions:read",
+        "transactions:write",
+        "users:read",
+        "vendors:read",
+      ],
+      rateLimit: 2000, // 2000 requests per minute
+      metadata: {
+        service: "internal-microservices",
+        environment: "production",
+      },
+    },
+    {
+      id: "admin-api-key",
+      name: "Admin Dashboard",
+      description: "API key for admin dashboard and management operations",
+      keyValue: generateApiKey(),
+      type: ApiKeyType.ADMIN,
+      status: ApiKeyStatus.ACTIVE,
+      permissions: [
+        "*", // Full access
+      ],
+      rateLimit: 5000, // 5000 requests per minute
+      metadata: {
+        role: "admin",
+        environment: "production",
+        ipRestrictions: ["10.0.0.0/8", "192.168.0.0/16"], // Internal networks only
+      },
+    },
+  ];
+
+  for (const apiKeyData of apiKeys) {
+    try {
+      const apiKey = await prisma.apiKey.upsert({
+        where: { id: apiKeyData.id },
+        update: {
+          name: apiKeyData.name,
+          description: apiKeyData.description,
+          type: apiKeyData.type,
+          status: apiKeyData.status,
+          permissions: apiKeyData.permissions,
+          rateLimit: apiKeyData.rateLimit,
+          expiresAt: apiKeyData.expiresAt,
+          metadata: apiKeyData.metadata,
+        },
+        create: apiKeyData,
+      });
+
+      console.log(`✅ Created/Updated API key: ${apiKey.name}`);
+      console.log(`   Key: ${apiKey.keyValue}`);
+      console.log(`   Type: ${apiKey.type}`);
+      console.log(`   Rate Limit: ${apiKey.rateLimit} req/min`);
+      console.log("");
+    } catch (error) {
+      console.error(`❌ Error creating API key ${apiKeyData.name}:`, error);
+    }
+  }
+
+  console.log("🎉 API keys seeding completed!");
+}
 
 async function main() {
   const regions = await Promise.all([
@@ -833,6 +1003,10 @@ async function main() {
       vendorRefId: "VC123456789",
     },
   });
+
+  // Seed API keys
+  await seedApiKeys();
+
   console.log("Seed data created successfully");
 }
 

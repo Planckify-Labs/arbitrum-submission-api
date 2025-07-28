@@ -17,6 +17,7 @@ import { BookingModule } from "./booking/booking.module";
 import { ExchangeRateModule } from "./exchange-rate/exchange-rate.module";
 import { VendorAPIModule } from "./providers/vendor-api/vendor-api.module";
 import { AuthModule } from "./auth/auth.module";
+import { ApiKeysModule } from "./api-keys/api-keys.module";
 import { APP_GUARD } from "@nestjs/core";
 import { JwtAuthGuard } from "./auth/guards/jwt-auth.guard";
 import { ApiKeyGuard } from "./auth/guards/api-key.guard";
@@ -41,6 +42,7 @@ import { ApiKeyGuard } from "./auth/guards/api-key.guard";
     ExchangeRateModule,
     VendorAPIModule,
     AuthModule,
+    ApiKeysModule,
   ],
   controllers: [AppController],
   providers: [

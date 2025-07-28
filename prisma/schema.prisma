@@ -105,6 +105,7 @@ model User {
   updatedAt     DateTime             @updatedAt
   Region        Region?              @relation(fields: [regionId], references: [id])
   regionId      String?
+  ApiKey        ApiKey[]
 
   @@unique([authProvider, socialId])
 }
@@ -212,6 +213,8 @@ model ApiRequestLog {
   userId       String?
   metadata     Json?
   createdAt    DateTime @default(now())
+  ApiKey       ApiKey?  @relation(fields: [apiKeyId], references: [id])
+  apiKeyId     String?
 }
 
 // TODO: for better performance, we can use timescaledb to store the exchange rate
@@ -395,4 +398,45 @@ model BookingOrder {
 
   @@index([walletAddress])
   @@index([status])
+}
+
+enum ApiKeyType {
+  SMART_CONTRACT
+  MOBILE_APP
+  WEB_APP
+  THIRD_PARTY
+  INTERNAL
+  ADMIN
+}
+
+enum ApiKeyStatus {
+  ACTIVE
+  INACTIVE
+  REVOKED
+  EXPIRED
+}
+
+model ApiKey {
+  id          String          @id @default(ulid())
+  name        String
+  description String?
+  keyValue    String          @unique
+  type        ApiKeyType
+  status      ApiKeyStatus    @default(ACTIVE)
+  permissions Json?
+  rateLimit   Int?
+  expiresAt   DateTime?
+  lastUsedAt  DateTime?
+  usageCount  Int             @default(0)
+  createdBy   User?           @relation(fields: [createdById], references: [id])
+  createdById String?
+  metadata    Json?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  apiLogs     ApiRequestLog[]
+
+  @@index([keyValue])
+  @@index([type])
+  @@index([status])
+  @@index([expiresAt])
 }
