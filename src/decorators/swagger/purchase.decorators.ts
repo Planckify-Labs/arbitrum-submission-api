@@ -22,17 +22,47 @@ export function ApiCreatePurchase() {
       
 Response Format: "purchaseId#bookingId#productVariantId"
 
-IMPORTANT: The order and format of these IDs must be preserved exactly as returned.
-This string is used to maintain data integrity between on-chain and off-chain systems.
+IMPORTANT: This format is optimized for smart contract compatibility using Solidity string storage.
+Full ULIDs are used for maximum readability and data integrity.
+The order and format must be preserved exactly as returned.
 
 Response Components:
-1. purchaseId: Unique identifier for the newly created purchase record
-2. bookingId: Reference to the original booking that initiated this purchase
-3. productVariantId: Identifier of the specific product variant being purchased
+1. purchaseId: Full ULID of the newly created purchase record
+2. bookingId: Full ULID of the original booking that initiated this purchase
+3. productVariantId: Full ULID of the specific product variant being purchased
 
-Example: "01HN8V...#01HN8T...#01HN8R..."
+Example: "01K13FRYDJ47QZASHAFGAAC0E4#01K13FRYDJ47QZASHAFGAAC0E4#01K13FRYDJ47QZASHAFGAAC0E4"
 
-Note: Do not modify or reorder these IDs as they are used to verify and track the purchase onchain`,
+Note: Do not modify or reorder these IDs as they are used to verify and track the purchase onchain
+
+## Error Response Format
+Errors are returned as packed strings: "ERROR#{statusCode}#{errorCode}#{errorDetail}"
+
+### Status Codes:
+- 400: BAD_REQ (Bad Request)
+- 404: NOT_FOUND (Resource Not Found)
+- 409: CONFLICT (Duplicate Reference ID)
+- 429: RATE_LMT (Rate Limit Exceeded)
+- 500+: SRV_ERR (Server Error)
+
+### Error Details:
+- BK_NOT_FND: Booking with ID not found
+- BK_EXPIRED: Booking has expired
+- BK_NOT_PEND: Booking status is not pending
+- WALLET_MISM: Wallet address mismatch
+- NET_NOT_FND: Network ID not found
+- NET_INACTIVE: Network is not active
+- CTR_NOT_FND: Smart contract not found
+- CTR_INACTIVE: Smart contract is not active
+- TKN_NOT_FND: Token not found on network
+- CUST_INFO_REQ: Customer information required
+- DUP_REF_ID: Reference ID already processed
+- VENDOR_ERR: External vendor API error
+- VALID_ERR: Input validation failed
+- FIELD_REQ: Required field missing
+- GEN_ERR: General/unknown error
+
+Example error: "ERROR#400#BAD_REQ#BK_EXPIRED"`,
     }),
     ApiResponse({
       status: 201,
@@ -349,6 +379,108 @@ export function ApiGetBlockchainPurchases() {
     ApiResponse({
       status: 404,
       description: "Blockchain not found",
+    }),
+  );
+}
+
+export function ApiCreatePurchasePublic() {
+  return applyDecorators(
+    ApiHeader({
+      name: "X-API-Key",
+      required: true,
+      description: "API Key for public access",
+      example: "your-api-key-here",
+    }),
+    ApiOperation({
+      summary: "Create a new purchase from booking (Public API)",
+      description: `Creates a new purchase record based on a booking.
+
+Response Format: "purchaseId#bookingId#productVariantId"
+
+IMPORTANT: This format is optimized for smart contract compatibility using Solidity string storage.
+Full ULIDs are used for maximum readability and data integrity.
+The order and format must be preserved exactly as returned.
+
+Response Components:
+1. purchaseId: Full ULID of the newly created purchase record
+2. bookingId: Full ULID of the original booking that initiated this purchase
+3. productVariantId: Full ULID of the specific product variant being purchased
+
+Example: "01K13FRYDJ47QZASHAFGAAC0E4#01K13FRYDJ47QZASHAFGAAC0E4#01K13FRYDJ47QZASHAFGAAC0E4"
+
+Note: Do not modify or reorder these IDs as they are used to verify and track the purchase onchain
+
+## Error Response Format
+Errors are returned as packed strings: "ERROR#{statusCode}#{errorCode}#{errorDetail}"
+
+### Status Codes:
+- 400: BAD_REQ (Bad Request)
+- 404: NOT_FOUND (Resource Not Found)
+- 409: CONFLICT (Duplicate Reference ID)
+- 429: RATE_LMT (Rate Limit Exceeded)
+- 500+: SRV_ERR (Server Error)
+
+### Error Details:
+- BK_NOT_FND: Booking with ID not found
+- BK_EXPIRED: Booking has expired
+- BK_NOT_PEND: Booking status is not pending
+- WALLET_MISM: Wallet address mismatch
+- NET_NOT_FND: Network ID not found
+- NET_INACTIVE: Network is not active
+- CTR_NOT_FND: Smart contract not found
+- CTR_INACTIVE: Smart contract is not active
+- TKN_NOT_FND: Token not found on network
+- CUST_INFO_REQ: Customer information required
+- DUP_REF_ID: Reference ID already processed
+- VENDOR_ERR: External vendor API error
+- VALID_ERR: Input validation failed
+- FIELD_REQ: Required field missing
+- GEN_ERR: General/unknown error
+
+Example error: "ERROR#400#BAD_REQ#BK_EXPIRED"`,
+    }),
+    ApiResponse({
+      status: 201,
+      description:
+        "Purchase created successfully. Returns packed string format for smart contract compatibility.",
+      schema: {
+        type: "string",
+        example:
+          "01K13FRYDJ47QZASHAFGAAC0E4#01K13FRYDJ47QZASHAFGAAC0E4#01K13FRYDJ47QZASHAFGAAC0E4",
+        description:
+          "Packed string containing full purchase, booking, and product variant ULIDs",
+      },
+    }),
+    ApiResponse({
+      status: 400,
+      description: "Bad request - validation errors or business logic errors",
+      schema: {
+        type: "string",
+        example: "ERROR#400#BAD_REQ#BK_EXPIRED",
+        description: "Packed error string format",
+      },
+    }),
+    ApiResponse({
+      status: 401,
+      description: "Invalid or missing API key",
+    }),
+    ApiResponse({
+      status: 404,
+      description: "Resource not found",
+      schema: {
+        type: "string",
+        example: "ERROR#404#NOT_FOUND#BK_NOT_FND",
+        description: "Packed error string format",
+      },
+    }),
+    ApiResponse({
+      status: 409,
+      description: "Conflict - duplicate reference ID",
+      schema: {
+        type: "string",
+        example: "ERROR#409#CONFLICT#DUP_REF_ID",
+        description: "Packed error string format",
+      },
     }),
   );
 }

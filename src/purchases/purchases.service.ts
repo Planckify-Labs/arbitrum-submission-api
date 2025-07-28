@@ -31,7 +31,6 @@ export class PurchasesService {
     const { refId, bookingId, walletAddress, networkId, contractAddress } =
       createPurchaseDto;
 
-    // First, get the booking to extract vendor information for metadata
     const bookingForMetadata = await this.prisma.bookingOrder.findUnique({
       where: { id: bookingId },
       include: {
@@ -52,7 +51,6 @@ export class PurchasesService {
       throw new NotFoundException(`Booking with ID ${bookingId} not found`);
     }
 
-    // Validate and reserve the reference ID to prevent duplicate processing
     await this.referenceIdService.validateAndReserveRefId(refId, {
       requestType: "PURCHASE",
       walletAddress,
@@ -246,7 +244,6 @@ export class PurchasesService {
             );
           }
 
-          // Mark reference ID as processing before making vendor API call
           await this.referenceIdService.markAsProcessing(refId, {
             requestType: "PURCHASE",
             walletAddress,
@@ -264,7 +261,7 @@ export class PurchasesService {
             variationKey,
             price,
             formData,
-            refId, // Pass the custom reference ID to the vendor
+            refId,
           );
 
           if (!orderResponse.success) {
@@ -281,7 +278,6 @@ export class PurchasesService {
         } catch (error) {
           console.error(`Error processing vendor order: ${error.message}`);
 
-          // Mark reference ID as failed if vendor order fails
           await this.referenceIdService.markAsFailed(refId, {
             requestType: "PURCHASE",
             walletAddress,
@@ -310,7 +306,7 @@ export class PurchasesService {
           connect: { id: booking.productVariantId },
         },
         status: PurchaseStatus.PENDING,
-        refId, // Store the reference ID in the purchase record
+        refId,
         ...(vendorRefId && { vendorRefId }),
         ...(vendorResponse && { vendorResponse }),
       };
@@ -326,7 +322,6 @@ export class PurchasesService {
         },
       });
 
-      // Mark reference ID as completed
       await this.referenceIdService.markAsCompleted(refId, {
         requestType: "PURCHASE",
         walletAddress,
@@ -343,7 +338,6 @@ export class PurchasesService {
 
       return `${purchase.id}#${booking.id}#${booking.productVariantId}`;
     } catch (error) {
-      // Mark reference ID as failed if any error occurs during purchase creation
       await this.referenceIdService.markAsFailed(refId, {
         requestType: "PURCHASE",
         walletAddress,
@@ -357,7 +351,6 @@ export class PurchasesService {
         errorType: "general_purchase_error",
       });
 
-      // Re-throw the error to maintain existing error handling behavior
       throw error;
     }
   }
