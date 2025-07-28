@@ -4,6 +4,8 @@ import {
   ApiKeyStatus,
 } from "../../../generated/prisma";
 import * as crypto from "crypto";
+import * as fs from "fs";
+import * as path from "path";
 
 interface VCGamersProduct {
   key: string;
@@ -30,6 +32,86 @@ interface VCGamersVariant {
   is_new: boolean;
 }
 
+// Cache directory for storing vendor data
+const CACHE_DIR = path.join(process.cwd(), "data", "vendor-cache");
+
+// Helper functions for data caching
+const cacheHelpers = {
+  ensureCacheDir: (): void => {
+    if (!fs.existsSync(CACHE_DIR)) {
+      fs.mkdirSync(CACHE_DIR, { recursive: true });
+    }
+  },
+
+  getCacheFilePath: (filename: string): string => {
+    return path.join(CACHE_DIR, `${filename}.json`);
+  },
+
+  loadFromCache: <T>(filename: string): T | null => {
+    try {
+      const filePath = cacheHelpers.getCacheFilePath(filename);
+      if (fs.existsSync(filePath)) {
+        const data = fs.readFileSync(filePath, "utf8");
+        console.log(`📁 Loading cached data from: ${filename}.json`);
+        return JSON.parse(data);
+      }
+    } catch (error) {
+      console.warn(`⚠️ Error loading cache file ${filename}:`, error);
+    }
+    return null;
+  },
+
+  saveToCache: <T>(filename: string, data: T): void => {
+    try {
+      cacheHelpers.ensureCacheDir();
+      const filePath = cacheHelpers.getCacheFilePath(filename);
+      fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+      console.log(`💾 Saved data to cache: ${filename}.json`);
+    } catch (error) {
+      console.error(`❌ Error saving cache file ${filename}:`, error);
+    }
+  },
+
+  clearCache: (): void => {
+    try {
+      if (fs.existsSync(CACHE_DIR)) {
+        const files = fs.readdirSync(CACHE_DIR);
+        for (const file of files) {
+          if (file.endsWith(".json")) {
+            fs.unlinkSync(path.join(CACHE_DIR, file));
+          }
+        }
+        console.log(`🗑️ Cleared cache directory: ${CACHE_DIR}`);
+      }
+    } catch (error) {
+      console.error(`❌ Error clearing cache:`, error);
+    }
+  },
+
+  getCacheInfo: (): void => {
+    try {
+      if (fs.existsSync(CACHE_DIR)) {
+        const files = fs
+          .readdirSync(CACHE_DIR)
+          .filter((f) => f.endsWith(".json"));
+        console.log(`📊 Cache directory: ${CACHE_DIR}`);
+        console.log(`📁 Cached files: ${files.length}`);
+        files.forEach((file) => {
+          const filePath = path.join(CACHE_DIR, file);
+          const stats = fs.statSync(filePath);
+          console.log(
+            `   - ${file} (${(stats.size / 1024).toFixed(2)} KB, modified: ${stats.mtime.toISOString()})`,
+          );
+        });
+      } else {
+        console.log(`📁 No cache directory found`);
+      }
+    } catch (error) {
+      console.error(`❌ Error reading cache info:`, error);
+    }
+  },
+};
+
 const vcGamersAPI = {
   createSignature: (params: string): string => {
     const secret = "8aa3a704a9c2af43c636df2e59828777";
@@ -44,6 +126,18 @@ const vcGamersAPI = {
     statusCode: number;
     data?: VCGamersProduct[];
   }> => {
+    // Try to load from cache first
+    const cachedData = cacheHelpers.loadFromCache<{
+      statusCode: number;
+      data?: VCGamersProduct[];
+    }>("vcgamers-products");
+
+    if (cachedData) {
+      console.log("🎯 Using cached VCGamers products data");
+      return cachedData;
+    }
+
+    console.log("🌐 Fetching VCGamers products from API...");
     try {
       const paramsSignature = "8aa3a704a9c2af43c636df2e59828777" + "brand";
       const signature = vcGamersAPI.createSignature(paramsSignature);
@@ -68,10 +162,15 @@ const vcGamersAPI = {
         };
       }
 
-      return {
+      const result = {
         statusCode: 200,
         data: response?.data,
       };
+
+      // Save to cache for future use
+      cacheHelpers.saveToCache("vcgamers-products", result);
+
+      return result;
     } catch (err) {
       console.error("Error fetching VCGamers products:", err);
       return {
@@ -86,6 +185,19 @@ const vcGamersAPI = {
     statusCode: number;
     data?: VCGamersVariant[];
   }> => {
+    // Try to load from cache first
+    const cacheKey = `vcgamers-variants-${brandKey}`;
+    const cachedData = cacheHelpers.loadFromCache<{
+      statusCode: number;
+      data?: VCGamersVariant[];
+    }>(cacheKey);
+
+    if (cachedData) {
+      console.log(`🎯 Using cached VCGamers variants for ${brandKey}`);
+      return cachedData;
+    }
+
+    console.log(`🌐 Fetching VCGamers variants for ${brandKey} from API...`);
     try {
       const paramsSignature =
         "8aa3a704a9c2af43c636df2e59828777" + "variation" + brandKey;
@@ -111,10 +223,15 @@ const vcGamersAPI = {
         };
       }
 
-      return {
+      const result = {
         statusCode: 200,
         data: response?.data,
       };
+
+      // Save to cache for future use
+      cacheHelpers.saveToCache(cacheKey, result);
+
+      return result;
     } catch (err) {
       console.error(`Error fetching VCGamers variants for ${brandKey}:`, err);
       return {
@@ -293,6 +410,17 @@ async function seedApiKeys() {
 }
 
 async function main() {
+  console.log("🌱 Starting TakumiPay database seeding...");
+  console.log("");
+
+  // Show cache information
+  console.log("📊 Cache Status:");
+  cacheHelpers.getCacheInfo();
+  console.log("");
+
+  // Uncomment the line below to clear cache and force fresh API calls
+  // cacheHelpers.clearCache();
+
   const regions = await Promise.all([
     prisma.region.upsert({
       where: { code: "ID" },
@@ -687,10 +815,15 @@ async function main() {
     }),
   ]);
 
+  console.log("🎮 Fetching VCGamers products...");
   const vcGamersProducts = await vcGamersAPI.getProducts();
   if (vcGamersProducts.statusCode !== 200 || !vcGamersProducts.data) {
     throw new Error("Failed to fetch products from vcGamers API");
   }
+  console.log(
+    `✅ Retrieved ${vcGamersProducts.data.length} products from VCGamers`,
+  );
+  console.log("");
 
   const productsMap = new Map();
   for (const product of vcGamersProducts.data) {
@@ -1007,7 +1140,18 @@ async function main() {
   // Seed API keys
   await seedApiKeys();
 
-  console.log("Seed data created successfully");
+  console.log("");
+  console.log("🎉 Seed data created successfully!");
+  console.log("");
+  console.log("📊 Final Cache Status:");
+  cacheHelpers.getCacheInfo();
+  console.log("");
+  console.log(
+    "💡 Tip: Next time you run this script, it will use cached vendor data for faster execution.",
+  );
+  console.log(
+    "💡 To force fresh API calls, uncomment the clearCache() line in the main function.",
+  );
 }
 
 main()
