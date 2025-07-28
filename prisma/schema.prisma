@@ -20,15 +20,16 @@ enum CategoryType {
 }
 
 model Category {
-  id           String       @id @default(ulid())
-  name         String       @unique
-  description  String?
-  imageUrl     String?
-  isActive     Boolean      @default(true)
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  Product      Product[]
-  categoryType CategoryType
+  id             String           @id @default(ulid())
+  name           String           @unique
+  description    String?
+  imageUrl       String?
+  isActive       Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  Product        Product[]
+  categoryType   CategoryType
+  ProductVariant ProductVariant[]
 }
 
 model Product {
@@ -66,18 +67,20 @@ model ProductInputField {
 }
 
 model ProductVariant {
-  id           String         @id @default(ulid())
-  name         String
-  description  String?
-  sku          String         @unique
-  product      Product        @relation(fields: [productId], references: [id])
-  productId    String
-  isActive     Boolean        @default(true)
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-  ProductPrice ProductPrice[]
-  Purchase     Purchase[]
-  BookingOrder BookingOrder[]
+  id            String         @id @default(ulid())
+  name          String
+  description   String?
+  sku           String         @unique
+  product       Product        @relation(fields: [productId], references: [id])
+  productId     String
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  ProductPrice  ProductPrice[]
+  Purchase      Purchase[]
+  BookingOrder  BookingOrder[]
+  subCategory   Category?      @relation(fields: [subCategoryId], references: [id])
+  subCategoryId String?
 
   @@index([sku])
 }
