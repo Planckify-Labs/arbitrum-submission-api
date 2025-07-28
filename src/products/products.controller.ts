@@ -23,7 +23,6 @@ import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import {
   ApiCreateProduct,
   ApiDeleteProduct,
-  ApiGetProductsByCategory,
   ApiGetCategories,
   ApiGetProductByCode,
   ApiUpdateProduct,
@@ -43,6 +42,7 @@ import {
   ApiGetProductsPublic,
   ApiSearchProductsPublic,
   ApiGetProductsGroupedByCategoriesPublic,
+  ApiGetProductsByCategoryPublic,
   ApiGetProductPublic,
   ApiGetProductInputFieldPublic,
   ApiGetProductVariantPublic,
@@ -99,7 +99,9 @@ export class ProductsController {
   }
 
   @Get("categories/:categoryId/products")
-  @ApiGetProductsByCategory()
+  @Public()
+  @ApiKey()
+  @ApiGetProductsByCategoryPublic()
   findByCategory(@Param("categoryId") categoryId: string) {
     return this.productsService.findByCategory(categoryId);
   }
