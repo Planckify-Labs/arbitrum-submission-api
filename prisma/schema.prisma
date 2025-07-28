@@ -98,10 +98,18 @@ model User {
   id            String               @id @default(ulid())
   walletAddress String?              @unique
   email         String?              @unique
+  username      String?              @unique
+  password      String?
   name          String?
   profileImage  String?
   authProvider  AuthProvider
   socialId      String?
+  role          UserRole             @default(USER)
+  status        UserStatus           @default(ACTIVE)
+  permissions   Json?
+  lastLoginAt   DateTime?
+  loginAttempts Int                  @default(0)
+  lockedUntil   DateTime?
   transactions  TransactionHistory[]
   apiLogs       ApiRequestLog[]
   createdAt     DateTime             @default(now())
@@ -109,8 +117,13 @@ model User {
   Region        Region?              @relation(fields: [regionId], references: [id])
   regionId      String?
   ApiKey        ApiKey[]
+  auditLogs     AdminAuditLog[]
 
   @@unique([authProvider, socialId])
+  @@index([role])
+  @@index([status])
+  @@index([email])
+  @@index([username])
 }
 
 model Blockchain {
@@ -320,6 +333,20 @@ enum AuthProvider {
   GOOGLE
   APPLE
   EMAIL
+  ADMIN_CREDENTIALS
+}
+
+enum UserRole {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
 }
 
 model Region {
@@ -442,4 +469,24 @@ model ApiKey {
   @@index([type])
   @@index([status])
   @@index([expiresAt])
+}
+
+model AdminAuditLog {
+  id          String   @id @default(ulid())
+  adminUser   User     @relation(fields: [adminUserId], references: [id])
+  adminUserId String
+  action      String
+  resource    String
+  resourceId  String?
+  oldValues   Json?
+  newValues   Json?
+  ipAddress   String?
+  userAgent   String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  @@index([adminUserId])
+  @@index([action])
+  @@index([resource])
+  @@index([createdAt])
 }

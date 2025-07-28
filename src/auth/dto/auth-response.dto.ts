@@ -1,4 +1,5 @@
 import { ApiProperty } from "@nestjs/swagger";
+import { UserRole } from "../../../generated/prisma";
 
 export class AuthResponseDto {
   @ApiProperty({
@@ -18,10 +19,13 @@ export class AuthResponseDto {
     example: {
       id: "01H1G5V...",
       walletAddress: "0x123...abc",
+      role: "USER",
     },
   })
   user: {
     id: string;
-    walletAddress: string;
+    walletAddress?: string;
+    username?: string;
+    role: UserRole;
   };
 }

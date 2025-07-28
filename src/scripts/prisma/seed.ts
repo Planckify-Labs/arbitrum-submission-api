@@ -2,10 +2,13 @@ import {
   PrismaClient,
   ApiKeyType,
   ApiKeyStatus,
+  UserRole,
+  AuthProvider,
 } from "../../../generated/prisma";
 import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
+import * as argon2 from "argon2";
 
 interface VCGamersProduct {
   key: string;
@@ -32,10 +35,8 @@ interface VCGamersVariant {
   is_new: boolean;
 }
 
-// Cache directory for storing vendor data
 const CACHE_DIR = path.join(process.cwd(), "data", "vendor-cache");
 
-// Helper functions for data caching
 const cacheHelpers = {
   ensureCacheDir: (): void => {
     if (!fs.existsSync(CACHE_DIR)) {
@@ -126,7 +127,6 @@ const vcGamersAPI = {
     statusCode: number;
     data?: VCGamersProduct[];
   }> => {
-    // Try to load from cache first
     const cachedData = cacheHelpers.loadFromCache<{
       statusCode: number;
       data?: VCGamersProduct[];
@@ -167,7 +167,6 @@ const vcGamersAPI = {
         data: response?.data,
       };
 
-      // Save to cache for future use
       cacheHelpers.saveToCache("vcgamers-products", result);
 
       return result;
@@ -185,7 +184,6 @@ const vcGamersAPI = {
     statusCode: number;
     data?: VCGamersVariant[];
   }> => {
-    // Try to load from cache first
     const cacheKey = `vcgamers-variants-${brandKey}`;
     const cachedData = cacheHelpers.loadFromCache<{
       statusCode: number;
@@ -228,7 +226,6 @@ const vcGamersAPI = {
         data: response?.data,
       };
 
-      // Save to cache for future use
       cacheHelpers.saveToCache(cacheKey, result);
 
       return result;
@@ -249,10 +246,13 @@ function generateApiKey(): string {
   return `${prefix}${randomBytes}`;
 }
 
+async function hashPassword(password: string): Promise<string> {
+  return await argon2.hash(password);
+}
+
 async function seedApiKeys() {
   console.log("🌱 Seeding API keys...");
 
-  // Create sample API keys for different use cases
   const apiKeys = [
     {
       id: "smart-contract-api-key",
@@ -268,7 +268,7 @@ async function seedApiKeys() {
         "smart-contracts:read",
         "transactions:read",
       ],
-      rateLimit: 1000, // 1000 requests per minute
+      rateLimit: 1000,
       metadata: {
         environment: "production",
         ipRestrictions: [],
@@ -289,7 +289,7 @@ async function seedApiKeys() {
         "blockchains:read",
         "regions:read",
       ],
-      rateLimit: 500, // 500 requests per minute
+      rateLimit: 500,
       metadata: {
         environment: "production",
         platform: "mobile",
@@ -311,7 +311,7 @@ async function seedApiKeys() {
         "smart-contracts:read",
         "regions:read",
       ],
-      rateLimit: 300, // 300 requests per minute
+      rateLimit: 300,
       metadata: {
         environment: "production",
         platform: "web",
@@ -326,8 +326,8 @@ async function seedApiKeys() {
       type: ApiKeyType.THIRD_PARTY,
       status: ApiKeyStatus.ACTIVE,
       permissions: ["products:read", "tokens:read", "blockchains:read"],
-      rateLimit: 100, // 100 requests per minute
-      expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year from now
+      rateLimit: 100,
+      expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
       metadata: {
         partner: "example-partner",
         contact: "partner@example.com",
@@ -354,7 +354,7 @@ async function seedApiKeys() {
         "users:read",
         "vendors:read",
       ],
-      rateLimit: 2000, // 2000 requests per minute
+      rateLimit: 2000,
       metadata: {
         service: "internal-microservices",
         environment: "production",
@@ -367,14 +367,12 @@ async function seedApiKeys() {
       keyValue: generateApiKey(),
       type: ApiKeyType.ADMIN,
       status: ApiKeyStatus.ACTIVE,
-      permissions: [
-        "*", // Full access
-      ],
-      rateLimit: 5000, // 5000 requests per minute
+      permissions: ["*"],
+      rateLimit: 5000,
       metadata: {
         role: "admin",
         environment: "production",
-        ipRestrictions: ["10.0.0.0/8", "192.168.0.0/16"], // Internal networks only
+        ipRestrictions: ["10.0.0.0/8", "192.168.0.0/16"],
       },
     },
   ];
@@ -409,11 +407,69 @@ async function seedApiKeys() {
   console.log("🎉 API keys seeding completed!");
 }
 
+async function seedAdminUsers() {
+  console.log("🌱 Seeding admin users...");
+
+  const adminUsers = [
+    {
+      id: "admin-user-1",
+      email: "admin@takumipay.com",
+      password: await hashPassword("Admin123!"),
+      name: "System Admin",
+      username: "admin",
+      authProvider: AuthProvider.ADMIN_CREDENTIALS,
+      role: UserRole.ADMIN,
+      permissions: {
+        users: ["read", "write"],
+        products: ["read", "write"],
+        transactions: ["read"],
+      },
+    },
+    {
+      id: "super-admin-user",
+      email: "superadmin@takumipay.com",
+      password: await hashPassword("SuperAdmin123!"),
+      name: "Super Administrator",
+      username: "superadmin",
+      authProvider: AuthProvider.ADMIN_CREDENTIALS,
+      role: UserRole.SUPER_ADMIN,
+      permissions: {
+        "*": ["*"],
+      },
+    },
+  ];
+
+  for (const adminData of adminUsers) {
+    try {
+      const admin = await prisma.user.upsert({
+        where: { id: adminData.id },
+        update: {
+          email: adminData.email,
+          password: adminData.password,
+          name: adminData.name,
+          username: adminData.username,
+          role: adminData.role,
+          permissions: adminData.permissions,
+        },
+        create: adminData,
+      });
+
+      console.log(`✅ Created/Updated admin user: ${admin.name}`);
+      console.log(`   Email: ${admin.email}`);
+      console.log(`   Role: ${admin.role}`);
+      console.log("");
+    } catch (error) {
+      console.error(`❌ Error creating admin user ${adminData.name}:`, error);
+    }
+  }
+
+  console.log("🎉 Admin users seeding completed!");
+}
+
 async function main() {
   console.log("🌱 Starting TakumiPay database seeding...");
   console.log("");
 
-  // Show cache information
   console.log("📊 Cache Status:");
   cacheHelpers.getCacheInfo();
   console.log("");
@@ -725,26 +781,32 @@ async function main() {
   const users = await Promise.all([
     prisma.user.upsert({
       where: { walletAddress: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" },
-      update: {},
+      update: {
+        role: UserRole.USER,
+      },
       create: {
         walletAddress: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
         email: "user1@example.com",
         name: "User One",
         profileImage: "https://i.pravatar.cc/150?u=user1",
-        authProvider: "WALLET",
+        authProvider: AuthProvider.WALLET,
         regionId: regions[0].id,
+        role: UserRole.USER,
       },
     }),
     prisma.user.upsert({
       where: { email: "user2@example.com" },
-      update: {},
+      update: {
+        role: UserRole.USER,
+      },
       create: {
         email: "user2@example.com",
         name: "User Two",
         profileImage: "https://i.pravatar.cc/150?u=user2",
-        authProvider: "GOOGLE",
+        authProvider: AuthProvider.GOOGLE,
         socialId: "google-123456",
         regionId: regions[1].id,
+        role: UserRole.USER,
       },
     }),
   ]);
@@ -1137,8 +1199,9 @@ async function main() {
     },
   });
 
-  // Seed API keys
   await seedApiKeys();
+
+  await seedAdminUsers();
 
   console.log("");
   console.log("🎉 Seed data created successfully!");

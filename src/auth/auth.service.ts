@@ -10,6 +10,8 @@ import { SiweMessage } from "siwe";
 import { randomBytes } from "crypto";
 import { AuthResponseDto } from "./dto/auth-response.dto";
 import { ConfigService } from "@nestjs/config";
+import * as argon2 from "argon2";
+import { UserRole, UserStatus, AuthProvider } from "../../generated/prisma";
 
 @Injectable()
 export class AuthService {
@@ -117,14 +119,19 @@ export class AuthService {
       user = await this.prisma.user.create({
         data: {
           walletAddress: walletAddress.toLowerCase(),
-          authProvider: "WALLET",
+          authProvider: AuthProvider.WALLET,
         },
       });
+    }
+
+    if (user.status !== UserStatus.ACTIVE) {
+      throw new UnauthorizedException("User account is not active");
     }
 
     const payload = {
       sub: user.id,
       walletAddress: walletAddress.toLowerCase(),
+      role: user.role,
     };
 
     return {
@@ -138,8 +145,137 @@ export class AuthService {
       user: {
         id: user.id,
         walletAddress: user.walletAddress || "",
+        role: user.role,
       },
     };
+  }
+
+  async adminLogin(
+    username: string,
+    password: string,
+  ): Promise<AuthResponseDto> {
+    const user = await this.prisma.user.findUnique({
+      where: { username },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException("Invalid credentials");
+    }
+
+    if (user.role !== UserRole.ADMIN && user.role !== UserRole.SUPER_ADMIN) {
+      throw new UnauthorizedException("Invalid credentials");
+    }
+
+    if (user.status !== UserStatus.ACTIVE) {
+      throw new UnauthorizedException("User account is not active");
+    }
+
+    if (user.lockedUntil && user.lockedUntil > new Date()) {
+      throw new UnauthorizedException(
+        "Account is locked. Please try again later.",
+      );
+    }
+
+    let isPasswordValid = false;
+    try {
+      if (!user.password) {
+        throw new UnauthorizedException("Invalid credentials");
+      }
+      isPasswordValid = await argon2.verify(user.password, password);
+    } catch (error) {
+      this.logger.error(`Password verification failed: ${error.message}`);
+      throw new UnauthorizedException("Invalid credentials");
+    }
+
+    if (!isPasswordValid) {
+      const maxAttempts = this.configService.get<number>(
+        "MAX_LOGIN_ATTEMPTS",
+        5,
+      );
+      const lockDurationMinutes = this.configService.get<number>(
+        "ACCOUNT_LOCK_DURATION_MINUTES",
+        30,
+      );
+
+      const updatedAttempts = user.loginAttempts + 1;
+      let lockedUntil = user.lockedUntil;
+
+      if (updatedAttempts >= maxAttempts) {
+        lockedUntil = new Date(Date.now() + lockDurationMinutes * 60 * 1000);
+      }
+
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: {
+          loginAttempts: updatedAttempts,
+          lockedUntil,
+        },
+      });
+
+      throw new UnauthorizedException("Invalid credentials");
+    }
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        loginAttempts: 0,
+        lockedUntil: null,
+        lastLoginAt: new Date(),
+      },
+    });
+
+    await this.prisma.adminAuditLog.create({
+      data: {
+        adminUser: { connect: { id: user.id } },
+        action: "LOGIN",
+        resource: "AUTH",
+        ipAddress: "N/A",
+        userAgent: "N/A",
+      },
+    });
+
+    const payload = {
+      sub: user.id,
+      username: user.username,
+      role: user.role,
+    };
+
+    return {
+      access_token: this.jwtService.sign(payload, {
+        expiresIn: process.env.JWT_EXPIRATION_TIME || "1h",
+      }),
+      refresh_token: this.jwtService.sign(
+        { sub: user.id, type: "refresh" },
+        { expiresIn: process.env.REFRESH_TOKEN_EXPIRATION_TIME || "7d" },
+      ),
+      user: {
+        id: user.id,
+        username: user.username || undefined,
+        role: user.role,
+      },
+    };
+  }
+
+  async createAdminUser(
+    username: string,
+    password: string,
+    email: string,
+    name: string,
+    role: UserRole = UserRole.ADMIN,
+  ) {
+    const hashedPassword = await argon2.hash(password);
+
+    return this.prisma.user.create({
+      data: {
+        username,
+        email,
+        name,
+        password: hashedPassword,
+        role,
+        authProvider: AuthProvider.ADMIN_CREDENTIALS,
+        status: UserStatus.ACTIVE,
+      },
+    });
   }
 
   async refresh(refreshToken: string): Promise<{ access_token: string }> {
@@ -152,20 +288,33 @@ export class AuthService {
 
       const user = await this.prisma.user.findUnique({
         where: { id: payload.sub },
+        select: {
+          id: true,
+          walletAddress: true,
+          username: true,
+          role: true,
+        },
       });
 
       if (!user) {
         throw new UnauthorizedException("User not found");
       }
 
+      const tokenPayload = {
+        sub: user.id,
+        role: user.role,
+      };
+
+      if (user.walletAddress) {
+        tokenPayload["walletAddress"] = user.walletAddress;
+      } else if (user.username) {
+        tokenPayload["username"] = user.username;
+      }
+
       return {
-        access_token: this.jwtService.sign(
-          {
-            sub: user.id,
-            walletAddress: user.walletAddress || "",
-          },
-          { expiresIn: process.env.JWT_EXPIRATION_TIME },
-        ),
+        access_token: this.jwtService.sign(tokenPayload, {
+          expiresIn: process.env.JWT_EXPIRATION_TIME || "1h",
+        }),
       };
     } catch (error) {
       this.logger.error(`Refresh token verification failed: ${error.message}`);
