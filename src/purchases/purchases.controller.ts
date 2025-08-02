@@ -7,6 +7,7 @@ import {
   Put,
   Query,
   Res,
+  ConflictException,
 } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { Response } from "express";
@@ -43,9 +44,44 @@ export class PurchasesController {
     @Res() res: Response,
   ) {
     try {
-      const result = await this.purchasesService.create(createPurchaseDto);
-      return res.status(200).send(result);
+      const purchase = await this.purchasesService.create(createPurchaseDto);
+      const packedResult = `${purchase.id}#${purchase.bookingId}#${purchase.productVariant.id}`;
+
+      return res.status(200).send({
+        ...purchase,
+        packed: {
+          result: packedResult,
+        },
+      });
     } catch (error) {
+      if (
+        error instanceof ConflictException &&
+        error.message.includes("already been processed") &&
+        !error.message.includes("failed")
+      ) {
+        const refId = createPurchaseDto.refId;
+
+        try {
+          const refIdStatus =
+            await this.purchasesService.getReferenceIdWithPurchase(refId);
+
+          if (refIdStatus && refIdStatus.purchase) {
+            const purchase = refIdStatus.purchase;
+            const packedResult = `${purchase.id}#${refIdStatus.bookingId}#${purchase.productVariant.id}`;
+
+            return res.status(200).send({
+              ...purchase,
+              bookingId: refIdStatus.bookingId,
+              packed: {
+                result: packedResult,
+              },
+            });
+          }
+        } catch (innerError) {
+          console.error("Error retrieving reference ID status:", innerError);
+        }
+      }
+
       const packedError = this.mapErrorToPackedFormat(error);
       return res.status(error.status || 500).send(packedError);
     }
@@ -54,7 +90,7 @@ export class PurchasesController {
   private mapErrorToPackedFormat(error: {
     status?: number;
     message?: string;
-  }): string {
+  }): { packed: { result: string } } {
     const statusCodeMap: Record<number, string> = {
       400: "BAD_REQ",
       404: "NOT_FOUND",
@@ -96,7 +132,11 @@ export class PurchasesController {
       }
     }
 
-    return `ERROR#${statusCode}#${errorCode}#${errorDetail}`;
+    return {
+      packed: {
+        result: `ERROR#${statusCode}#${errorCode}#${errorDetail}`,
+      },
+    };
   }
 
   @Get()

@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreatePurchaseDto, UpdatePurchaseDto } from "./dto/purchase.dto";
@@ -11,6 +12,7 @@ import {
   PurchaseStatus,
   TransactionType,
   TransactionStatus,
+  ReferenceIdStatus,
 } from "@generated/prisma";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import { BookingStatus } from "../booking/enums/booking-status.enum";
@@ -30,6 +32,67 @@ export class PurchasesService {
   async create(createPurchaseDto: CreatePurchaseDto) {
     const { refId, bookingId, walletAddress, networkId, contractAddress } =
       createPurchaseDto;
+
+    const existingRefId =
+      await this.referenceIdService.getReferenceIdStatus(refId);
+
+    if (existingRefId) {
+      if (
+        existingRefId.status === ReferenceIdStatus.COMPLETED &&
+        existingRefId.metadata &&
+        typeof existingRefId.metadata === "object"
+      ) {
+        const metadata = existingRefId.metadata as Record<string, unknown>;
+
+        if (metadata.purchaseId && typeof metadata.purchaseId === "string") {
+          const existingPurchase = await this.prisma.purchase.findUnique({
+            where: { id: metadata.purchaseId },
+            include: {
+              productVariant: true,
+            },
+          });
+
+          if (
+            existingPurchase &&
+            metadata.bookingId &&
+            typeof metadata.bookingId === "string"
+          ) {
+            const productVariant = existingPurchase.productVariant as Record<
+              string,
+              unknown
+            >;
+            const { product, ...productVariantWithoutProduct } = productVariant;
+
+            return {
+              ...existingPurchase,
+              bookingId: metadata.bookingId,
+              productVariant: productVariantWithoutProduct,
+            };
+          }
+        }
+      }
+
+      if (existingRefId.status === ReferenceIdStatus.FAILED) {
+        let errorMessage = "Unknown error";
+        if (
+          existingRefId.metadata &&
+          typeof existingRefId.metadata === "object"
+        ) {
+          const metadata = existingRefId.metadata as Record<string, unknown>;
+          if (metadata.error && typeof metadata.error === "string") {
+            errorMessage = metadata.error;
+          }
+        }
+
+        throw new ConflictException(
+          `Reference ID '${refId}' has already been processed and failed: ${errorMessage}`,
+        );
+      }
+
+      throw new ConflictException(
+        `Reference ID '${refId}' is already being processed. Status: ${existingRefId.status}`,
+      );
+    }
 
     const bookingForMetadata = await this.prisma.bookingOrder.findUnique({
       where: { id: bookingId },
@@ -51,16 +114,64 @@ export class PurchasesService {
       throw new NotFoundException(`Booking with ID ${bookingId} not found`);
     }
 
-    await this.referenceIdService.validateAndReserveRefId(refId, {
-      requestType: "PURCHASE",
-      walletAddress,
-      bookingId,
-      vendorName: bookingForMetadata.productPrice?.vendor?.name,
-      vendorId: bookingForMetadata.productPrice?.vendorId,
-      productCode: bookingForMetadata.productVariant.product.code,
-      productName: bookingForMetadata.productVariant.product.name,
-      variantSku: bookingForMetadata.productVariant.sku,
-    });
+    try {
+      await this.referenceIdService.validateAndReserveRefId(refId, {
+        requestType: "PURCHASE",
+        walletAddress,
+        bookingId,
+        vendorName: bookingForMetadata.productPrice?.vendor?.name,
+        vendorId: bookingForMetadata.productPrice?.vendorId,
+        productCode: bookingForMetadata.productVariant.product.code,
+        productName: bookingForMetadata.productVariant.product.name,
+        variantSku: bookingForMetadata.productVariant.sku,
+      });
+    } catch (error) {
+      if (error instanceof ConflictException) {
+        const refIdStatus =
+          await this.referenceIdService.getReferenceIdStatus(refId);
+
+        if (
+          refIdStatus &&
+          refIdStatus.status === ReferenceIdStatus.COMPLETED &&
+          refIdStatus.metadata &&
+          typeof refIdStatus.metadata === "object"
+        ) {
+          const metadata = refIdStatus.metadata as Record<string, unknown>;
+
+          if (metadata.purchaseId && typeof metadata.purchaseId === "string") {
+            const existingPurchase = await this.prisma.purchase.findUnique({
+              where: { id: metadata.purchaseId },
+              include: {
+                productVariant: true,
+              },
+            });
+
+            if (
+              existingPurchase &&
+              metadata.bookingId &&
+              typeof metadata.bookingId === "string"
+            ) {
+              const productVariant = existingPurchase.productVariant as Record<
+                string,
+                unknown
+              >;
+              const { product, ...productVariantWithoutProduct } =
+                productVariant;
+
+              return {
+                ...existingPurchase,
+                bookingId: metadata.bookingId,
+                productVariant: productVariantWithoutProduct,
+              };
+            }
+          }
+        }
+
+        throw error;
+      }
+
+      throw error;
+    }
 
     try {
       const blockchain = await this.prisma.blockchain.findUnique({
@@ -336,7 +447,14 @@ export class PurchasesService {
         status: "completed_successfully",
       });
 
-      return `${purchase.id}#${booking.id}#${booking.productVariantId}`;
+      const { product, ...productVariantWithoutProduct } =
+        booking.productVariant;
+
+      return {
+        ...purchase,
+        bookingId: booking.id,
+        productVariant: productVariantWithoutProduct,
+      };
     } catch (error) {
       await this.referenceIdService.markAsFailed(refId, {
         requestType: "PURCHASE",
@@ -648,5 +766,45 @@ export class PurchasesService {
         createdAt: "desc",
       },
     });
+  }
+
+  async getReferenceIdWithPurchase(refId: string) {
+    const referenceId =
+      await this.referenceIdService.getReferenceIdStatus(refId);
+
+    if (
+      !referenceId ||
+      !referenceId.metadata ||
+      typeof referenceId.metadata !== "object"
+    ) {
+      return null;
+    }
+
+    const metadata = referenceId.metadata as Record<string, unknown>;
+
+    if (!metadata.purchaseId || typeof metadata.purchaseId !== "string") {
+      return null;
+    }
+
+    const purchase = await this.prisma.purchase.findUnique({
+      where: { id: metadata.purchaseId },
+      include: {
+        productVariant: true,
+      },
+    });
+
+    if (
+      !purchase ||
+      !metadata.bookingId ||
+      typeof metadata.bookingId !== "string"
+    ) {
+      return null;
+    }
+
+    return {
+      purchase,
+      bookingId: metadata.bookingId,
+      status: referenceId.status,
+    };
   }
 }
