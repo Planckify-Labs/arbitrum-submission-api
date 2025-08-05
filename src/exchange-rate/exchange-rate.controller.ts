@@ -36,6 +36,8 @@ export class ExchangeRateController {
   }
 
   @Get("latest")
+  @Public()
+  @ApiKey()
   @ApiGetLatestExchangeRate()
   async getLatest(@Query() query: GetLatestExchangeRateDto) {
     return await this.exchangeRateService.findLatest(query);

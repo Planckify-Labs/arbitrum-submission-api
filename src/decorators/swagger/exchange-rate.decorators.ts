@@ -34,10 +34,10 @@ export const ApiCreateExchangeRate = () =>
 export const ApiGetLatestExchangeRate = () =>
   applyDecorators(
     ApiHeader({
-      name: "Authorization",
+      name: "X-API-Key",
       required: true,
-      description: "JWT token",
-      example: "Bearer <token>",
+      description: "API Key for public access",
+      example: "your-api-key-here",
     }),
     ApiOperation({
       summary: "Get latest exchange rate",
@@ -60,6 +60,10 @@ export const ApiGetLatestExchangeRate = () =>
       status: 200,
       description: "Latest exchange rate retrieved successfully",
       type: ExchangeRateResponseDto,
+    }),
+    ApiResponse({
+      status: 401,
+      description: "Invalid or missing API key",
     }),
   );
 
