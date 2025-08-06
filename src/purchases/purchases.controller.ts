@@ -8,6 +8,7 @@ import {
   Query,
   Res,
   ConflictException,
+  Logger,
 } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { Response } from "express";
@@ -33,6 +34,7 @@ import { ApiKey } from "../decorators/api-key.decorator";
 @ApiTags("purchases")
 @Public()
 export class PurchasesController {
+  private readonly logger = new Logger(PurchasesController.name);
   constructor(private readonly purchasesService: PurchasesService) {}
 
   @Post()
@@ -43,6 +45,17 @@ export class PurchasesController {
     @Body() createPurchaseDto: CreatePurchaseDto,
     @Res() res: Response,
   ) {
+    this.logger.log("=== PURCHASE CREATION REQUEST ===");
+    this.logger.log(
+      "Received createPurchaseDto:",
+      JSON.stringify(createPurchaseDto, null, 2),
+    );
+    this.logger.log("Request headers:", JSON.stringify(res.req.headers, null, 2));
+    this.logger.log("Request method:", res.req.method);
+    this.logger.log("Request URL:", res.req.url);
+    this.logger.log("Request IP:", res.req.ip || res.req.connection.remoteAddress);
+    this.logger.log("=====================================");
+
     try {
       const purchase = await this.purchasesService.create(createPurchaseDto);
       const packedResult = `${purchase.id}#${purchase.bookingId}#${purchase.productVariant.id}`;
@@ -78,7 +91,7 @@ export class PurchasesController {
             });
           }
         } catch (innerError) {
-          console.error("Error retrieving reference ID status:", innerError);
+          this.logger.error("Error retrieving reference ID status:", innerError);
         }
       }
 
