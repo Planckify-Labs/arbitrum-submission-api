@@ -30,16 +30,11 @@ interface VendorResponse {
 export class CreatePurchaseDto {
   @ApiProperty({
     description:
-      "Unique reference ID to prevent duplicate processing. Must follow format: TRX-{unique_identifier}",
-    example: "TRX-USER123-20240726-001",
-    pattern: "^TRX-.+$",
+      "Unique reference ID to prevent duplicate processing. Can be any unique identifier including contract hashes",
+    example: "aed3b0b42cd89f16820be71554a1de2c2a1be4ed5899344053c0b78dc83b46c9",
   })
   @IsString()
   @IsNotEmpty()
-  @Matches(/^TRX-.+$/, {
-    message:
-      "Reference ID must start with 'TRX-' followed by a unique identifier",
-  })
   refId: string;
 
   @ApiProperty({
