@@ -5,13 +5,11 @@ import {
   HttpException,
   HttpStatus,
 } from "@nestjs/common";
-import { Observable } from "rxjs";
 import { Request } from "express";
 import { PrismaService } from "../../prisma/prisma.service";
 
 @Injectable()
 export class BookingRateLimitGuard implements CanActivate {
-  private readonly MAX_PENDING_BOOKINGS = 3;
   private readonly RATE_LIMIT_WINDOW_MINUTES = 15;
   private readonly MAX_BOOKINGS_PER_WINDOW = 10;
 
@@ -28,22 +26,6 @@ export class BookingRateLimitGuard implements CanActivate {
       );
     }
 
-    // Check pending bookings count
-    const pendingBookings = await this.prisma.bookingOrder.count({
-      where: {
-        walletAddress,
-        status: "PENDING",
-      },
-    });
-
-    if (pendingBookings >= this.MAX_PENDING_BOOKINGS) {
-      throw new HttpException(
-        `Maximum ${this.MAX_PENDING_BOOKINGS} pending bookings allowed`,
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
-
-    // Check rate limit within time window
     const windowStart = new Date(
       Date.now() - this.RATE_LIMIT_WINDOW_MINUTES * 60 * 1000,
     );
