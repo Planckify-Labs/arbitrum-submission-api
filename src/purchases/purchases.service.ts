@@ -113,7 +113,7 @@ export class PurchasesService {
         where: {
           blockchainId_address: {
             blockchainId: networkId,
-            address: contractAddress,
+            address: contractAddress.toLowerCase(),
           },
         },
       });
