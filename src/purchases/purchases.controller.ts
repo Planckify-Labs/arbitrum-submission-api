@@ -8,6 +8,8 @@ import {
   Query,
   Res,
   ConflictException,
+  NotFoundException,
+  BadRequestException,
   Logger,
 } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
@@ -50,11 +52,55 @@ export class PurchasesController {
       "Received createPurchaseDto:",
       JSON.stringify(createPurchaseDto, null, 2),
     );
-    this.logger.log("Request headers:", JSON.stringify(res.req.headers, null, 2));
+    this.logger.log(
+      "Request headers:",
+      JSON.stringify(res.req.headers, null, 2),
+    );
     this.logger.log("Request method:", res.req.method);
     this.logger.log("Request URL:", res.req.url);
-    this.logger.log("Request IP:", res.req.ip || res.req.connection.remoteAddress);
+    this.logger.log(
+      "Request IP:",
+      res.req.ip || res.req.connection.remoteAddress,
+    );
     this.logger.log("=====================================");
+
+    const { refId } = createPurchaseDto;
+
+    try {
+      const existingRefIdStatus =
+        await this.purchasesService.getReferenceIdWithPurchase(refId);
+
+      if (existingRefIdStatus) {
+        this.logger.log(
+          `Idempotent request detected for refId: ${refId}. Status: ${existingRefIdStatus.status}`,
+        );
+
+        if (existingRefIdStatus.purchase) {
+          const purchase = existingRefIdStatus.purchase;
+          const packedResult = `${purchase.id}#${existingRefIdStatus.bookingId}#${purchase.productVariant.id}`;
+
+          return res.status(200).send({
+            ...purchase,
+            bookingId: existingRefIdStatus.bookingId,
+            packed: {
+              result: packedResult,
+            },
+          });
+        }
+
+        const errorMessage = `Reference ID ${refId} was previously processed but failed`;
+        return res.status(200).send({
+          packed: {
+            result: `ERROR#409#${errorMessage}`,
+          },
+        });
+      }
+    } catch (idempotencyCheckError) {
+      this.logger.error(
+        "Error during idempotency check:",
+        idempotencyCheckError,
+      );
+    }
 
     try {
       const purchase = await this.purchasesService.create(createPurchaseDto);
@@ -67,89 +113,32 @@ export class PurchasesController {
         },
       });
     } catch (error) {
-      if (
-        error instanceof ConflictException &&
-        error.message.includes("already been processed") &&
-        !error.message.includes("failed")
-      ) {
-        const refId = createPurchaseDto.refId;
+      this.logger.error("error details:", error);
+      this.logger.error("Error message:", error.message);
+      this.logger.error("Error stack:", error.stack);
 
-        try {
-          const refIdStatus =
-            await this.purchasesService.getReferenceIdWithPurchase(refId);
+      const statusCode = error.status || 500;
 
-          if (refIdStatus && refIdStatus.purchase) {
-            const purchase = refIdStatus.purchase;
-            const packedResult = `${purchase.id}#${refIdStatus.bookingId}#${purchase.productVariant.id}`;
+      let userFriendlyMessage: string;
 
-            return res.status(200).send({
-              ...purchase,
-              bookingId: refIdStatus.bookingId,
-              packed: {
-                result: packedResult,
-              },
-            });
-          }
-        } catch (innerError) {
-          this.logger.error("Error retrieving reference ID status:", innerError);
-        }
+      if (error instanceof ConflictException) {
+        userFriendlyMessage = "Request already processed";
+      } else if (error instanceof NotFoundException) {
+        userFriendlyMessage = "Resource not found";
+      } else if (error instanceof BadRequestException) {
+        userFriendlyMessage = "Invalid request data";
+      } else if (statusCode >= 400 && statusCode < 500) {
+        userFriendlyMessage = "Client error occurred";
+      } else {
+        userFriendlyMessage = "Internal server error";
       }
 
-      const packedError = this.mapErrorToPackedFormat(error);
-      return res.status(error.status || 500).send(packedError);
+      return res.status(200).send({
+        packed: {
+          result: `ERROR#${statusCode}#${userFriendlyMessage}`,
+        },
+      });
     }
-  }
-
-  private mapErrorToPackedFormat(error: {
-    status?: number;
-    message?: string;
-  }): { packed: { result: string } } {
-    const statusCodeMap: Record<number, string> = {
-      400: "BAD_REQ",
-      404: "NOT_FOUND",
-      409: "CONFLICT",
-      429: "RATE_LMT",
-    };
-
-    const statusCode = error.status || 500;
-    const errorCode = statusCodeMap[statusCode] || "SRV_ERR";
-
-    const errorPatterns: Array<{ patterns: string[]; detail: string }> = [
-      { patterns: ["booking", "not found"], detail: "BK_NOT_FND" },
-      { patterns: ["booking", "expired"], detail: "BK_EXPIRED" },
-      { patterns: ["booking", "pending"], detail: "BK_NOT_PEND" },
-      { patterns: ["wallet address mismatch"], detail: "WALLET_MISM" },
-      { patterns: ["network", "not found"], detail: "NET_NOT_FND" },
-      { patterns: ["network", "not active"], detail: "NET_INACTIVE" },
-      { patterns: ["smart contract", "not found"], detail: "CTR_NOT_FND" },
-      { patterns: ["smart contract", "not active"], detail: "CTR_INACTIVE" },
-      { patterns: ["token", "not found"], detail: "TKN_NOT_FND" },
-      { patterns: ["customer information"], detail: "CUST_INFO_REQ" },
-      { patterns: ["reference id", "processed"], detail: "DUP_REF_ID" },
-      { patterns: ["failed to process order"], detail: "VENDOR_ERR" },
-      { patterns: ["validation", "must start with"], detail: "VALID_ERR" },
-      {
-        patterns: ["should not be empty", "must be a string"],
-        detail: "FIELD_REQ",
-      },
-    ];
-
-    let errorDetail = "GEN_ERR";
-    if (error.message) {
-      const message = error.message.toLowerCase();
-      const matchedPattern = errorPatterns.find((pattern) =>
-        pattern.patterns.every((p) => message.includes(p)),
-      );
-      if (matchedPattern) {
-        errorDetail = matchedPattern.detail;
-      }
-    }
-
-    return {
-      packed: {
-        result: `ERROR#${statusCode}#${errorCode}#${errorDetail}`,
-      },
-    };
   }
 
   @Get()

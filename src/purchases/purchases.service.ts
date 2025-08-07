@@ -2,7 +2,6 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
-  ConflictException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreatePurchaseDto, UpdatePurchaseDto } from "./dto/purchase.dto";
@@ -17,7 +16,6 @@ import {
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import { BookingStatus } from "../booking/enums/booking-status.enum";
 import { VCGamersService } from "../providers/vendor-api/implementations/vcgamers/vcgamers.service";
-import { ProductInputValidatorService } from "../products/services/product-input-validator.service";
 import { ReferenceIdService } from "../reference-id/reference-id.service";
 
 @Injectable()
@@ -25,7 +23,6 @@ export class PurchasesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly vcGamersService: VCGamersService,
-    private readonly productInputValidator: ProductInputValidatorService,
     private readonly referenceIdService: ReferenceIdService,
   ) {}
 
@@ -72,24 +69,7 @@ export class PurchasesService {
         }
       }
 
-      if (existingRefId.status === ReferenceIdStatus.FAILED) {
-        let errorMessage = "Unknown error";
-        if (
-          existingRefId.metadata &&
-          typeof existingRefId.metadata === "object"
-        ) {
-          const metadata = existingRefId.metadata as Record<string, unknown>;
-          if (metadata.error && typeof metadata.error === "string") {
-            errorMessage = metadata.error;
-          }
-        }
-
-        throw new ConflictException(
-          `Reference ID '${refId}' has already been processed and failed: ${errorMessage}`,
-        );
-      }
-
-      throw new ConflictException(
+      console.log(
         `Reference ID '${refId}' is already being processed. Status: ${existingRefId.status}`,
       );
     }
@@ -112,65 +92,6 @@ export class PurchasesService {
 
     if (!bookingForMetadata) {
       throw new NotFoundException(`Booking with ID ${bookingId} not found`);
-    }
-
-    try {
-      await this.referenceIdService.validateAndReserveRefId(refId, {
-        requestType: "PURCHASE",
-        walletAddress,
-        bookingId,
-        vendorName: bookingForMetadata.productPrice?.vendor?.name,
-        vendorId: bookingForMetadata.productPrice?.vendorId,
-        productCode: bookingForMetadata.productVariant.product.code,
-        productName: bookingForMetadata.productVariant.product.name,
-        variantSku: bookingForMetadata.productVariant.sku,
-      });
-    } catch (error) {
-      if (error instanceof ConflictException) {
-        const refIdStatus =
-          await this.referenceIdService.getReferenceIdStatus(refId);
-
-        if (
-          refIdStatus &&
-          refIdStatus.status === ReferenceIdStatus.COMPLETED &&
-          refIdStatus.metadata &&
-          typeof refIdStatus.metadata === "object"
-        ) {
-          const metadata = refIdStatus.metadata as Record<string, unknown>;
-
-          if (metadata.purchaseId && typeof metadata.purchaseId === "string") {
-            const existingPurchase = await this.prisma.purchase.findUnique({
-              where: { id: metadata.purchaseId },
-              include: {
-                productVariant: true,
-              },
-            });
-
-            if (
-              existingPurchase &&
-              metadata.bookingId &&
-              typeof metadata.bookingId === "string"
-            ) {
-              const productVariant = existingPurchase.productVariant as Record<
-                string,
-                unknown
-              >;
-              const { product, ...productVariantWithoutProduct } =
-                productVariant;
-
-              return {
-                ...existingPurchase,
-                bookingId: metadata.bookingId,
-                productVariant: productVariantWithoutProduct,
-              };
-            }
-          }
-        }
-
-        throw error;
-      }
-
-      throw error;
     }
 
     try {
@@ -227,16 +148,6 @@ export class PurchasesService {
 
       if (!booking) {
         throw new NotFoundException(`Booking with ID ${bookingId} not found`);
-      }
-
-      if (booking.status !== BookingStatus.PENDING) {
-        throw new BadRequestException(
-          `Booking is ${booking.status.toLowerCase()}, must be PENDING`,
-        );
-      }
-
-      if (booking.expiresAt < new Date()) {
-        throw new BadRequestException("Booking has expired");
       }
 
       if (booking.walletAddress.toLowerCase() !== walletAddress.toLowerCase()) {
