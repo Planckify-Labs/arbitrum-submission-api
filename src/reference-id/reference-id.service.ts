@@ -63,9 +63,13 @@ export class ReferenceIdService {
       }
     }
 
-    await this.prisma.referenceId.update({
+    await this.prisma.referenceId.upsert({
       where: { refId },
-      data: updateData,
+      update: updateData,
+      create: {
+        refId,
+        ...updateData,
+      },
     });
   }
 
