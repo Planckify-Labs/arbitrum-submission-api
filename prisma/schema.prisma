@@ -138,6 +138,7 @@ model Blockchain {
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
   SmartContract SmartContract[]
+  isTestnet     Boolean         @default(false)
 }
 
 model Token {
@@ -147,7 +148,7 @@ model Token {
   decimals           Int
   blockchain         Blockchain             @relation(fields: [blockchainId], references: [id])
   blockchainId       String
-  contractAddress    String                 @unique
+  contractAddress    String?                @unique
   logoUrl            String?
   isStablecoin       Boolean                @default(false)
   isActive           Boolean                @default(true)
