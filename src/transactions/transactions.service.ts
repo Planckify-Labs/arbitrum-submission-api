@@ -185,11 +185,13 @@ export class TransactionsService {
             blockchain: {
               select: {
                 name: true,
+                blockExplorer: true,
               },
             },
             contractAddress: true,
             name: true,
             symbol: true,
+            logoUrl: true,
           },
         },
         purchase: {
