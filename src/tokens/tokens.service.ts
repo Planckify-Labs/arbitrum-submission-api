@@ -38,10 +38,14 @@ export class TokensService {
       }
     }
 
+    const { contractAddress, ...rest } = createTokenDto;
+
     return this.prisma.token.create({
       data: {
-        ...createTokenDto,
-        contractAddress: createTokenDto?.contractAddress || "",
+        ...rest,
+        ...(typeof contractAddress !== "undefined"
+          ? { contractAddress }
+          : {}),
       },
       include: {
         blockchain: true,

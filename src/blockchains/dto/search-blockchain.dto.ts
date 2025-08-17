@@ -49,4 +49,18 @@ export class SearchBlockchainDto {
     return value;
   })
   isActive?: boolean;
+
+  @ApiProperty({
+    description: "Filter by testnet",
+    example: false,
+    required: false,
+  })
+  @IsBoolean()
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === "true") return true;
+    if (value === "false") return false;
+    return value;
+  })
+  isTestnet?: boolean;
 }

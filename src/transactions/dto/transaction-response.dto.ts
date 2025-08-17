@@ -20,17 +20,20 @@ export class TransactionResponseDto {
   @ApiProperty({ example: 50000 })
   amount: number;
 
-  @ApiProperty({ example: 750000 })
-  amountInIDR: number;
+  @ApiProperty({ example: 750000, required: false })
+  amountInFiat?: number;
+
+  @ApiProperty({ example: "IDR", required: false })
+  fiatCurrency?: string;
 
   @ApiProperty({ example: "0x123...abc", required: false })
   txHash?: string;
 
   @ApiProperty({ example: "0x456...def", required: false })
-  fromAddress?: string;
+  senderAddress?: string;
 
   @ApiProperty({ example: "0x789...ghi", required: false })
-  toAddress?: string;
+  recipientAddress?: string;
 
   @ApiProperty({ example: "2024-03-14T12:00:00.000Z" })
   createdAt: Date;

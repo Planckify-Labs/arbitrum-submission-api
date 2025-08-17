@@ -52,6 +52,12 @@ export function ApiGetTransaction() {
 export function ApiCreateTransaction() {
   return applyDecorators(
     ApiOperation({ summary: "Create a new transaction" }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
     ApiResponse({
       status: 201,
       description: "Transaction created successfully",
@@ -118,8 +124,8 @@ export function ApiSearchTransactions() {
     ApiQuery({ name: "status", enum: TransactionStatus, required: false }),
     ApiQuery({ name: "userId", type: String, required: false }),
     ApiQuery({ name: "tokenId", type: String, required: false }),
-    ApiQuery({ name: "fromAddress", type: String, required: false }),
-    ApiQuery({ name: "toAddress", type: String, required: false }),
+    ApiQuery({ name: "senderAddress", type: String, required: false }),
+    ApiQuery({ name: "recipientAddress", type: String, required: false }),
     ApiQuery({ name: "startDate", type: String, required: false }),
     ApiQuery({ name: "endDate", type: String, required: false }),
     ApiResponse({

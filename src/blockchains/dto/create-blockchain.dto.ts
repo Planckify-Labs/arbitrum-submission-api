@@ -47,4 +47,14 @@ export class CreateBlockchainDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  @ApiProperty({
+    description: "Whether the blockchain is a testnet",
+    example: false,
+    default: false,
+    required: false,
+  })
+  @IsBoolean()
+  @IsOptional()
+  isTestnet?: boolean;
 }

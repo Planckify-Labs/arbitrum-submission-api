@@ -44,6 +44,12 @@ export class BlockchainResponseDto {
   isActive: boolean;
 
   @ApiProperty({
+    description: "Whether the blockchain is a testnet",
+    example: false,
+  })
+  isTestnet: boolean;
+
+  @ApiProperty({
     description: "The creation timestamp",
     example: "2024-03-19T12:00:00.000Z",
   })

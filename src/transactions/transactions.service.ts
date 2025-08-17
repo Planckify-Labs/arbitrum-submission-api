@@ -10,10 +10,10 @@ import { CursorPaginationDto } from "../dto/common/pagination.dto";
 export class TransactionsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(createTransactionDto: CreateTransactionDto) {
+  async create(userId: string, createTransactionDto: CreateTransactionDto) {
     return await this.prisma.transactionHistory.create({
       data: {
-        userId: createTransactionDto.userId,
+        userId,
         tokenId: createTransactionDto.tokenId,
         type: createTransactionDto.type,
         status: createTransactionDto.status,

@@ -13,11 +13,6 @@ export class CreateTransactionDto {
   @ApiProperty({ example: "01H1G5V..." })
   @IsNotEmpty()
   @IsString()
-  userId: string;
-
-  @ApiProperty({ example: "01H1G5V..." })
-  @IsNotEmpty()
-  @IsString()
   tokenId: string;
 
   @ApiProperty({ enum: TransactionType, example: "PAYMENT" })
@@ -36,16 +31,16 @@ export class CreateTransactionDto {
   @Type(() => Number)
   amount: number;
 
-  @ApiProperty({ example: 750000 })
-  @IsNotEmpty()
+  @ApiProperty({ example: 750000, required: false })
+  @IsOptional()
   @IsNumber()
   @Type(() => Number)
-  amountInFiat: number;
+  amountInFiat?: number;
 
-  @ApiProperty({ example: "IDR" })
-  @IsNotEmpty()
+  @ApiProperty({ example: "IDR", required: false })
+  @IsOptional()
   @IsString()
-  fiatCurrency: string;
+  fiatCurrency?: string;
 
   @ApiProperty({ example: "0x123...abc", required: false })
   @IsOptional()

@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Body, Param, Put, Query } from "@nestjs/common";
+import { Controller, Get, Post, Body, Param, Put, Query, Req, UnauthorizedException } from "@nestjs/common";
+import { Request } from "express";
 import { ApiTags } from "@nestjs/swagger";
 import { TransactionsService } from "./transactions.service";
 import { CreateTransactionDto } from "./dto/create-transaction.dto";
@@ -22,8 +23,15 @@ export class TransactionsController {
 
   @Post()
   @ApiCreateTransaction()
-  create(@Body() createTransactionDto: CreateTransactionDto) {
-    return this.transactionsService.create(createTransactionDto);
+  create(
+    @Req() req: Request & { user?: { id: string } },
+    @Body() createTransactionDto: CreateTransactionDto,
+  ) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new UnauthorizedException("Missing authenticated user");
+    }
+    return this.transactionsService.create(userId, createTransactionDto);
   }
 
   @Get()

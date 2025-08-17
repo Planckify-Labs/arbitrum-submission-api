@@ -32,11 +32,11 @@ export class CreateTokenDto {
 
   @ApiProperty({
     example: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
-    required: true,
+    required: false,
   })
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
-  contractAddress: string;
+  contractAddress?: string;
 
   @ApiProperty({
     example: "https://assets.coingecko.com/coins/images/325/small/Tether.png",

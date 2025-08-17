@@ -41,7 +41,7 @@ export class BlockchainsService {
     paginationDto: CursorPaginationDto,
   ) {
     const { cursor, take = 10 } = paginationDto;
-    const { name, chainId, isEVM, isActive } = searchParams;
+    const { name, chainId, isEVM, isActive, isTestnet } = searchParams;
 
     const where: Prisma.BlockchainWhereInput = {};
 
@@ -62,6 +62,10 @@ export class BlockchainsService {
 
     if (isActive !== undefined) {
       where.isActive = isActive;
+    }
+
+    if (isTestnet !== undefined) {
+      where.isTestnet = isTestnet;
     }
 
     return await this.prisma.blockchain.findMany({

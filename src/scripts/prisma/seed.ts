@@ -531,6 +531,19 @@ async function main() {
         isActive: true,
       },
     }),
+    prisma.blockchain.upsert({
+      where: { chainId: 11155111 },
+      update: {},
+      create: {
+        name: "Ethereum Sepolia",
+        chainId: 11155111,
+        rpcUrl: "https://sepolia.drpc.org",
+        blockExplorer: "https://sepolia.etherscan.io",
+        isEVM: true,
+        isActive: true,
+        isTestnet: true,
+      },
+    }),
   ]);
 
   const contractABIs = await Promise.all([
@@ -620,6 +633,20 @@ async function main() {
         isActive: true,
       },
     }),
+    prisma.token.upsert({
+      where: { contractAddress: "0xA6ffC6d992F4C6e173836035Aebb8AF3dBBB15cd" },
+      update: {},
+      create: {
+        name: "Tether USD",
+        symbol: "USDT",
+        decimals: 6,
+        blockchainId: blockchains[2].id,
+        contractAddress: "0xA6ffC6d992F4C6e173836035Aebb8AF3dBBB15cd",
+        logoUrl: "https://tether.to/images/logoCircle.svg",
+        isStablecoin: true,
+        isActive: true,
+      },
+    }),
   ]);
 
   const nativeTokens = await Promise.all([
@@ -650,6 +677,22 @@ async function main() {
         contractAddress: "0x1230000000000000000000000000000000000000",
         logoUrl:
           "https://assets.coingecko.com/coins/images/4713/small/matic-token-icon.png",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
+      },
+    }),
+    prisma.token.upsert({
+      where: { contractAddress: "0x1230000000000000000000000000000000000001" },
+      update: {},
+      create: {
+        name: "Sepolia Ether",
+        symbol: "sepoliaEth",
+        decimals: 18,
+        blockchainId: blockchains[2].id,
+        contractAddress: "0x1230000000000000000000000000000000000001",
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/279/small/ethereum.png",
         isStablecoin: false,
         isNativeCurrency: true,
         isActive: true,
