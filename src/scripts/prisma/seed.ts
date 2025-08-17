@@ -462,8 +462,6 @@ async function seedAdminUsers() {
       console.error(`❌ Error creating admin user ${adminData.name}:`, error);
     }
   }
-
-  console.log("🎉 Admin users seeding completed!");
 }
 
 async function main() {
@@ -890,32 +888,72 @@ async function main() {
     }),
   ]);
 
-  const categories = await Promise.all([
-    prisma.category.upsert({
-      where: { name: "Gaming Top Up" },
-      update: {},
-      create: {
-        name: "Gaming Top Up",
-        categoryType: "MAINCATEGORY",
-      },
-    }),
-    prisma.category.upsert({
-      where: { name: "Voucher" },
-      update: {},
-      create: {
-        name: "Voucher",
-        categoryType: "MAINCATEGORY",
-      },
-    }),
-    prisma.category.upsert({
-      where: { name: "Mobile Data" },
-      update: {},
-      create: {
-        name: "Mobile Data",
-        categoryType: "MAINCATEGORY",
-      },
-    }),
-  ]);
+  const CATEGORY = {
+    GAMING: "Gaming",
+    PULSA_DATA: "Pulsa & Data Package",
+    WITHDRAW: "Withdraw",
+    SOCIALS: "Socials",
+    RECHARGE: "Recharge",
+    UTILITIES: "Utilities",
+    STREAMING: "Streaming",
+  } as const;
+
+  const PRODUCT_CODE_TO_CATEGORY: Record<
+    string,
+    (typeof CATEGORY)[keyof typeof CATEGORY]
+  > = {
+    OVO: CATEGORY.WITHDRAW,
+    LAJ: CATEGORY.WITHDRAW,
+    GoPay: CATEGORY.WITHDRAW,
+    DNA: CATEGORY.WITHDRAW,
+
+    XL: CATEGORY.PULSA_DATA,
+    AXIS: CATEGORY.PULSA_DATA,
+    BYU: CATEGORY.PULSA_DATA,
+    PSATL: CATEGORY.PULSA_DATA,
+    TRI: CATEGORY.PULSA_DATA,
+    PSAIN: CATEGORY.PULSA_DATA,
+    SMARTFREN: CATEGORY.PULSA_DATA,
+
+    GFX: CATEGORY.STREAMING,
+    VOBST: CATEGORY.STREAMING,
+    WETVID: CATEGORY.STREAMING,
+    WETV: CATEGORY.STREAMING,
+    IQIY: CATEGORY.STREAMING,
+    VHBOGO: CATEGORY.STREAMING,
+    SPO: CATEGORY.STREAMING,
+
+    BLV: CATEGORY.SOCIALS,
+    BMD: CATEGORY.SOCIALS,
+    "DazzLive-C": CATEGORY.SOCIALS,
+    LIVU: CATEGORY.SOCIALS,
+    PPYLV: CATEGORY.SOCIALS,
+    VOCBIGO: CATEGORY.SOCIALS,
+    firy: CATEGORY.SOCIALS,
+    mico: CATEGORY.SOCIALS,
+    sugo: CATEGORY.SOCIALS,
+    SCVCP: CATEGORY.SOCIALS,
+    IMO: CATEGORY.SOCIALS,
+    MALV: CATEGORY.SOCIALS,
+    MIGO: CATEGORY.SOCIALS,
+    TGL: CATEGORY.SOCIALS,
+    YLG: CATEGORY.SOCIALS,
+
+    tvpn: CATEGORY.UTILITIES,
+    PLN: CATEGORY.RECHARGE,
+  };
+
+  const categoryRecords = await Promise.all(
+    Object.values(CATEGORY).map((name) =>
+      prisma.category.upsert({
+        where: { name },
+        update: {},
+        create: { name, categoryType: "MAINCATEGORY" },
+      }),
+    ),
+  );
+
+  const categoriesByName = new Map(categoryRecords.map((c) => [c.name, c]));
 
   console.log("🎮 Fetching VCGamers products...");
   const vcGamersProducts = await vcGamersAPI.getProducts();
@@ -929,13 +967,18 @@ async function main() {
 
   const productsMap = new Map();
   for (const product of vcGamersProducts.data) {
+    const mappedCategoryName = PRODUCT_CODE_TO_CATEGORY[product.key];
+    const fallbackCategoryId = categoriesByName.get(CATEGORY.GAMING)!.id;
+    const mappedCategoryId = mappedCategoryName
+      ? (categoriesByName.get(mappedCategoryName)?.id ?? fallbackCategoryId)
+      : fallbackCategoryId;
     const createdProduct = await prisma.product.upsert({
       where: { code: product.key },
       update: {},
       create: {
         name: product.name,
         code: product.key,
-        categoryId: categories[0].id,
+        categoryId: mappedCategoryId,
         description: product.description?.replace(/<[^>]*>/g, "") || "",
         imageUrl: product.image_url,
         isActive: true,
