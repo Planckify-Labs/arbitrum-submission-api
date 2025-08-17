@@ -948,7 +948,11 @@ async function main() {
       prisma.category.upsert({
         where: { name },
         update: {},
-        create: { name, categoryType: "MAINCATEGORY" },
+        create: {
+          name,
+          categoryType: "MAINCATEGORY",
+          isActive: CATEGORY[name] === "Withdraw" ? false : true,
+        },
       }),
     ),
   );
