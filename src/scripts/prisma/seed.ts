@@ -658,7 +658,6 @@ async function main() {
         symbol: "ETH",
         decimals: 18,
         blockchainId: blockchains[0].id,
-        contractAddress: "0x0000000000000000000000000000000000000000",
         logoUrl:
           "https://assets.coingecko.com/coins/images/279/small/ethereum.png",
         isStablecoin: false,
@@ -674,7 +673,6 @@ async function main() {
         symbol: "MATIC",
         decimals: 18,
         blockchainId: blockchains[1].id,
-        contractAddress: "0x1230000000000000000000000000000000000000",
         logoUrl:
           "https://assets.coingecko.com/coins/images/4713/small/matic-token-icon.png",
         isStablecoin: false,
@@ -690,7 +688,6 @@ async function main() {
         symbol: "sepoliaEth",
         decimals: 18,
         blockchainId: blockchains[2].id,
-        contractAddress: "0x1230000000000000000000000000000000000001",
         logoUrl:
           "https://assets.coingecko.com/coins/images/279/small/ethereum.png",
         isStablecoin: false,
