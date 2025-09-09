@@ -8,6 +8,7 @@ import {
   TVCGamerOrderResponse,
 } from "../types/vcgamer-api.types";
 import { PrismaService } from "../../../prisma/prisma.service";
+import { VendorAPICacheService } from "../../../valkey/services/vendor-api-cache.service";
 
 @Injectable()
 export abstract class BaseVendorService {
@@ -17,6 +18,7 @@ export abstract class BaseVendorService {
   constructor(
     protected readonly configService: ConfigService,
     protected readonly prisma: PrismaService,
+    protected readonly vendorAPICacheService: VendorAPICacheService,
     vendorName: string,
   ) {
     this.initializeConfig(vendorName);
@@ -25,20 +27,26 @@ export abstract class BaseVendorService {
   private async initializeConfig(vendorName: string): Promise<void> {
     const vendor = await this.prisma.vendor.findUnique({
       where: { name: vendorName },
-      include: { VendorAPI: true },
     });
 
-    if (!vendor || !vendor.VendorAPI?.[0]) {
-      throw new Error(`Vendor ${vendorName} configuration not found`);
+    if (!vendor) {
+      throw new Error(`Vendor ${vendorName} not found`);
     }
 
-    const api = vendor.VendorAPI[0];
+    const vendorAPI = await this.vendorAPICacheService.getVendorAPI(vendor.id);
+
+    if (!vendorAPI) {
+      throw new Error(`Vendor API configuration not found for ${vendorName}`);
+    }
+
     this.config = {
-      baseUrl: api.baseUrl,
-      apiKey: api.apiKey,
-      apiSecret: api.apiSecret || undefined,
+      baseUrl: vendorAPI.baseUrl,
+      apiKey: vendorAPI.apiKey,
+      apiSecret: vendorAPI.apiSecret || undefined,
       vendorId: vendor.id,
     };
+
+    this.logger.log(`Initialized ${vendorName} configuration from cache`);
   }
 
   protected generateUniqueRefId(): string {

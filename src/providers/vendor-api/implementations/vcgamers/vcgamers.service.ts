@@ -10,6 +10,7 @@ import {
   TVCGamerOrderResponse,
 } from "../../types/vcgamer-api.types";
 import { PrismaService } from "../../../../prisma/prisma.service";
+import { VendorAPICacheService } from "../../../../valkey/services/vendor-api-cache.service";
 import * as crypto from "crypto";
 
 interface VCGamersProductResponse {
@@ -29,8 +30,8 @@ interface VCGamersProductResponse {
 
 @Injectable()
 export class VCGamersService extends BaseVendorService {
-  constructor(configService: ConfigService, prisma: PrismaService) {
-    super(configService, prisma, "vcGamer");
+  constructor(configService: ConfigService, prisma: PrismaService, vendorAPICacheService: VendorAPICacheService) {
+    super(configService, prisma, vendorAPICacheService, "vcGamer");
   }
 
   protected createSignature(params: string): string {
