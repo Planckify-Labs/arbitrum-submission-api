@@ -7,7 +7,6 @@ import { VendorAPICache } from '../interfaces/vendor-api-cache.interface';
 export class VendorAPICacheService {
   private readonly logger = new Logger(VendorAPICacheService.name);
   private readonly CACHE_PREFIX = 'vendorApi';
-  private readonly DEFAULT_TTL = 3600;
 
   constructor(
     private readonly valkeyService: ValkeyService,
@@ -82,8 +81,8 @@ export class VendorAPICacheService {
     }
 
     try {
-      await this.valkeyService.set(cacheKey, vendorAPI, { ttl: this.DEFAULT_TTL });
-      this.logger.debug(`Cached vendor API data for vendor: ${vendorId}`);
+      await this.valkeyService.set(cacheKey, vendorAPI);
+      this.logger.debug(`Cached vendor API data for vendor: ${vendorId} (no TTL)`);
     } catch (error) {
       this.logger.error(`Failed to cache vendor API for ${vendorId}:`, error);
     }

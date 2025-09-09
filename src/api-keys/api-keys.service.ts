@@ -2,9 +2,9 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
-  BadRequestException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { VendorAPICacheService } from "../valkey/services/vendor-api-cache.service";
 import { CreateApiKeyDto } from "./dto/create-api-key.dto";
 import { UpdateApiKeyDto } from "./dto/update-api-key.dto";
 import { SearchApiKeyDto } from "./dto/search-api-key.dto";
@@ -14,13 +14,14 @@ import { CursorPaginationDto } from "src/dto/common/pagination.dto";
 
 @Injectable()
 export class ApiKeysService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly vendorAPICacheService: VendorAPICacheService,
+  ) { }
 
   async create(createApiKeyDto: CreateApiKeyDto, createdById?: string) {
-    // Generate a secure API key
     const keyValue = this.generateApiKey();
 
-    // Check if name already exists
     const existingKey = await this.prisma.apiKey.findFirst({
       where: { name: createApiKeyDto.name },
     });
@@ -56,7 +57,6 @@ export class ApiKeysService {
 
     return {
       ...apiKey,
-      // Only return the full key value on creation
       keyValue: keyValue,
     };
   }
@@ -183,7 +183,6 @@ export class ApiKeysService {
       throw new NotFoundException("API key not found");
     }
 
-    // Check if name already exists (excluding current key)
     if (updateApiKeyDto.name) {
       const nameExists = await this.prisma.apiKey.findFirst({
         where: {
@@ -299,7 +298,6 @@ export class ApiKeysService {
 
     return {
       ...this.sanitizeApiKey(updatedApiKey),
-      // Return the new key value only on regeneration
       keyValue: newKeyValue,
     };
   }
@@ -322,14 +320,11 @@ export class ApiKeysService {
       return null;
     }
 
-    // Check if key is active
     if (apiKey.status !== ApiKeyStatus.ACTIVE) {
       return null;
     }
 
-    // Check if key is expired
     if (apiKey.expiresAt && apiKey.expiresAt < new Date()) {
-      // Auto-expire the key
       await this.prisma.apiKey.update({
         where: { id: apiKey.id },
         data: { status: ApiKeyStatus.EXPIRED },
@@ -337,7 +332,6 @@ export class ApiKeysService {
       return null;
     }
 
-    // Update usage statistics
     await this.prisma.apiKey.update({
       where: { id: apiKey.id },
       data: {
@@ -346,12 +340,23 @@ export class ApiKeysService {
       },
     });
 
+    if (apiKey.metadata && typeof apiKey.metadata === 'object') {
+      const metadata = apiKey.metadata as any;
+      if (metadata.vendorId) {
+        try {
+          await this.vendorAPICacheService.invalidateVendorAPICache(metadata.vendorId);
+          await this.vendorAPICacheService.getVendorAPI(metadata.vendorId);
+        } catch (error) {
+          console.warn(`Failed to update vendor cache for vendor ${metadata.vendorId}:`, error);
+        }
+      }
+    }
+
     return apiKey;
   }
 
   private generateApiKey(): string {
-    // Generate a secure 64-character API key
-    const prefix = "tk_"; // TakumiPay prefix
+    const prefix = "tk_";
     const randomBytes = crypto.randomBytes(32).toString("hex");
     return `${prefix}${randomBytes}`;
   }
@@ -365,7 +370,6 @@ export class ApiKeysService {
       } | null;
     },
   ) {
-    // Hide the full key value, only show first 8 and last 4 characters
     const maskedKeyValue = apiKey.keyValue
       ? `${apiKey.keyValue.substring(0, 8)}...${apiKey.keyValue.substring(apiKey.keyValue.length - 4)}`
       : null;
