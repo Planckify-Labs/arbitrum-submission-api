@@ -17,6 +17,7 @@ import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import { BookingStatus } from "../booking/enums/booking-status.enum";
 import { VCGamersService } from "../providers/vendor-api/implementations/vcgamers/vcgamers.service";
 import { ReferenceIdService } from "../reference-id/reference-id.service";
+import { BlockchainVerificationService } from "../blockchain-verification/blockchain-verification.service";
 
 @Injectable()
 export class PurchasesService {
@@ -24,11 +25,18 @@ export class PurchasesService {
     private readonly prisma: PrismaService,
     private readonly vcGamersService: VCGamersService,
     private readonly referenceIdService: ReferenceIdService,
+    private readonly blockchainVerificationService: BlockchainVerificationService,
   ) {}
 
   async create(createPurchaseDto: CreatePurchaseDto) {
-    const { refId, bookingId, walletAddress, networkId, contractAddress } =
-      createPurchaseDto;
+    const {
+      refId,
+      bookingId,
+      walletAddress,
+      networkId,
+      contractAddress,
+      transactionHash,
+    } = createPurchaseDto;
 
     const existingRefId =
       await this.referenceIdService.getReferenceIdStatus(refId);
@@ -109,14 +117,16 @@ export class PurchasesService {
         );
       }
 
-      const smartContract = await this.prisma.smartContract.findUnique({
+      const smartContract = await this.prisma.smartContract.findFirst({
         where: {
-          blockchainId_address: {
-            blockchainId: networkId,
-            address: contractAddress.toLowerCase(),
+          blockchainId: networkId,
+          address: {
+            equals: contractAddress,
+            mode: "insensitive",
           },
         },
       });
+      console.log("smartContract", smartContract);
 
       if (!smartContract) {
         throw new BadRequestException(
@@ -196,6 +206,64 @@ export class PurchasesService {
         );
       }
 
+      console.log(
+        `Verifying blockchain transaction ${transactionHash} before processing purchase`,
+      );
+
+      try {
+        const verificationResult =
+          await this.blockchainVerificationService.verifyTransaction({
+            transactionHash,
+            expectedSender: walletAddress,
+            expectedRecipient: smartContract.address,
+            expectedChainId: blockchain.chainId,
+            minimumConfirmations: 12,
+          });
+
+        console.log(`Transaction verification successful:`, {
+          hash: verificationResult.transactionHash,
+          confirmations: verificationResult.confirmations,
+          status: verificationResult.status,
+          from: verificationResult.from,
+          to: verificationResult.to,
+        });
+
+        // TODO: implement amount validation
+        // const isAmountValid = await this.blockchainVerificationService.validateTransactionAmount(
+        //   transactionHash,
+        //   blockchain.chainId,
+        //   payment.amount,
+        //   payment.tokenAddress !== '0x0000000000000000000000000000000000000000' ? payment.tokenAddress : undefined,
+        //   smartContract.address
+        // );
+
+        // if (!isAmountValid) {
+        //   throw new BadRequestException(
+        //     `Transaction amount validation failed for ${transactionHash}`
+        //   );
+        // }
+
+        // console.log(`Transaction amount validation successful for ${payment.amount}`);
+      } catch (verificationError) {
+        console.error(
+          `Blockchain verification failed for transaction ${transactionHash}:`,
+          verificationError.message,
+        );
+
+        await this.referenceIdService.markAsFailed(refId, {
+          requestType: "PURCHASE",
+          walletAddress,
+          bookingId,
+          transactionHash,
+          error: `Blockchain verification failed: ${verificationError.message}`,
+          errorType: "blockchain_verification_error",
+        });
+
+        throw new BadRequestException(
+          `Transaction verification failed: ${verificationError.message}`,
+        );
+      }
+
       const exchangeRateObj = booking.exchangeRate as { rate: number } | null;
       const exchangeRate = exchangeRateObj?.rate || 0;
 
@@ -217,9 +285,10 @@ export class PurchasesService {
           amountInFiat,
           fiatCurrency: "IDR",
           type: TransactionType.PAYMENT,
-          status: TransactionStatus.PENDING,
+          status: TransactionStatus.CONFIRMED,
           senderAddress: walletAddress,
           recipientAddress: smartContract.address,
+          txHash: transactionHash,
         },
       });
 

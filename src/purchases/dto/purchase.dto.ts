@@ -67,6 +67,15 @@ export class CreatePurchaseDto {
   @IsString()
   @IsNotEmpty()
   networkId: string;
+
+  @ApiProperty({
+    description: "Blockchain transaction hash to verify before processing",
+    example:
+      "0x4ca7ee652d57678f26e887c149ab0735f41de37bcad58c9f6d3ed5824f15b74d",
+  })
+  @IsString()
+  @IsNotEmpty()
+  transactionHash: string;
 }
 
 export class UpdatePurchaseDto {

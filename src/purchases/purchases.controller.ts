@@ -8,8 +8,6 @@ import {
   Query,
   Res,
   ConflictException,
-  NotFoundException,
-  BadRequestException,
   Logger,
 } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
@@ -77,67 +75,43 @@ export class PurchasesController {
 
         if (existingRefIdStatus.purchase) {
           const purchase = existingRefIdStatus.purchase;
-          const packedResult = `${purchase.id}#${existingRefIdStatus.bookingId}#${purchase.productVariant.id}`;
+          this.logger.log(
+            `Returning existing purchase for refId: ${refId}, purchaseId: ${purchase.id}`,
+          );
 
           return res.status(200).send({
             ...purchase,
             bookingId: existingRefIdStatus.bookingId,
-            packed: {
-              result: packedResult,
-            },
           });
         }
 
-        const errorMessage = `Reference ID ${refId} was previously processed but failed`;
-        return res.status(200).send({
-          packed: {
-            result: `ERROR#409#${errorMessage}`,
-          },
-        });
+        const errorMessage = `Reference ID ${refId} was previously used but the transaction failed. Please use a new reference ID.`;
+        this.logger.warn(
+          `Rejecting duplicate refId with failed status: ${refId}`,
+        );
+        throw new ConflictException(errorMessage);
       }
-    } catch (idempotencyCheckError) {
+    } catch (error) {
+      if (error instanceof ConflictException) {
+        throw error;
+      }
+
       this.logger.error(
-        "Error during idempotency check:",
-        idempotencyCheckError,
+        "Error during idempotency check, proceeding with caution:",
+        error,
       );
     }
 
     try {
       const purchase = await this.purchasesService.create(createPurchaseDto);
-      const packedResult = `${purchase.id}#${purchase.bookingId}#${purchase.productVariant.id}`;
 
-      return res.status(200).send({
-        ...purchase,
-        packed: {
-          result: packedResult,
-        },
-      });
+      return res.status(201).send(purchase);
     } catch (error) {
       this.logger.error("error details:", error);
       this.logger.error("Error message:", error.message);
       this.logger.error("Error stack:", error.stack);
 
-      const statusCode = error.status || 500;
-
-      let userFriendlyMessage: string;
-
-      if (error instanceof ConflictException) {
-        userFriendlyMessage = "Request already processed";
-      } else if (error instanceof NotFoundException) {
-        userFriendlyMessage = "Resource not found";
-      } else if (error instanceof BadRequestException) {
-        userFriendlyMessage = "Invalid request data";
-      } else if (statusCode >= 400 && statusCode < 500) {
-        userFriendlyMessage = "Client error occurred";
-      } else {
-        userFriendlyMessage = "Internal server error";
-      }
-
-      return res.status(200).send({
-        packed: {
-          result: `ERROR#${statusCode}#${userFriendlyMessage}`,
-        },
-      });
+      throw error;
     }
   }
 

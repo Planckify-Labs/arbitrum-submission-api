@@ -5,9 +5,16 @@ import { PrismaModule } from "../prisma/prisma.module";
 import { VendorAPIModule } from "../providers/vendor-api/vendor-api.module";
 import { ProductsModule } from "../products/products.module";
 import { ReferenceIdModule } from "../reference-id/reference-id.module";
+import { BlockchainVerificationModule } from "../blockchain-verification/blockchain-verification.module";
 
 @Module({
-  imports: [PrismaModule, VendorAPIModule, ProductsModule, ReferenceIdModule],
+  imports: [
+    PrismaModule,
+    VendorAPIModule,
+    ProductsModule,
+    ReferenceIdModule,
+    BlockchainVerificationModule,
+  ],
   controllers: [PurchasesController],
   providers: [PurchasesService],
   exports: [PurchasesService],
