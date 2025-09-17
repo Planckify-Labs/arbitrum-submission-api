@@ -19,7 +19,6 @@ import { CreatePurchaseDto, UpdatePurchaseDto } from "./dto/purchase.dto";
 import { SearchPurchaseDto } from "./dto/search-purchase.dto";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import {
-  ApiCreatePurchasePublic,
   ApiGetPurchase,
   ApiGetPurchases,
   ApiGetPurchaseStatus,
@@ -28,6 +27,9 @@ import {
   ApiGetUserPurchases,
   ApiGetTokenPurchases,
   ApiGetBlockchainPurchases,
+  ApiGetPurchaseStatusByRefId,
+  ApiGetQueueStats,
+  ApiCreatePurchase,
 } from "../decorators/swagger/purchase.decorators";
 import { JwtAuthGuard } from "src/auth/guards/jwt-auth.guard";
 
@@ -42,7 +44,7 @@ export class PurchasesController {
   ) {}
 
   @Post()
-  @ApiCreatePurchasePublic()
+  @ApiCreatePurchase()
   async create(
     @Body() createPurchaseDto: CreatePurchaseDto,
     @Res() res: Response,
@@ -181,6 +183,7 @@ export class PurchasesController {
   }
 
   @Get("ref/:refId/status")
+  @ApiGetPurchaseStatusByRefId()
   async getStatusByRefId(@Param("refId") refId: string) {
     const jobs = await this.queueService.getPurchaseJobsByRefId(refId);
     const referenceStatus =
@@ -223,6 +226,7 @@ export class PurchasesController {
   }
 
   @Get("queue/stats")
+  @ApiGetQueueStats()
   async getQueueStats() {
     return await this.queueService.getQueueStats();
   }

@@ -17,71 +17,83 @@ export function ApiCreatePurchase() {
       example: "Bearer <token>",
     }),
     ApiOperation({
-      summary: "Create a new purchase from booking",
-      description: `Creates a new purchase record based on a booking.
-      
-Response Format: "purchaseId#bookingId#productVariantId"
+      summary: "Create a new purchase from booking - Asynchronous Processing",
+      description: `Creates a new purchase record based on a booking with asynchronous processing using job queues.
 
-IMPORTANT: This format is optimized for smart contract compatibility using Solidity string storage.
-Full ULIDs are used for maximum readability and data integrity.
-The order and format must be preserved exactly as returned.
+## Processing Stages
+- **PENDING**: Initial creation, queued for processing
+- **BLOCKCHAIN_VERIFYING**: Waiting for blockchain confirmations (12+ blocks)
+- **BLOCKCHAIN_VERIFIED**: Transaction confirmed, proceeding to vendor
+- **VENDOR_PROCESSING**: Calling vendor APIs
+- **COMPLETED**: Purchase successfully processed
+- **FAILED**: Processing failed at any stage
 
-Response Components:
-1. purchaseId: Full ULID of the newly created purchase record
-2. bookingId: Full ULID of the original booking that initiated this purchase
-3. productVariantId: Full ULID of the specific product variant being purchased
-
-Example: "01K13FRYDJ47QZASHAFGAAC0E4#01K13FRYDJ47QZASHAFGAAC0E4#01K13FRYDJ47QZASHAFGAAC0E4"
-
-Note: Do not modify or reorder these IDs as they are used to verify and track the purchase onchain
-
-## Error Response Format
-Errors are returned as packed strings: "ERROR#{statusCode}#{errorCode}#{errorDetail}"
-
-### Status Codes:
-- 400: BAD_REQ (Bad Request)
-- 404: NOT_FOUND (Resource Not Found)
-- 409: CONFLICT (Duplicate Reference ID)
-- 429: RATE_LMT (Rate Limit Exceeded)
-- 500+: SRV_ERR (Server Error)
-
-### Error Details:
-- BK_NOT_FND: Booking with ID not found
-- BK_EXPIRED: Booking has expired
-- BK_NOT_PEND: Booking status is not pending
-- WALLET_MISM: Wallet address mismatch
-- NET_NOT_FND: Network ID not found
-- NET_INACTIVE: Network is not active
-- CTR_NOT_FND: Smart contract not found
-- CTR_INACTIVE: Smart contract is not active
-- TKN_NOT_FND: Token not found on network
-- CUST_INFO_REQ: Customer information required
-- DUP_REF_ID: Reference ID already processed
-- VENDOR_ERR: External vendor API error
-- VALID_ERR: Input validation failed
-- FIELD_REQ: Required field missing
-- GEN_ERR: General/unknown error
-
-Example error: "ERROR#400#BAD_REQ#BK_EXPIRED"`,
+## Monitoring
+- Use GET /purchases/ref/{refId}/status for detailed progress
+- Use GET /purchases/queue/stats for queue statistics`,
     }),
     ApiResponse({
       status: 201,
       description:
-        "Purchase created successfully. Returns a string containing purchaseId, bookingId, and productVariantId in a specific format.",
+        "Purchase created successfully and queued for asynchronous processing. Returns full purchase object with PENDING status.",
       schema: {
-        type: "string",
-        example: "01HN8V...#01HN8T...#01HN8R...",
-        description: "Format: purchaseId#bookingId#productVariantId",
+        type: "object",
+        properties: {
+          id: {
+            type: "string",
+            example: "01K13FRYDJ47QZASHAFGAAC0E4",
+            description: "Purchase ID (ULID)",
+          },
+          refId: {
+            type: "string",
+            example: "unique-ref-123",
+            description: "Reference ID for tracking",
+          },
+          status: {
+            type: "string",
+            example: "PENDING",
+            description: "Initial status, will be processed asynchronously",
+          },
+          bookingId: {
+            type: "string",
+            example: "01K13FRYDJ47QZASHAFGAAC0E4",
+            description: "Associated booking ID",
+          },
+          walletAddress: {
+            type: "string",
+            example: "0x742d35Cc6634C0532925a3b8D4d8E2",
+            description: "Wallet address",
+          },
+          transactionHash: {
+            type: "string",
+            example: "0x1234567890abcdef...",
+            description: "Blockchain transaction hash",
+          },
+          createdAt: {
+            type: "string",
+            format: "date-time",
+            description: "Creation timestamp",
+          },
+        },
+        description: "Full purchase object with initial PENDING status",
       },
     }),
     ApiResponse({
       status: 400,
-      description:
-        "Invalid input data, booking expired, wallet address mismatch, or network/smart contract validation failed",
+      description: "Bad request - validation errors or business logic errors",
+    }),
+    ApiResponse({
+      status: 401,
+      description: "Unauthorized - invalid or missing JWT token",
     }),
     ApiResponse({
       status: 404,
-      description: "Booking not found or token not found",
+      description:
+        "Resource not found - booking, token, network, or contract not found",
+    }),
+    ApiResponse({
+      status: 409,
+      description: "Conflict - duplicate reference ID",
     }),
   );
 }
@@ -383,103 +395,217 @@ export function ApiGetBlockchainPurchases() {
   );
 }
 
-export function ApiCreatePurchasePublic() {
+export function ApiGetPurchaseStatusByRefId() {
   return applyDecorators(
     ApiHeader({
-      name: "X-API-Key",
+      name: "Authorization",
       required: true,
-      description: "API Key for public access",
-      example: "your-api-key-here",
+      description: "JWT token",
+      example: "Bearer <token>",
     }),
     ApiOperation({
-      summary: "Create a new purchase from booking (Public API)",
-      description: `Creates a new purchase record based on a booking.
+      summary: "Get purchase status by reference ID",
+      description: `Retrieves detailed status information for a purchase using its reference ID.
+      
+## Response Details
+Returns comprehensive status information including:
+- Reference ID status and associated purchase
+- Job queue progress for all processing stages
+- Detailed job information with timestamps and progress
 
-Response Format: "purchaseId#bookingId#productVariantId"
+## Job Types Tracked
+- **purchase**: Initial purchase processing job
+- **blockchain**: Blockchain verification job (12+ confirmations)
+- **vendor**: Vendor API calls job
 
-IMPORTANT: This format is optimized for smart contract compatibility using Solidity string storage.
-Full ULIDs are used for maximum readability and data integrity.
-The order and format must be preserved exactly as returned.
+## Job Status Fields
+- **id**: Job ID in the queue
+- **progress**: Progress percentage (0-100)
+- **processedOn**: When job processing started
+- **finishedOn**: When job completed (success or failure)
+- **failedReason**: Error message if job failed
 
-Response Components:
-1. purchaseId: Full ULID of the newly created purchase record
-2. bookingId: Full ULID of the original booking that initiated this purchase
-3. productVariantId: Full ULID of the specific product variant being purchased
-
-Example: "01K13FRYDJ47QZASHAFGAAC0E4#01K13FRYDJ47QZASHAFGAAC0E4#01K13FRYDJ47QZASHAFGAAC0E4"
-
-Note: Do not modify or reorder these IDs as they are used to verify and track the purchase onchain
-
-## Error Response Format
-Errors are returned as packed strings: "ERROR#{statusCode}#{errorCode}#{errorDetail}"
-
-### Status Codes:
-- 400: BAD_REQ (Bad Request)
-- 404: NOT_FOUND (Resource Not Found)
-- 409: CONFLICT (Duplicate Reference ID)
-- 429: RATE_LMT (Rate Limit Exceeded)
-- 500+: SRV_ERR (Server Error)
-
-### Error Details:
-- BK_NOT_FND: Booking with ID not found
-- BK_EXPIRED: Booking has expired
-- BK_NOT_PEND: Booking status is not pending
-- WALLET_MISM: Wallet address mismatch
-- NET_NOT_FND: Network ID not found
-- NET_INACTIVE: Network is not active
-- CTR_NOT_FND: Smart contract not found
-- CTR_INACTIVE: Smart contract is not active
-- TKN_NOT_FND: Token not found on network
-- CUST_INFO_REQ: Customer information required
-- DUP_REF_ID: Reference ID already processed
-- VENDOR_ERR: External vendor API error
-- VALID_ERR: Input validation failed
-- FIELD_REQ: Required field missing
-- GEN_ERR: General/unknown error
-
-Example error: "ERROR#400#BAD_REQ#BK_EXPIRED"`,
+This endpoint is essential for monitoring asynchronous purchase processing.`,
+    }),
+    ApiParam({
+      name: "refId",
+      description: "Reference ID used during purchase creation",
+      example: "unique-ref-123",
     }),
     ApiResponse({
-      status: 201,
-      description:
-        "Purchase created successfully. Returns packed string format for smart contract compatibility.",
+      status: 200,
+      description: "Returns detailed status information for the reference ID",
       schema: {
-        type: "string",
-        example:
-          "01K13FRYDJ47QZASHAFGAAC0E4#01K13FRYDJ47QZASHAFGAAC0E4#01K13FRYDJ47QZASHAFGAAC0E4",
-        description:
-          "Packed string containing full purchase, booking, and product variant ULIDs",
+        type: "object",
+        properties: {
+          refId: {
+            type: "string",
+            example: "unique-ref-123",
+            description: "The reference ID",
+          },
+          referenceStatus: {
+            type: "string",
+            example: "COMPLETED",
+            description:
+              "Status of the reference ID (PENDING, COMPLETED, FAILED, not_found)",
+          },
+          purchase: {
+            type: "object",
+            description: "Purchase object if exists, null otherwise",
+            nullable: true,
+          },
+          jobs: {
+            type: "object",
+            properties: {
+              purchase: {
+                type: "object",
+                nullable: true,
+                properties: {
+                  id: { type: "string", description: "Job ID" },
+                  progress: { type: "number", description: "Progress 0-100" },
+                  processedOn: {
+                    type: "string",
+                    format: "date-time",
+                    nullable: true,
+                  },
+                  finishedOn: {
+                    type: "string",
+                    format: "date-time",
+                    nullable: true,
+                  },
+                  failedReason: { type: "string", nullable: true },
+                },
+              },
+              blockchain: {
+                type: "object",
+                nullable: true,
+                properties: {
+                  id: { type: "string", description: "Job ID" },
+                  progress: { type: "number", description: "Progress 0-100" },
+                  processedOn: {
+                    type: "string",
+                    format: "date-time",
+                    nullable: true,
+                  },
+                  finishedOn: {
+                    type: "string",
+                    format: "date-time",
+                    nullable: true,
+                  },
+                  failedReason: { type: "string", nullable: true },
+                },
+              },
+              vendor: {
+                type: "object",
+                nullable: true,
+                properties: {
+                  id: { type: "string", description: "Job ID" },
+                  progress: { type: "number", description: "Progress 0-100" },
+                  processedOn: {
+                    type: "string",
+                    format: "date-time",
+                    nullable: true,
+                  },
+                  finishedOn: {
+                    type: "string",
+                    format: "date-time",
+                    nullable: true,
+                  },
+                  failedReason: { type: "string", nullable: true },
+                },
+              },
+            },
+          },
+        },
       },
-    }),
-    ApiResponse({
-      status: 400,
-      description: "Bad request - validation errors or business logic errors",
-      schema: {
-        type: "string",
-        example: "ERROR#400#BAD_REQ#BK_EXPIRED",
-        description: "Packed error string format",
-      },
-    }),
-    ApiResponse({
-      status: 401,
-      description: "Invalid or missing API key",
     }),
     ApiResponse({
       status: 404,
-      description: "Resource not found",
-      schema: {
-        type: "string",
-        example: "ERROR#404#NOT_FOUND#BK_NOT_FND",
-        description: "Packed error string format",
-      },
+      description: "Reference ID not found",
+    }),
+  );
+}
+
+export function ApiGetQueueStats() {
+  return applyDecorators(
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
+    ApiOperation({
+      summary: "Get job queue statistics",
+      description: `Retrieves comprehensive statistics for all job queues used in purchase processing.
+      
+## Queue Information
+Returns statistics for three main queues:
+- **purchase-processing**: Initial purchase validation and setup
+- **blockchain-verification**: Blockchain transaction verification
+- **vendor-api-calls**: External vendor API interactions
+
+## Statistics Included
+- **waiting**: Jobs waiting to be processed
+- **active**: Jobs currently being processed
+- **completed**: Successfully completed jobs
+- **failed**: Failed jobs
+- **delayed**: Jobs scheduled for future processing
+- **paused**: Jobs in paused queues
+
+This endpoint is useful for monitoring system load and queue health.`,
     }),
     ApiResponse({
-      status: 409,
-      description: "Conflict - duplicate reference ID",
+      status: 200,
+      description: "Returns statistics for all job queues",
       schema: {
-        type: "string",
-        example: "ERROR#409#CONFLICT#DUP_REF_ID",
-        description: "Packed error string format",
+        type: "object",
+        properties: {
+          "purchase-processing": {
+            type: "object",
+            properties: {
+              waiting: {
+                type: "number",
+                description: "Jobs waiting to be processed",
+              },
+              active: {
+                type: "number",
+                description: "Jobs currently being processed",
+              },
+              completed: {
+                type: "number",
+                description: "Successfully completed jobs",
+              },
+              failed: { type: "number", description: "Failed jobs" },
+              delayed: {
+                type: "number",
+                description: "Jobs scheduled for future",
+              },
+              paused: { type: "number", description: "Jobs in paused queue" },
+            },
+          },
+          "blockchain-verification": {
+            type: "object",
+            properties: {
+              waiting: { type: "number" },
+              active: { type: "number" },
+              completed: { type: "number" },
+              failed: { type: "number" },
+              delayed: { type: "number" },
+              paused: { type: "number" },
+            },
+          },
+          "vendor-api-calls": {
+            type: "object",
+            properties: {
+              waiting: { type: "number" },
+              active: { type: "number" },
+              completed: { type: "number" },
+              failed: { type: "number" },
+              delayed: { type: "number" },
+              paused: { type: "number" },
+            },
+          },
+        },
       },
     }),
   );
