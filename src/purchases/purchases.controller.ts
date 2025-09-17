@@ -9,6 +9,7 @@ import {
   Res,
   ConflictException,
   Logger,
+  UseGuards,
 } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { Response } from "express";
@@ -28,12 +29,11 @@ import {
   ApiGetTokenPurchases,
   ApiGetBlockchainPurchases,
 } from "../decorators/swagger/purchase.decorators";
-import { Public } from "../decorators/public.decorator";
-import { ApiKey } from "../decorators/api-key.decorator";
+import { JwtAuthGuard } from "src/auth/guards/jwt-auth.guard";
 
+@UseGuards(JwtAuthGuard)
 @Controller("purchases")
 @ApiTags("purchases")
-@Public()
 export class PurchasesController {
   private readonly logger = new Logger(PurchasesController.name);
   constructor(
@@ -42,8 +42,6 @@ export class PurchasesController {
   ) {}
 
   @Post()
-  @Public()
-  @ApiKey()
   @ApiCreatePurchasePublic()
   async create(
     @Body() createPurchaseDto: CreatePurchaseDto,

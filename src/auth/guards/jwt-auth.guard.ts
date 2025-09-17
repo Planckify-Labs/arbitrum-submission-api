@@ -23,14 +23,6 @@ export class JwtAuthGuard extends AuthGuard("jwt") {
       return true;
     }
 
-    const request = context.switchToHttp().getRequest();
-    const path = request.path;
-    this.logger.debug(`Checking auth for path: ${path}`);
-
-    if (path.startsWith("/purchases")) {
-      return true;
-    }
-
     return super.canActivate(context);
   }
 }
