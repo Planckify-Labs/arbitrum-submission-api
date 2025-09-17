@@ -6,26 +6,17 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import { CreatePurchaseDto, UpdatePurchaseDto } from "./dto/purchase.dto";
 import { SearchPurchaseDto } from "./dto/search-purchase.dto";
-import {
-  Prisma,
-  PurchaseStatus,
-  TransactionType,
-  TransactionStatus,
-  ReferenceIdStatus,
-} from "@generated/prisma";
+import { Prisma, PurchaseStatus, ReferenceIdStatus } from "@generated/prisma";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
-import { BookingStatus } from "../booking/enums/booking-status.enum";
-import { VCGamersService } from "../providers/vendor-api/implementations/vcgamers/vcgamers.service";
 import { ReferenceIdService } from "../reference-id/reference-id.service";
-import { BlockchainVerificationService } from "../blockchain-verification/blockchain-verification.service";
+import { QueueService } from "../queue/queue.service";
 
 @Injectable()
 export class PurchasesService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly vcGamersService: VCGamersService,
     private readonly referenceIdService: ReferenceIdService,
-    private readonly blockchainVerificationService: BlockchainVerificationService,
+    private readonly queueService: QueueService,
   ) {}
 
   async create(createPurchaseDto: CreatePurchaseDto) {
@@ -77,6 +68,15 @@ export class PurchasesService {
         }
       }
 
+      if (existingRefId.status === ReferenceIdStatus.PROCESSING) {
+        return {
+          refId,
+          status: PurchaseStatus.PENDING,
+          message: "Purchase is being processed in the background",
+          processingStatus: "in_progress",
+        };
+      }
+
       console.log(
         `Reference ID '${refId}' is already being processed. Status: ${existingRefId.status}`,
       );
@@ -102,354 +102,132 @@ export class PurchasesService {
       throw new NotFoundException(`Booking with ID ${bookingId} not found`);
     }
 
-    try {
-      const blockchain = await this.prisma.blockchain.findUnique({
-        where: { id: networkId },
-      });
-
-      if (!blockchain) {
-        throw new NotFoundException(`Network with ID ${networkId} not found`);
-      }
-
-      if (!blockchain.isActive) {
-        throw new BadRequestException(
-          `Network ${blockchain.name} is not active`,
-        );
-      }
-
-      const smartContract = await this.prisma.smartContract.findFirst({
-        where: {
-          blockchainId: networkId,
-          address: {
-            equals: contractAddress,
-            mode: "insensitive",
-          },
-        },
-      });
-      console.log("smartContract", smartContract);
-
-      if (!smartContract) {
-        throw new BadRequestException(
-          `Smart contract with address ${contractAddress} not found on network ${blockchain.name}`,
-        );
-      }
-
-      if (!smartContract.isActive) {
-        throw new BadRequestException(
-          `Smart contract ${smartContract.name} is not active on network ${blockchain.name}`,
-        );
-      }
-
-      const booking = await this.prisma.bookingOrder.findUnique({
-        where: { id: bookingId },
-        include: {
-          productVariant: {
-            include: {
-              product: true,
-            },
-          },
-          productPrice: {
-            include: {
-              vendor: true,
-            },
-          },
-        },
-      });
-
-      if (!booking) {
-        throw new NotFoundException(`Booking with ID ${bookingId} not found`);
-      }
-
-      if (booking.walletAddress.toLowerCase() !== walletAddress.toLowerCase()) {
-        throw new BadRequestException(
-          `Wallet address mismatch: booking belongs to ${booking.walletAddress}`,
-        );
-      }
-
-      const payment = booking.payment as {
-        tokenAddress: string;
-        blockchainNetworkId: string;
-        amount: string;
-      };
-
-      if (payment.blockchainNetworkId !== networkId) {
-        throw new BadRequestException(
-          `Network ID mismatch: booking uses network ${payment.blockchainNetworkId}, but ${networkId} was provided`,
-        );
-      }
-
-      let user = await this.prisma.user.findUnique({
-        where: { walletAddress },
-      });
-
-      if (!user) {
-        user = await this.prisma.user.create({
-          data: {
-            walletAddress,
-            authProvider: "WALLET",
-          },
-        });
-      }
-
-      const token = await this.prisma.token.findUnique({
-        where: {
-          blockchainId_contractAddress: {
-            blockchainId: networkId,
-            contractAddress: payment.tokenAddress,
-          },
-        },
-      });
-
-      if (!token) {
-        throw new BadRequestException(
-          `Token with address ${payment.tokenAddress} not found on network ${blockchain.name}`,
-        );
-      }
-
-      console.log(
-        `Verifying blockchain transaction ${transactionHash} before processing purchase`,
+    if (
+      bookingForMetadata.walletAddress.toLowerCase() !==
+      walletAddress.toLowerCase()
+    ) {
+      throw new BadRequestException(
+        `Wallet address mismatch: booking belongs to ${bookingForMetadata.walletAddress}`,
       );
+    }
 
-      try {
-        const verificationResult =
-          await this.blockchainVerificationService.verifyTransaction({
-            transactionHash,
-            expectedSender: walletAddress,
-            expectedRecipient: smartContract.address,
-            expectedChainId: blockchain.chainId,
-            minimumConfirmations: 12,
-          });
+    const payment = bookingForMetadata.payment as {
+      tokenAddress: string;
+      blockchainNetworkId: string;
+      amount: string;
+    };
 
-        console.log(`Transaction verification successful:`, {
-          hash: verificationResult.transactionHash,
-          confirmations: verificationResult.confirmations,
-          status: verificationResult.status,
-          from: verificationResult.from,
-          to: verificationResult.to,
-        });
+    if (payment.blockchainNetworkId !== networkId) {
+      throw new BadRequestException(
+        `Network ID mismatch: booking uses network ${payment.blockchainNetworkId}, but ${networkId} was provided`,
+      );
+    }
 
-        // TODO: implement amount validation
-        // const isAmountValid = await this.blockchainVerificationService.validateTransactionAmount(
-        //   transactionHash,
-        //   blockchain.chainId,
-        //   payment.amount,
-        //   payment.tokenAddress !== '0x0000000000000000000000000000000000000000' ? payment.tokenAddress : undefined,
-        //   smartContract.address
-        // );
+    const blockchain = await this.prisma.blockchain.findUnique({
+      where: { id: networkId },
+    });
 
-        // if (!isAmountValid) {
-        //   throw new BadRequestException(
-        //     `Transaction amount validation failed for ${transactionHash}`
-        //   );
-        // }
+    if (!blockchain) {
+      throw new NotFoundException(`Network with ID ${networkId} not found`);
+    }
 
-        // console.log(`Transaction amount validation successful for ${payment.amount}`);
-      } catch (verificationError) {
-        console.error(
-          `Blockchain verification failed for transaction ${transactionHash}:`,
-          verificationError.message,
-        );
+    if (!blockchain.isActive) {
+      throw new BadRequestException(`Network ${blockchain.name} is not active`);
+    }
 
-        await this.referenceIdService.markAsFailed(refId, {
-          requestType: "PURCHASE",
+    const smartContract = await this.prisma.smartContract.findFirst({
+      where: {
+        blockchainId: networkId,
+        address: {
+          equals: contractAddress,
+          mode: "insensitive",
+        },
+      },
+    });
+
+    if (!smartContract) {
+      throw new BadRequestException(
+        `Smart contract with address ${contractAddress} not found on network ${blockchain.name}`,
+      );
+    }
+
+    if (!smartContract.isActive) {
+      throw new BadRequestException(
+        `Smart contract ${smartContract.name} is not active on network ${blockchain.name}`,
+      );
+    }
+
+    let user = await this.prisma.user.findUnique({
+      where: { walletAddress },
+    });
+
+    if (!user) {
+      user = await this.prisma.user.create({
+        data: {
           walletAddress,
-          bookingId,
-          transactionHash,
-          error: `Blockchain verification failed: ${verificationError.message}`,
-          errorType: "blockchain_verification_error",
-        });
-
-        throw new BadRequestException(
-          `Transaction verification failed: ${verificationError.message}`,
-        );
-      }
-
-      const exchangeRateObj = booking.exchangeRate as { rate: number } | null;
-      const exchangeRate = exchangeRateObj?.rate || 0;
-
-      const sellPrice = booking.productPrice?.sellPrice?.toString() || "0";
-      const amountInFiat =
-        exchangeRate && sellPrice
-          ? (Number(sellPrice) * exchangeRate).toString()
-          : "0";
-
-      const transaction = await this.prisma.transactionHistory.create({
-        data: {
-          user: {
-            connect: { id: user.id },
-          },
-          token: {
-            connect: { id: token.id },
-          },
-          amount: payment.amount,
-          amountInFiat,
-          fiatCurrency: "IDR",
-          type: TransactionType.PAYMENT,
-          status: TransactionStatus.CONFIRMED,
-          senderAddress: walletAddress,
-          recipientAddress: smartContract.address,
-          txHash: transactionHash,
+          authProvider: "WALLET",
         },
       });
+    }
 
-      let vendorRefId: string | undefined = undefined;
-      let vendorResponse: Prisma.JsonValue | undefined = undefined;
-
-      if (booking.productPrice?.vendor?.name === "vcGamer") {
-        const customerInfo = booking.customerInfo;
-
-        if (!customerInfo) {
-          throw new BadRequestException(
-            `Customer information is required for ${booking.productVariant.product.name}`,
-          );
-        }
-
-        try {
-          console.log(
-            `Processing VCGamers order for product: ${booking.productVariant.product.code}`,
-          );
-
-          const brandKey = booking.productVariant.product.code;
-          const variationKey = booking.productVariant.sku;
-          const price = Number(booking.productPrice.priceFromVendor);
-
-          let formData;
-
-          if (Array.isArray(customerInfo)) {
-            formData = customerInfo;
-          } else {
-            formData = Object.entries(
-              customerInfo as Record<
-                string,
-                string | number | boolean | string[]
-              >,
-            ).map(([key, value]) => ({
-              key,
-              value: String(value),
-            }));
-          }
-
-          if (!formData.length) {
-            throw new BadRequestException(
-              "Required customer information is missing",
-            );
-          }
-
-          await this.referenceIdService.markAsProcessing(refId, {
-            requestType: "PURCHASE",
-            walletAddress,
-            bookingId,
-            vendorName: booking.productPrice?.vendor?.name,
-            vendorId: booking.productPrice?.vendorId,
-            productCode: booking.productVariant.product.code,
-            productName: booking.productVariant.product.name,
-            variantSku: booking.productVariant.sku,
-            vendorAction: "creating_order",
-          });
-
-          const orderResponse = await this.vcGamersService.createOrder(
-            brandKey,
-            variationKey,
-            price,
-            formData,
-            refId,
-          );
-
-          if (!orderResponse.success) {
-            console.error(
-              `VCGamers API error: ${JSON.stringify(orderResponse)}`,
-            );
-            throw new BadRequestException(
-              `Failed to process order: ${orderResponse.message}`,
-            );
-          }
-
-          vendorRefId = orderResponse.data?.data.trx_code;
-          vendorResponse = orderResponse.data as unknown as Prisma.JsonValue;
-        } catch (error) {
-          console.error(`Error processing vendor order: ${error.message}`);
-
-          await this.referenceIdService.markAsFailed(refId, {
-            requestType: "PURCHASE",
-            walletAddress,
-            bookingId,
-            vendorName: booking.productPrice?.vendor?.name,
-            vendorId: booking.productPrice?.vendorId,
-            productCode: booking.productVariant.product.code,
-            productName: booking.productVariant.product.name,
-            variantSku: booking.productVariant.sku,
-            vendorAction: "creating_order",
-            error: error.message,
-            errorType: "vendor_api_error",
-          });
-
-          throw new BadRequestException(
-            `Error processing order: ${error.message}`,
-          );
-        }
-      }
-
-      const purchaseData: Prisma.PurchaseCreateInput = {
-        transaction: {
-          connect: { id: transaction.id },
+    const token = await this.prisma.token.findUnique({
+      where: {
+        blockchainId_contractAddress: {
+          blockchainId: networkId,
+          contractAddress: payment.tokenAddress,
         },
-        productVariant: {
-          connect: { id: booking.productVariantId },
-        },
-        status: PurchaseStatus.PENDING,
-        refId,
-        ...(vendorRefId && { vendorRefId }),
-        ...(vendorResponse && { vendorResponse }),
-      };
+      },
+    });
 
-      const purchase = await this.prisma.purchase.create({
-        data: purchaseData,
-      });
+    if (!token) {
+      throw new BadRequestException(
+        `Token with address ${payment.tokenAddress} not found on network`,
+      );
+    }
 
-      await this.prisma.bookingOrder.update({
-        where: { id: bookingId },
-        data: {
-          status: BookingStatus.EXECUTED,
-        },
-      });
-
-      await this.referenceIdService.markAsCompleted(refId, {
+    try {
+      await this.referenceIdService.markAsProcessing(refId, {
         requestType: "PURCHASE",
         walletAddress,
         bookingId,
-        purchaseId: purchase.id,
-        vendorName: bookingForMetadata.productPrice?.vendor?.name,
-        vendorId: bookingForMetadata.productPrice?.vendorId,
-        productCode: bookingForMetadata.productVariant.product.code,
-        productName: bookingForMetadata.productVariant.product.name,
-        variantSku: bookingForMetadata.productVariant.sku,
-        vendorRefId: vendorRefId,
-        status: "completed_successfully",
+        stage: "queued_for_processing",
+        message: "Purchase queued for background processing",
       });
 
-      const { product, ...productVariantWithoutProduct } =
-        booking.productVariant;
+      const jobId = await this.queueService.addPurchaseJob({
+        refId,
+        bookingId,
+        walletAddress,
+        networkId,
+        contractAddress,
+        transactionHash,
+        userId: user.id,
+        tokenId: token.id,
+      });
+
+      console.log(`Purchase job queued with ID: ${jobId} for refId: ${refId}`);
 
       return {
-        ...purchase,
-        bookingId: booking.id,
-        productVariant: productVariantWithoutProduct,
+        refId,
+        status: PurchaseStatus.PENDING,
+        message: "Purchase is being processed in the background",
+        processingStatus: "queued",
+        jobId,
+        bookingId,
+        estimatedProcessingTime: "2-5 minutes",
       };
     } catch (error) {
       await this.referenceIdService.markAsFailed(refId, {
         requestType: "PURCHASE",
         walletAddress,
         bookingId,
-        vendorName: bookingForMetadata.productPrice?.vendor?.name,
-        vendorId: bookingForMetadata.productPrice?.vendorId,
-        productCode: bookingForMetadata.productVariant.product.code,
-        productName: bookingForMetadata.productVariant.product.name,
-        variantSku: bookingForMetadata.productVariant.sku,
         error: error.message,
-        errorType: "general_purchase_error",
+        errorType: "queue_error",
       });
 
-      throw error;
+      throw new BadRequestException(
+        `Failed to queue purchase for processing: ${error.message}`,
+      );
     }
   }
 

@@ -19,6 +19,7 @@ import { VendorAPIModule } from "./providers/vendor-api/vendor-api.module";
 import { AuthModule } from "./auth/auth.module";
 import { ApiKeysModule } from "./api-keys/api-keys.module";
 import { ValkeyModule } from "./valkey/valkey.module";
+import { QueueModule } from "./queue/queue.module";
 import { APP_GUARD } from "@nestjs/core";
 import { JwtAuthGuard } from "./auth/guards/jwt-auth.guard";
 import { ApiKeyGuard } from "./auth/guards/api-key.guard";
@@ -45,6 +46,7 @@ import { ApiKeyGuard } from "./auth/guards/api-key.guard";
     AuthModule,
     ApiKeysModule,
     ValkeyModule,
+    QueueModule,
   ],
   controllers: [AppController],
   providers: [

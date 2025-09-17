@@ -13,6 +13,7 @@ import {
 import { ApiTags } from "@nestjs/swagger";
 import { Response } from "express";
 import { PurchasesService } from "./purchases.service";
+import { QueueService } from "../queue/queue.service";
 import { CreatePurchaseDto, UpdatePurchaseDto } from "./dto/purchase.dto";
 import { SearchPurchaseDto } from "./dto/search-purchase.dto";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
@@ -35,7 +36,10 @@ import { ApiKey } from "../decorators/api-key.decorator";
 @Public()
 export class PurchasesController {
   private readonly logger = new Logger(PurchasesController.name);
-  constructor(private readonly purchasesService: PurchasesService) {}
+  constructor(
+    private readonly purchasesService: PurchasesService,
+    private readonly queueService: QueueService,
+  ) {}
 
   @Post()
   @Public()
@@ -176,5 +180,52 @@ export class PurchasesController {
     @Body() updatePurchaseDto: UpdatePurchaseDto,
   ) {
     return this.purchasesService.updateStatus(id, updatePurchaseDto);
+  }
+
+  @Get("ref/:refId/status")
+  async getStatusByRefId(@Param("refId") refId: string) {
+    const jobs = await this.queueService.getPurchaseJobsByRefId(refId);
+    const referenceStatus =
+      await this.purchasesService.getReferenceIdWithPurchase(refId);
+
+    return {
+      refId,
+      referenceStatus: referenceStatus?.status || "not_found",
+      purchase: referenceStatus?.purchase || null,
+      jobs: {
+        purchase: jobs.purchase
+          ? {
+              id: jobs.purchase.id,
+              progress: jobs.purchase.progress,
+              processedOn: jobs.purchase.processedOn,
+              finishedOn: jobs.purchase.finishedOn,
+              failedReason: jobs.purchase.failedReason,
+            }
+          : null,
+        blockchain: jobs.blockchain
+          ? {
+              id: jobs.blockchain.id,
+              progress: jobs.blockchain.progress,
+              processedOn: jobs.blockchain.processedOn,
+              finishedOn: jobs.blockchain.finishedOn,
+              failedReason: jobs.blockchain.failedReason,
+            }
+          : null,
+        vendor: jobs.vendor
+          ? {
+              id: jobs.vendor.id,
+              progress: jobs.vendor.progress,
+              processedOn: jobs.vendor.processedOn,
+              finishedOn: jobs.vendor.finishedOn,
+              failedReason: jobs.vendor.failedReason,
+            }
+          : null,
+      },
+    };
+  }
+
+  @Get("queue/stats")
+  async getQueueStats() {
+    return await this.queueService.getQueueStats();
   }
 }

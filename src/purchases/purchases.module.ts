@@ -6,6 +6,7 @@ import { VendorAPIModule } from "../providers/vendor-api/vendor-api.module";
 import { ProductsModule } from "../products/products.module";
 import { ReferenceIdModule } from "../reference-id/reference-id.module";
 import { BlockchainVerificationModule } from "../blockchain-verification/blockchain-verification.module";
+import { QueueModule } from "../queue/queue.module";
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { BlockchainVerificationModule } from "../blockchain-verification/blockch
     ProductsModule,
     ReferenceIdModule,
     BlockchainVerificationModule,
+    QueueModule,
   ],
   controllers: [PurchasesController],
   providers: [PurchasesService],
