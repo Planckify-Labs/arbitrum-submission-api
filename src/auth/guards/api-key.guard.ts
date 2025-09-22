@@ -5,7 +5,6 @@ import {
   UnauthorizedException,
   Logger,
 } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { Reflector } from "@nestjs/core";
 import { IS_API_KEY_REQUIRED } from "../../decorators/api-key.decorator";
 import { ApiKeysService } from "../../api-keys/api-keys.service";
@@ -15,7 +14,6 @@ export class ApiKeyGuard implements CanActivate {
   private readonly logger = new Logger(ApiKeyGuard.name);
 
   constructor(
-    private readonly configService: ConfigService,
     private readonly reflector: Reflector,
     private readonly apiKeysService: ApiKeysService,
   ) {}
@@ -39,22 +37,13 @@ export class ApiKeyGuard implements CanActivate {
     }
 
     try {
-      // First try database-based API keys
       const validApiKey = await this.apiKeysService.validateApiKey(apiKey);
 
       if (validApiKey) {
-        // Attach API key info to request for logging and rate limiting
         request.apiKey = validApiKey;
         this.logger.debug(
           `API key validation successful: ${validApiKey.name} (${validApiKey.type})`,
         );
-        return true;
-      }
-
-      // Fallback to environment-based API keys for backward compatibility
-      const validApiKeys = this.getValidApiKeys();
-      if (validApiKeys.includes(apiKey)) {
-        this.logger.debug("API key validation successful (legacy)");
         return true;
       }
 
@@ -72,16 +61,5 @@ export class ApiKeyGuard implements CanActivate {
     }
   }
 
-  private getValidApiKeys(): string[] {
-    const apiKeysEnv = this.configService.get<string>("API_KEYS");
-    if (!apiKeysEnv) {
-      return [];
-    }
 
-    // Support comma-separated API keys in environment variable
-    return apiKeysEnv
-      .split(",")
-      .map((key) => key.trim())
-      .filter(Boolean);
-  }
 }
