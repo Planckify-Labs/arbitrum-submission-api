@@ -76,11 +76,26 @@ export class PurchaseProcessor extends WorkerHost {
         message: "Verifying blockchain transaction",
       });
 
+      if (!refId) {
+        throw new Error("RefId is required for transaction verification");
+      }
+      if (!contractAddress) {
+        throw new Error(
+          "Contract address is required for transaction verification",
+        );
+      }
+
       await this.verifyBlockchainTransaction(
         transactionHash,
         walletAddress,
         contractAddress,
         booking.blockchain.chainId,
+        refId,
+        contractAddress,
+        booking.id,
+        (booking.exchangeRate as { id?: number | string } | null)?.id?.toString() || "0",
+        booking.productVariantId,
+        booking.payment.amount,
       );
 
       const transaction = await this.createTransactionRecord(
@@ -289,6 +304,12 @@ export class PurchaseProcessor extends WorkerHost {
     expectedSender: string,
     expectedRecipient: string,
     expectedChainId: number,
+    refId: string,
+    contractAddress: string,
+    expectedBookingId: string,
+    expectedExchangeRateId: string,
+    expectedProductVariantId: string,
+    expectedAmount: string,
   ) {
     const verificationResult =
       await this.blockchainVerificationService.verifyTransaction({
@@ -297,6 +318,12 @@ export class PurchaseProcessor extends WorkerHost {
         expectedRecipient,
         expectedChainId,
         minimumConfirmations: 12,
+        refId,
+        contractAddress,
+        expectedBookingId,
+        expectedExchangeRateId,
+        expectedProductVariantId,
+        expectedAmount,
       });
 
     this.logger.log(`Transaction verification successful:`, {
@@ -380,7 +407,7 @@ export class PurchaseProcessor extends WorkerHost {
     const variationKey = booking.productVariant.sku;
     const price = Number(booking.productPrice?.priceFromVendor || 0);
 
-    let formData;
+    let formData: Array<{ key: string; value: string }>;
     if (Array.isArray(customerInfo)) {
       formData = customerInfo;
     } else {

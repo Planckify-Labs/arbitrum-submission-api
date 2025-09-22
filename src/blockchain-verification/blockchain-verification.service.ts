@@ -1,42 +1,35 @@
 import { Injectable, BadRequestException, Logger } from "@nestjs/common";
 import {
   createPublicClient,
+  createWalletClient,
   http,
   PublicClient,
+  WalletClient,
   Hash,
   Chain,
   Transaction,
   TransactionReceipt,
 } from "viem";
+import { readContract } from "viem/actions";
+import { privateKeyToAccount } from "viem/accounts";
 import { PrismaService } from "../prisma/prisma.service";
-
-export interface TTransactionVerificationResult {
-  isValid: boolean;
-  transactionHash: string;
-  blockNumber: string;
-  confirmations: number;
-  from: string;
-  to: string;
-  value: string;
-  status: "success" | "reverted";
-  gasUsed: string;
-  blockTimestamp: string;
-  chainId: number;
-}
-
-export interface TTransactionVerificationRequest {
-  transactionHash: string;
-  expectedSender: string;
-  expectedRecipient: string;
-  expectedChainId: number;
-  minimumConfirmations?: number;
-}
+import { TakumiWalletAbi } from "./abis/takumi-wallet.abi";
+import {
+  TTakumiWalletTransaction,
+  TTransactionVerificationResult,
+  TTransactionVerificationRequest,
+} from "./types/blockchain-verification.types";
+import { VerifyContractTransactionDto } from "./dto/verify-contract-transaction.dto";
 
 @Injectable()
 export class BlockchainVerificationService {
   private readonly logger = new Logger(BlockchainVerificationService.name);
   private readonly clients: Map<number, PublicClient> = new Map();
+  private readonly walletClients: Map<number, WalletClient> = new Map();
   private readonly DEFAULT_MIN_CONFIRMATIONS = 12;
+  private readonly adminAccount = privateKeyToAccount(
+    process.env.ADMIN_WALLET_PRIVATE_KEY as `0x${string}`,
+  );
 
   constructor(private readonly prisma: PrismaService) {
     this.initializeClients();
@@ -95,6 +88,14 @@ export class BlockchainVerificationService {
           }) as PublicClient;
 
           this.clients.set(blockchain.chainId, client);
+
+          const walletClient = createWalletClient({
+            account: this.adminAccount,
+            chain: dynamicChain,
+            transport: http(blockchain.rpcUrl),
+          });
+          this.walletClients.set(blockchain.chainId, walletClient);
+
           this.logger.log(
             `Initialized dynamic client for chain ${blockchain.chainId} (${blockchain.name}) with native currency ${nativeToken?.symbol || "NATIVE"}`,
           );
@@ -115,6 +116,16 @@ export class BlockchainVerificationService {
     const client = this.clients.get(chainId);
     if (!client) {
       throw new BadRequestException(`Unsupported chain ID: ${chainId}`);
+    }
+    return client;
+  }
+
+  private getWalletClient(chainId: number): WalletClient {
+    const client = this.walletClients.get(chainId);
+    if (!client) {
+      throw new BadRequestException(
+        `Unsupported chain ID for wallet client: ${chainId}`,
+      );
     }
     return client;
   }
@@ -193,7 +204,7 @@ export class BlockchainVerificationService {
         blockNumber: receipt.blockNumber.toString(),
         confirmations,
         from: transaction.from,
-        to: transaction.to || "",
+        to: transaction.to,
         value: transaction.value.toString(),
         status: receipt.status,
         gasUsed: receipt.gasUsed.toString(),
@@ -203,6 +214,21 @@ export class BlockchainVerificationService {
 
       this.logger.log(
         `Transaction ${transactionHash} verified successfully with ${confirmations} confirmations`,
+      );
+
+      await this.verifyTransactionInContract({
+        refId: request.refId,
+        contractAddress: request.contractAddress,
+        chainId: expectedChainId,
+        expectedWalletAddress: transaction.from,
+        expectedTokenAddress: transaction.to,
+        expectedAmount: request.expectedAmount,
+        expectedBookingId: request.expectedBookingId,
+        expectedExchangeRateId: request.expectedExchangeRateId,
+        expectedProductVariantId: request.expectedProductVariantId,
+      });
+      this.logger.log(
+        `Contract verification successful for refId ${request.refId}`,
       );
 
       return result;
@@ -278,88 +304,116 @@ export class BlockchainVerificationService {
     }
   }
 
-  async validateTransactionAmount(
-    transactionHash: string,
-    chainId: number,
-    expectedAmount: string,
-    tokenAddress?: string,
-    expectedRecipient?: string,
-  ): Promise<boolean> {
+  async verifyTransactionInContract(
+    trxData: VerifyContractTransactionDto,
+  ): Promise<TTakumiWalletTransaction> {
     try {
-      const client = this.getClient(chainId);
+      this.logger.log(
+        `Verifying transaction in contract ${trxData.contractAddress} for refId ${trxData.refId} on chain ${trxData.chainId}`,
+      );
 
-      const receipt: TransactionReceipt = await client.getTransactionReceipt({
-        hash: transactionHash as Hash,
+      const walletClient = this.getWalletClient(trxData.chainId);
+      const contractTransaction = await readContract(walletClient, {
+        address: trxData.contractAddress as `0x${string}`,
+        abi: TakumiWalletAbi,
+        functionName: "getTransactionByRef",
+        args: [trxData.refId],
       });
 
-      if (!receipt || receipt.status !== "success") {
-        this.logger.warn(`Transaction ${transactionHash} failed or not found`);
-        return false;
+      const transaction: TTakumiWalletTransaction = {
+        walletAddress: contractTransaction.walletAddress,
+        tokenAddress: contractTransaction.tokenAddress,
+        bookingId: contractTransaction.bookingId,
+        exchangeRateId: contractTransaction.exchangeRateId,
+        productVariantId: contractTransaction.productVariantId,
+        timestamp: contractTransaction.timestamp,
+        refId: contractTransaction.refId,
+        amount: contractTransaction.amount,
+      };
+
+      if (transaction.refId !== trxData.refId) {
+        throw new BadRequestException(
+          `Contract refId mismatch: expected ${trxData.refId}, got ${transaction.refId}`,
+        );
+      }
+
+      if (
+        transaction.walletAddress.toLowerCase() !==
+        trxData.expectedWalletAddress.toLowerCase()
+      ) {
+        throw new BadRequestException(
+          `Contract wallet address mismatch: expected ${trxData.expectedWalletAddress}, got ${transaction.walletAddress}`,
+        );
       }
 
       const isNativeToken =
-        !tokenAddress ||
-        tokenAddress === "0x0000000000000000000000000000000000000000";
+        trxData.expectedTokenAddress ===
+          "0x0000000000000000000000000000000000000000" ||
+        trxData.expectedTokenAddress.toLowerCase() ===
+          trxData.contractAddress.toLowerCase();
 
-      if (isNativeToken) {
-        const transaction: Transaction = await client.getTransaction({
-          hash: transactionHash as Hash,
-        });
-
-        const isAmountValid = transaction.value.toString() === expectedAmount;
-        this.logger.log(
-          `Native token validation - Expected: ${expectedAmount}, Actual: ${transaction.value.toString()}, Valid: ${isAmountValid}`,
+      if (
+        !isNativeToken &&
+        transaction.tokenAddress.toLowerCase() !==
+          trxData.expectedTokenAddress.toLowerCase()
+      ) {
+        throw new BadRequestException(
+          `Contract token address mismatch: expected ${trxData.expectedTokenAddress}, got ${transaction.tokenAddress}`,
         );
-        return isAmountValid;
-      } else {
-        const transferEventSignature =
-          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
-
-        const transferLogs = receipt.logs.filter(
-          (log) =>
-            log.topics[0] === transferEventSignature &&
-            log.address.toLowerCase() === tokenAddress.toLowerCase(),
-        );
-
-        if (transferLogs.length === 0) {
-          this.logger.warn(
-            `No Transfer events found for token ${tokenAddress} in transaction ${transactionHash}`,
-          );
-          return false;
-        }
-
-        let relevantTransferLog = transferLogs[0];
-
-        if (expectedRecipient) {
-          const recipientTransfer = transferLogs.find((log) => {
-            const toAddress = `0x${log.topics[2]?.slice(26)}`; // Remove padding
-            return toAddress.toLowerCase() === expectedRecipient.toLowerCase();
-          });
-
-          if (recipientTransfer) {
-            relevantTransferLog = recipientTransfer;
-          } else {
-            this.logger.warn(
-              `No transfer to expected recipient ${expectedRecipient} found`,
-            );
-            return false;
-          }
-        }
-
-        const amount = BigInt(relevantTransferLog.data || "0x0");
-
-        const isAmountValid = amount.toString() === expectedAmount;
-        this.logger.log(
-          `ERC-20 token validation - Token: ${tokenAddress}, Expected: ${expectedAmount}, Actual: ${amount.toString()}, Valid: ${isAmountValid}`,
-        );
-
-        return isAmountValid;
       }
+
+      if (transaction.amount.toString() !== trxData.expectedAmount) {
+        throw new BadRequestException(
+          `Contract amount mismatch: expected ${trxData.expectedAmount}, got ${transaction.amount.toString()}`,
+        );
+      }
+
+      if (
+        trxData.expectedBookingId &&
+        transaction.bookingId !== trxData.expectedBookingId
+      ) {
+        throw new BadRequestException(
+          `Contract bookingId mismatch: expected ${trxData.expectedBookingId}, got ${transaction.bookingId}`,
+        );
+      }
+
+      if (
+        trxData.expectedExchangeRateId &&
+        Number(transaction.exchangeRateId) !==
+          Number(trxData.expectedExchangeRateId)
+      ) {
+        throw new BadRequestException(
+          `Contract exchangeRateId mismatch: expected ${trxData.expectedExchangeRateId}, got ${transaction.exchangeRateId}`,
+        );
+      }
+
+      if (
+        trxData.expectedProductVariantId &&
+        transaction.productVariantId !== trxData.expectedProductVariantId
+      ) {
+        throw new BadRequestException(
+          `Contract productVariantId mismatch: expected ${trxData.expectedProductVariantId}, got ${transaction.productVariantId}`,
+        );
+      }
+
+      this.logger.log(
+        `Contract verification successful: refId=${transaction.refId}, wallet=${transaction.walletAddress}, amount=${transaction.amount.toString()}, bookingId=${transaction.bookingId}, exchangeRateId=${transaction.exchangeRateId}, productVariantId=${transaction.productVariantId}`,
+      );
+
+      return transaction;
     } catch (error) {
       this.logger.error(
-        `Error validating transaction amount: ${error.message}`,
+        `Contract verification failed for refId ${trxData.refId}: ${error.message}`,
+        error.stack,
       );
-      return false;
+
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+
+      throw new BadRequestException(
+        `Failed to verify transaction in contract: ${error.message}`,
+      );
     }
   }
 }

@@ -30,7 +30,6 @@ export class BookingService {
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly prismaService: PrismaService,
     private readonly blockchainsService: BlockchainsService,
     private readonly productInputValidator: ProductInputValidatorService,
   ) {
@@ -148,7 +147,14 @@ export class BookingService {
 
       const sellPrice = new Decimal(productPrice.sellPrice.toString());
       const rate = new Decimal(exchangeRate.rate.toString());
-      const tokenAmount = sellPrice.div(rate);
+      const tokenAmountDecimal = sellPrice.div(rate);
+
+      const tokenAmount = BigInt(
+        Math.floor(
+          parseFloat(tokenAmountDecimal.toString()) *
+            Math.pow(10, token.decimals),
+        ),
+      ).toString();
 
       const booking = await tx.bookingOrder.create({
         data: {

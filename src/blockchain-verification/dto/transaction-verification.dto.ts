@@ -46,6 +46,20 @@ export class VerifyTransactionDto {
   @IsNumber()
   @Min(1)
   minimumConfirmations?: number;
+
+  @ApiProperty({
+    description: "Reference ID for contract verification",
+    example: "ref-12345",
+  })
+  @IsString()
+  refId: string;
+
+  @ApiProperty({
+    description: "TakumiWallet contract address for verification",
+    example: "0x742d35Cc6634C0532925a3b8D400E4C0C0C8bfb",
+  })
+  @IsEthereumAddress()
+  contractAddress: string;
 }
 
 export class VerifyTransactionWithBookingDto {
