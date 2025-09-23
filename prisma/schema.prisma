@@ -508,20 +508,21 @@ model DappCategory {
 }
 
 model Dapp {
-  id           String             @id @default(ulid())
-  name         String
-  description  String?
-  logoUrl      String?
-  websiteUrl   String
-  category     DappCategory       @relation(fields: [categoryId], references: [id])
-  categoryId   String
-  isPopular    Boolean            @default(false)
-  isSponsor    Boolean            @default(false)
-  isHighlight  Boolean            @default(false)
-  isActive     Boolean            @default(true)
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
-  favorites    UserDappFavorite[]
+  id          String             @id @default(ulid())
+  name        String
+  description String?
+  logoUrl     String?
+  websiteUrl  String
+  category    DappCategory       @relation(fields: [categoryId], references: [id])
+  categoryId  String
+  isPopular   Boolean            @default(false)
+  isSponsor   Boolean            @default(false)
+  isHighlight Boolean            @default(false)
+  isActive    Boolean            @default(true)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  bgColor     String?
+  favorites   UserDappFavorite[]
 
   @@index([categoryId])
   @@index([isPopular])
