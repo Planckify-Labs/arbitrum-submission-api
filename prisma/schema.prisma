@@ -118,6 +118,7 @@ model User {
   regionId      String?
   ApiKey        ApiKey[]
   auditLogs     AdminAuditLog[]
+  dappFavorites UserDappFavorite[]
 
   @@unique([authProvider, socialId])
   @@index([role])
@@ -490,4 +491,55 @@ model AdminAuditLog {
   @@index([action])
   @@index([resource])
   @@index([createdAt])
+}
+
+model DappCategory {
+  id          String   @id @default(ulid())
+  name        String   @unique
+  description String?
+  iconUrl     String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  dapps       Dapp[]
+
+  @@index([name])
+  @@index([isActive])
+}
+
+model Dapp {
+  id           String             @id @default(ulid())
+  name         String
+  description  String?
+  logoUrl      String?
+  websiteUrl   String
+  category     DappCategory       @relation(fields: [categoryId], references: [id])
+  categoryId   String
+  isPopular    Boolean            @default(false)
+  isSponsor    Boolean            @default(false)
+  isHighlight  Boolean            @default(false)
+  isActive     Boolean            @default(true)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  favorites    UserDappFavorite[]
+
+  @@index([categoryId])
+  @@index([isPopular])
+  @@index([isSponsor])
+  @@index([isHighlight])
+  @@index([isActive])
+  @@index([createdAt])
+}
+
+model UserDappFavorite {
+  id        String   @id @default(ulid())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+  dapp      Dapp     @relation(fields: [dappId], references: [id])
+  dappId    String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, dappId])
+  @@index([userId])
+  @@index([dappId])
 }
