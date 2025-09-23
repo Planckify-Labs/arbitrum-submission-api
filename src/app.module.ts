@@ -20,6 +20,7 @@ import { AuthModule } from "./auth/auth.module";
 import { ApiKeysModule } from "./api-keys/api-keys.module";
 import { ValkeyModule } from "./valkey/valkey.module";
 import { QueueModule } from "./queue/queue.module";
+import { DappsModule } from "./dapps/dapps.module";
 import { APP_GUARD } from "@nestjs/core";
 import { JwtAuthGuard } from "./auth/guards/jwt-auth.guard";
 import { ApiKeyGuard } from "./auth/guards/api-key.guard";
@@ -47,6 +48,7 @@ import { ApiKeyGuard } from "./auth/guards/api-key.guard";
     ApiKeysModule,
     ValkeyModule,
     QueueModule,
+    DappsModule,
   ],
   controllers: [AppController],
   providers: [

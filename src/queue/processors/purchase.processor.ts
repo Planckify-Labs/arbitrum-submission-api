@@ -93,7 +93,9 @@ export class PurchaseProcessor extends WorkerHost {
         refId,
         contractAddress,
         booking.id,
-        (booking.exchangeRate as { id?: number | string } | null)?.id?.toString() || "0",
+        (
+          booking.exchangeRate as { id?: number | string } | null
+        )?.id?.toString() || "0",
         booking.productVariantId,
         booking.payment.amount,
       );
