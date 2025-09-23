@@ -240,10 +240,22 @@ const vcGamersAPI = {
 
 const prisma = new PrismaClient();
 
-function generateApiKey(): string {
-  const prefix = "tk_";
-  const randomBytes = crypto.randomBytes(32).toString("hex");
-  return `${prefix}${randomBytes}`;
+function generateApiKey(keyType: string): string {
+  // Static API keys for consistent seeding
+  const staticKeys = {
+    "smart-contract":
+      "tk_smart_contract_api_key_12345678901234567890123456789012",
+    "mobile-app": "tk_mobile_app_api_key_12345678901234567890123456789012345",
+    "web-app": "tk_web_app_api_key_123456789012345678901234567890123456",
+    "third-party": "tk_third_party_api_key_12345678901234567890123456789012",
+    internal: "tk_internal_api_key_123456789012345678901234567890123456",
+    admin: "tk_admin_api_key_1234567890123456789012345678901234567890",
+  };
+
+  return (
+    staticKeys[keyType] ||
+    `tk_${keyType}_static_key_123456789012345678901234567890`
+  );
 }
 
 async function hashPassword(password: string): Promise<string> {
@@ -259,7 +271,7 @@ async function seedApiKeys() {
       name: "Smart Contract API Key",
       description:
         "API key for smart contract interactions and blockchain operations",
-      keyValue: generateApiKey(),
+      keyValue: generateApiKey("smart-contract"),
       type: ApiKeyType.SMART_CONTRACT,
       status: ApiKeyStatus.ACTIVE,
       permissions: [
@@ -279,7 +291,7 @@ async function seedApiKeys() {
       id: "mobile-app-api-key",
       name: "Mobile App API Key",
       description: "API key for TakumiPay mobile application",
-      keyValue: generateApiKey(),
+      keyValue: generateApiKey("mobile-app"),
       type: ApiKeyType.MOBILE_APP,
       status: ApiKeyStatus.ACTIVE,
       permissions: [
@@ -300,7 +312,7 @@ async function seedApiKeys() {
       id: "web-app-api-key",
       name: "Web App API Key",
       description: "API key for TakumiPay web application",
-      keyValue: generateApiKey(),
+      keyValue: generateApiKey("web-app"),
       type: ApiKeyType.WEB_APP,
       status: ApiKeyStatus.ACTIVE,
       permissions: [
@@ -322,7 +334,7 @@ async function seedApiKeys() {
       id: "third-party-api-key",
       name: "Third Party Integration",
       description: "API key for third-party integrations and partners",
-      keyValue: generateApiKey(),
+      keyValue: generateApiKey("third-party"),
       type: ApiKeyType.THIRD_PARTY,
       status: ApiKeyStatus.ACTIVE,
       permissions: ["products:read", "tokens:read", "blockchains:read"],
@@ -337,7 +349,7 @@ async function seedApiKeys() {
       id: "internal-api-key",
       name: "Internal Services",
       description: "API key for internal microservices communication",
-      keyValue: generateApiKey(),
+      keyValue: generateApiKey("internal"),
       type: ApiKeyType.INTERNAL,
       status: ApiKeyStatus.ACTIVE,
       permissions: [
@@ -364,7 +376,7 @@ async function seedApiKeys() {
       id: "admin-api-key",
       name: "Admin Dashboard",
       description: "API key for admin dashboard and management operations",
-      keyValue: generateApiKey(),
+      keyValue: generateApiKey("admin"),
       type: ApiKeyType.ADMIN,
       status: ApiKeyStatus.ACTIVE,
       permissions: ["*"],
@@ -1285,6 +1297,369 @@ async function main() {
       vendorRefId: "VC123456789",
     },
   });
+
+  // Seed Dapp Categories
+  console.log("🌱 Seeding Dapp categories...");
+  const dappCategories = await Promise.all([
+    prisma.dappCategory.upsert({
+      where: { name: "DEX" },
+      update: {},
+      create: {
+        name: "DEX",
+        description: "Decentralized Exchanges",
+        iconUrl: "https://example.com/icons/dex.svg",
+        isActive: true,
+      },
+    }),
+    prisma.dappCategory.upsert({
+      where: { name: "DeFi" },
+      update: {},
+      create: {
+        name: "DeFi",
+        description: "Decentralized Finance applications",
+        iconUrl: "https://example.com/icons/defi.svg",
+        isActive: true,
+      },
+    }),
+    prisma.dappCategory.upsert({
+      where: { name: "Gaming" },
+      update: {},
+      create: {
+        name: "Gaming",
+        description: "Blockchain gaming and NFT games",
+        iconUrl: "https://example.com/icons/gaming.svg",
+        isActive: true,
+      },
+    }),
+  ]);
+
+  console.log(`✅ Created ${dappCategories.length} dapp categories`);
+
+  // Seed Dapps
+  console.log("🌱 Seeding Dapps...");
+  const dapps = await Promise.all([
+    // DEX Category (5 dapps)
+    prisma.dapp.upsert({
+      where: { id: "uniswap-dapp" },
+      update: {},
+      create: {
+        id: "uniswap-dapp",
+        name: "Uniswap",
+        description: "The largest decentralized exchange on Ethereum",
+        logoUrl: "https://app.uniswap.org/favicon.ico",
+        websiteUrl: "https://app.uniswap.org",
+        categoryId: dappCategories[0].id, // DEX
+        isPopular: true,
+        isSponsor: true,
+        isHighlight: true,
+        isActive: true,
+        bgColor: "#FF007A",
+      },
+    }),
+    prisma.dapp.upsert({
+      where: { id: "sushiswap-dapp" },
+      update: {},
+      create: {
+        id: "sushiswap-dapp",
+        name: "SushiSwap",
+        description: "Community-driven decentralized exchange",
+        logoUrl: "https://sushi.com/favicon.ico",
+        websiteUrl: "https://sushi.com",
+        categoryId: dappCategories[0].id, // DEX
+        isPopular: true,
+        isSponsor: false,
+        isHighlight: true,
+        isActive: true,
+        bgColor: "#0E0F23",
+      },
+    }),
+    prisma.dapp.upsert({
+      where: { id: "pancakeswap-dapp" },
+      update: {},
+      create: {
+        id: "pancakeswap-dapp",
+        name: "PancakeSwap",
+        description: "The most popular DEX on BNB Smart Chain",
+        logoUrl: "https://pancakeswap.finance/favicon.ico",
+        websiteUrl: "https://pancakeswap.finance",
+        categoryId: dappCategories[0].id, // DEX
+        isPopular: true,
+        isSponsor: true,
+        isHighlight: false,
+        isActive: true,
+        bgColor: "#1FC7D4",
+      },
+    }),
+    prisma.dapp.upsert({
+      where: { id: "1inch-dapp" },
+      update: {},
+      create: {
+        id: "1inch-dapp",
+        name: "1inch",
+        description: "DEX aggregator with the best rates",
+        logoUrl: "https://1inch.io/favicon.ico",
+        websiteUrl: "https://1inch.io",
+        categoryId: dappCategories[0].id, // DEX
+        isPopular: true,
+        isSponsor: true,
+        isHighlight: true,
+        isActive: true,
+        bgColor: "#1B2A4E",
+      },
+    }),
+    prisma.dapp.upsert({
+      where: { id: "curve-dapp" },
+      update: {},
+      create: {
+        id: "curve-dapp",
+        name: "Curve Finance",
+        description: "Exchange liquidity pool for stablecoins",
+        logoUrl: "https://curve.fi/favicon.ico",
+        websiteUrl: "https://curve.fi",
+        categoryId: dappCategories[0].id, // DEX
+        isPopular: true,
+        isSponsor: false,
+        isHighlight: false,
+        isActive: true,
+        bgColor: "#40E0D0",
+      },
+    }),
+
+    // DeFi Category (5 dapps)
+    prisma.dapp.upsert({
+      where: { id: "compound-dapp" },
+      update: {},
+      create: {
+        id: "compound-dapp",
+        name: "Compound",
+        description: "Algorithmic money markets protocol",
+        logoUrl: "https://compound.finance/favicon.ico",
+        websiteUrl: "https://compound.finance",
+        categoryId: dappCategories[1].id, // DeFi
+        isPopular: true,
+        isSponsor: true,
+        isHighlight: true,
+        isActive: true,
+        bgColor: "#00D395",
+      },
+    }),
+    prisma.dapp.upsert({
+      where: { id: "aave-dapp" },
+      update: {},
+      create: {
+        id: "aave-dapp",
+        name: "Aave",
+        description: "Open source and non-custodial liquidity protocol",
+        logoUrl: "https://aave.com/favicon.ico",
+        websiteUrl: "https://aave.com",
+        categoryId: dappCategories[1].id, // DeFi
+        isPopular: true,
+        isSponsor: false,
+        isHighlight: true,
+        isActive: true,
+        bgColor: "#B6509E",
+      },
+    }),
+    prisma.dapp.upsert({
+      where: { id: "makerdao-dapp" },
+      update: {},
+      create: {
+        id: "makerdao-dapp",
+        name: "MakerDAO",
+        description: "Decentralized credit platform on Ethereum",
+        logoUrl: "https://makerdao.com/favicon.ico",
+        websiteUrl: "https://makerdao.com",
+        categoryId: dappCategories[1].id, // DeFi
+        isPopular: true,
+        isSponsor: true,
+        isHighlight: false,
+        isActive: true,
+        bgColor: "#1AAB9B",
+      },
+    }),
+    prisma.dapp.upsert({
+      where: { id: "yearn-dapp" },
+      update: {},
+      create: {
+        id: "yearn-dapp",
+        name: "Yearn Finance",
+        description: "Yield farming made simple",
+        logoUrl: "https://yearn.finance/favicon.ico",
+        websiteUrl: "https://yearn.finance",
+        categoryId: dappCategories[1].id, // DeFi
+        isPopular: true,
+        isSponsor: true,
+        isHighlight: true,
+        isActive: true,
+        bgColor: "#0657F9",
+      },
+    }),
+    prisma.dapp.upsert({
+      where: { id: "synthetix-dapp" },
+      update: {},
+      create: {
+        id: "synthetix-dapp",
+        name: "Synthetix",
+        description: "Derivatives liquidity protocol",
+        logoUrl: "https://synthetix.io/favicon.ico",
+        websiteUrl: "https://synthetix.io",
+        categoryId: dappCategories[1].id, // DeFi
+        isPopular: true,
+        isSponsor: false,
+        isHighlight: false,
+        isActive: true,
+        bgColor: "#00D4FF",
+      },
+    }),
+
+    // Gaming Category (5 dapps)
+    prisma.dapp.upsert({
+      where: { id: "axie-infinity-dapp" },
+      update: {},
+      create: {
+        id: "axie-infinity-dapp",
+        name: "Axie Infinity",
+        description: "Play-to-earn blockchain game with cute creatures",
+        logoUrl: "https://axieinfinity.com/favicon.ico",
+        websiteUrl: "https://axieinfinity.com",
+        categoryId: dappCategories[2].id, // Gaming
+        isPopular: true,
+        isSponsor: true,
+        isHighlight: true,
+        isActive: true,
+        bgColor: "#1E3A8A",
+      },
+    }),
+    prisma.dapp.upsert({
+      where: { id: "decentraland-dapp" },
+      update: {},
+      create: {
+        id: "decentraland-dapp",
+        name: "Decentraland",
+        description: "Virtual reality platform powered by Ethereum",
+        logoUrl: "https://decentraland.org/favicon.ico",
+        websiteUrl: "https://decentraland.org",
+        categoryId: dappCategories[2].id, // Gaming
+        isPopular: true,
+        isSponsor: false,
+        isHighlight: true,
+        isActive: true,
+        bgColor: "#FF2D55",
+      },
+    }),
+    prisma.dapp.upsert({
+      where: { id: "sandbox-dapp" },
+      update: {},
+      create: {
+        id: "sandbox-dapp",
+        name: "The Sandbox",
+        description: "Virtual world where players can build and monetize",
+        logoUrl: "https://sandbox.game/favicon.ico",
+        websiteUrl: "https://sandbox.game",
+        categoryId: dappCategories[2].id, // Gaming
+        isPopular: true,
+        isSponsor: true,
+        isHighlight: false,
+        isActive: true,
+        bgColor: "#00ADEF",
+      },
+    }),
+    prisma.dapp.upsert({
+      where: { id: "splinterlands-dapp" },
+      update: {},
+      create: {
+        id: "splinterlands-dapp",
+        name: "Splinterlands",
+        description: "Digital trading card game on blockchain",
+        logoUrl: "https://splinterlands.com/favicon.ico",
+        websiteUrl: "https://splinterlands.com",
+        categoryId: dappCategories[2].id, // Gaming
+        isPopular: true,
+        isSponsor: true,
+        isHighlight: true,
+        isActive: true,
+        bgColor: "#8B4513",
+      },
+    }),
+    prisma.dapp.upsert({
+      where: { id: "gods-unchained-dapp" },
+      update: {},
+      create: {
+        id: "gods-unchained-dapp",
+        name: "Gods Unchained",
+        description: "Free-to-play tactical card game",
+        logoUrl: "https://godsunchained.com/favicon.ico",
+        websiteUrl: "https://godsunchained.com",
+        categoryId: dappCategories[2].id, // Gaming
+        isPopular: true,
+        isSponsor: false,
+        isHighlight: false,
+        isActive: true,
+        bgColor: "#1A1A2E",
+      },
+    }),
+  ]);
+
+  console.log(`✅ Created ${dapps.length} dapps`);
+
+  // Seed User Dapp Favorites
+  console.log("🌱 Seeding user dapp favorites...");
+  const userDappFavorites = await Promise.all([
+    prisma.userDappFavorite.upsert({
+      where: {
+        userId_dappId: {
+          userId: users[0].id,
+          dappId: dapps[0].id, // Uniswap
+        },
+      },
+      update: {},
+      create: {
+        userId: users[0].id,
+        dappId: dapps[0].id,
+      },
+    }),
+    prisma.userDappFavorite.upsert({
+      where: {
+        userId_dappId: {
+          userId: users[0].id,
+          dappId: dapps[1].id, // OpenSea
+        },
+      },
+      update: {},
+      create: {
+        userId: users[0].id,
+        dappId: dapps[1].id,
+      },
+    }),
+    prisma.userDappFavorite.upsert({
+      where: {
+        userId_dappId: {
+          userId: users[1].id,
+          dappId: dapps[2].id, // Axie Infinity
+        },
+      },
+      update: {},
+      create: {
+        userId: users[1].id,
+        dappId: dapps[2].id,
+      },
+    }),
+    prisma.userDappFavorite.upsert({
+      where: {
+        userId_dappId: {
+          userId: users[1].id,
+          dappId: dapps[5].id, // MetaMask
+        },
+      },
+      update: {},
+      create: {
+        userId: users[1].id,
+        dappId: dapps[5].id,
+      },
+    }),
+  ]);
+
+  console.log(`✅ Created ${userDappFavorites.length} user dapp favorites`);
 
   await seedApiKeys();
 
