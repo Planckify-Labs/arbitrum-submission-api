@@ -21,12 +21,20 @@ import { DappsService } from "./dapps.service";
 import { CreateDappDto, UpdateDappDto } from "./dto/dapp.dto";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
 import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBearerAuth,
-} from "@nestjs/swagger";
+  ApiGetAllDapps,
+  ApiGetPopularDapps,
+  ApiGetSponsoredDapps,
+  ApiGetFavoriteDapps,
+  ApiGetDappsByCategory,
+  ApiAddToFavorites,
+  ApiRemoveFromFavorites,
+  ApiGetDappById,
+  ApiCreateDapp,
+  ApiUpdateDapp,
+  ApiDeleteDapp,
+} from "./decorators/swagger.decorators";
 
 @ApiTags("dapps")
 @Controller("dapps")
@@ -36,12 +44,7 @@ export class DappsController {
   @Get("all")
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: "Get all dapps with pagination" })
-  @ApiResponse({ status: 200, description: "List of all dapps" })
-  @ApiResponse({
-    status: 401,
-    description: "Unauthorized - invalid or missing JWT token",
-  })
+  @ApiGetAllDapps()
   async findAll(
     @Query() paginationDto: CursorPaginationDto,
     @Request() req: AuthenticatedRequest,
@@ -53,12 +56,7 @@ export class DappsController {
   @Get("popular")
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: "Get popular dapps with pagination" })
-  @ApiResponse({ status: 200, description: "List of popular dapps" })
-  @ApiResponse({
-    status: 401,
-    description: "Unauthorized - invalid or missing JWT token",
-  })
+  @ApiGetPopularDapps()
   async findPopular(
     @Query() paginationDto: CursorPaginationDto,
     @Request() req: AuthenticatedRequest,
@@ -70,12 +68,7 @@ export class DappsController {
   @Get("sponsor")
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: "Get sponsored dapps with pagination" })
-  @ApiResponse({ status: 200, description: "List of sponsored dapps" })
-  @ApiResponse({
-    status: 401,
-    description: "Unauthorized - invalid or missing JWT token",
-  })
+  @ApiGetSponsoredDapps()
   async findSponsored(
     @Query() paginationDto: CursorPaginationDto,
     @Request() req: AuthenticatedRequest,
@@ -87,8 +80,7 @@ export class DappsController {
   @Get("favorites")
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: "Get user favorite dapps with pagination" })
-  @ApiResponse({ status: 200, description: "List of user favorite dapps" })
+  @ApiGetFavoriteDapps()
   async findUserFavorites(
     @Query() paginationDto: CursorPaginationDto,
     @Request() req: AuthenticatedRequest,
@@ -102,16 +94,7 @@ export class DappsController {
   @Get("category/:categoryId")
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: "Get dapps by category with pagination" })
-  @ApiResponse({
-    status: 200,
-    description: "List of dapps in the specified category",
-  })
-  @ApiResponse({
-    status: 401,
-    description: "Unauthorized - invalid or missing JWT token",
-  })
-  @ApiResponse({ status: 404, description: "Category not found" })
+  @ApiGetDappsByCategory()
   async findByCategory(
     @Param("categoryId") categoryId: string,
     @Query() paginationDto: CursorPaginationDto,
@@ -128,11 +111,7 @@ export class DappsController {
   @Post(":id/favorite")
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: "Add dapp to favorites" })
-  @ApiResponse({
-    status: 201,
-    description: "Dapp added to favorites successfully",
-  })
+  @ApiAddToFavorites()
   async addToFavorites(
     @Param("id") id: string,
     @Request() req: AuthenticatedRequest,
@@ -143,11 +122,7 @@ export class DappsController {
   @Delete(":id/favorite")
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: "Remove dapp from favorites" })
-  @ApiResponse({
-    status: 200,
-    description: "Dapp removed from favorites successfully",
-  })
+  @ApiRemoveFromFavorites()
   async removeFromFavorites(
     @Param("id") id: string,
     @Request() req: AuthenticatedRequest,
@@ -158,13 +133,7 @@ export class DappsController {
   @Get(":id")
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: "Get a specific dapp by ID" })
-  @ApiResponse({ status: 200, description: "Dapp details" })
-  @ApiResponse({
-    status: 401,
-    description: "Unauthorized - invalid or missing JWT token",
-  })
-  @ApiResponse({ status: 404, description: "Dapp not found" })
+  @ApiGetDappById()
   async findOne(@Param("id") id: string, @Request() req: AuthenticatedRequest) {
     return await this.dappsService.findOne(id, req.user.id);
   }
@@ -172,8 +141,7 @@ export class DappsController {
   @Post()
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: "Create a new dapp (Admin only)" })
-  @ApiResponse({ status: 201, description: "Dapp created successfully" })
+  @ApiCreateDapp()
   async create(@Body() createDappDto: CreateDappDto) {
     return await this.dappsService.create(createDappDto);
   }
@@ -181,8 +149,7 @@ export class DappsController {
   @Patch(":id")
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: "Update a dapp (Admin only)" })
-  @ApiResponse({ status: 200, description: "Dapp updated successfully" })
+  @ApiUpdateDapp()
   async update(@Param("id") id: string, @Body() updateDappDto: UpdateDappDto) {
     return await this.dappsService.update(id, updateDappDto);
   }
@@ -190,8 +157,7 @@ export class DappsController {
   @Delete(":id")
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: "Delete a dapp (Admin only)" })
-  @ApiResponse({ status: 200, description: "Dapp deleted successfully" })
+  @ApiDeleteDapp()
   async remove(@Param("id") id: string) {
     return await this.dappsService.remove(id);
   }

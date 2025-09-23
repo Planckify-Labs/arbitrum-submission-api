@@ -14,12 +14,14 @@ import {
   UpdateDappCategoryDto,
 } from "./dto/dapp-category.dto";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
 import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBearerAuth,
-} from "@nestjs/swagger";
+  ApiGetAllDappCategories,
+  ApiGetDappCategoryById,
+  ApiCreateDappCategory,
+  ApiUpdateDappCategory,
+  ApiDeleteDappCategory,
+} from "./decorators/dapp-categories-swagger.decorators";
 
 @ApiTags("dapp-categories")
 @Controller("dapp-categories")
@@ -27,15 +29,13 @@ export class DappCategoriesController {
   constructor(private readonly dappCategoriesService: DappCategoriesService) {}
 
   @Get()
-  @ApiOperation({ summary: "Get all dapp categories" })
-  @ApiResponse({ status: 200, description: "List of all dapp categories" })
+  @ApiGetAllDappCategories()
   findAll() {
     return this.dappCategoriesService.findAll();
   }
 
   @Get(":id")
-  @ApiOperation({ summary: "Get a specific dapp category by ID" })
-  @ApiResponse({ status: 200, description: "Dapp category details" })
+  @ApiGetDappCategoryById()
   findOne(@Param("id") id: string) {
     return this.dappCategoriesService.findOne(id);
   }
@@ -43,11 +43,7 @@ export class DappCategoriesController {
   @Post()
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: "Create a new dapp category (Admin only)" })
-  @ApiResponse({
-    status: 201,
-    description: "Dapp category created successfully",
-  })
+  @ApiCreateDappCategory()
   create(@Body() createDappCategoryDto: CreateDappCategoryDto) {
     return this.dappCategoriesService.create(createDappCategoryDto);
   }
@@ -55,11 +51,7 @@ export class DappCategoriesController {
   @Patch(":id")
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: "Update a dapp category (Admin only)" })
-  @ApiResponse({
-    status: 200,
-    description: "Dapp category updated successfully",
-  })
+  @ApiUpdateDappCategory()
   update(
     @Param("id") id: string,
     @Body() updateDappCategoryDto: UpdateDappCategoryDto,
@@ -70,11 +62,7 @@ export class DappCategoriesController {
   @Delete(":id")
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: "Delete a dapp category (Admin only)" })
-  @ApiResponse({
-    status: 200,
-    description: "Dapp category deleted successfully",
-  })
+  @ApiDeleteDappCategory()
   remove(@Param("id") id: string) {
     return this.dappCategoriesService.remove(id);
   }
