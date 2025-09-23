@@ -21,7 +21,8 @@ import { DappsService } from "./dapps.service";
 import { CreateDappDto, UpdateDappDto } from "./dto/dapp.dto";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
-import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
+import { ApiKey } from "../decorators/api-key.decorator";
+import { ApiTags, ApiBearerAuth, ApiSecurity } from "@nestjs/swagger";
 import {
   ApiGetAllDapps,
   ApiGetPopularDapps,
@@ -35,6 +36,7 @@ import {
   ApiUpdateDapp,
   ApiDeleteDapp,
 } from "./decorators/swagger.decorators";
+import { Public } from "src/decorators/public.decorator";
 
 @ApiTags("dapps")
 @Controller("dapps")
@@ -42,39 +44,25 @@ export class DappsController {
   constructor(private readonly dappsService: DappsService) {}
 
   @Get("all")
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
   @ApiGetAllDapps()
-  async findAll(
-    @Query() paginationDto: CursorPaginationDto,
-    @Request() req: AuthenticatedRequest,
-  ) {
-    const userId = req.user.id;
-    return await this.dappsService.findAll(paginationDto, userId);
+  async findAll(@Query() paginationDto: CursorPaginationDto) {
+    return await this.dappsService.findAll(paginationDto);
   }
 
+  @Public()
+  @ApiKey()
   @Get("popular")
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
   @ApiGetPopularDapps()
-  async findPopular(
-    @Query() paginationDto: CursorPaginationDto,
-    @Request() req: AuthenticatedRequest,
-  ) {
-    const userId = req.user.id;
-    return await this.dappsService.findPopular(paginationDto, userId);
+  async findPopular(@Query() paginationDto: CursorPaginationDto) {
+    return await this.dappsService.findPopular(paginationDto);
   }
 
+  @Public()
+  @ApiKey()
   @Get("sponsor")
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
   @ApiGetSponsoredDapps()
-  async findSponsored(
-    @Query() paginationDto: CursorPaginationDto,
-    @Request() req: AuthenticatedRequest,
-  ) {
-    const userId = req.user.id;
-    return await this.dappsService.findSponsored(paginationDto, userId);
+  async findSponsored(@Query() paginationDto: CursorPaginationDto) {
+    return await this.dappsService.findSponsored(paginationDto);
   }
 
   @Get("favorites")
@@ -91,21 +79,15 @@ export class DappsController {
     );
   }
 
+  @Public()
+  @ApiKey()
   @Get("category/:categoryId")
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
   @ApiGetDappsByCategory()
   async findByCategory(
     @Param("categoryId") categoryId: string,
     @Query() paginationDto: CursorPaginationDto,
-    @Request() req: AuthenticatedRequest,
   ) {
-    const userId = req.user.id;
-    return await this.dappsService.findByCategory(
-      categoryId,
-      paginationDto,
-      userId,
-    );
+    return await this.dappsService.findByCategory(categoryId, paginationDto);
   }
 
   @Post(":id/favorite")
@@ -130,12 +112,12 @@ export class DappsController {
     return await this.dappsService.removeFromFavorites(req.user.id, id);
   }
 
+  @Public()
+  @ApiKey()
   @Get(":id")
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
   @ApiGetDappById()
-  async findOne(@Param("id") id: string, @Request() req: AuthenticatedRequest) {
-    return await this.dappsService.findOne(id, req.user.id);
+  async findOne(@Param("id") id: string) {
+    return await this.dappsService.findOne(id);
   }
 
   @Post()

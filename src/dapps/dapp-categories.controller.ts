@@ -22,12 +22,16 @@ import {
   ApiUpdateDappCategory,
   ApiDeleteDappCategory,
 } from "./decorators/dapp-categories-swagger.decorators";
+import { ApiKey } from "src/decorators/api-key.decorator";
+import { Public } from "src/decorators/public.decorator";
 
 @ApiTags("dapp-categories")
 @Controller("dapp-categories")
 export class DappCategoriesController {
   constructor(private readonly dappCategoriesService: DappCategoriesService) {}
 
+  @Public()
+  @ApiKey()
   @Get()
   @ApiGetAllDappCategories()
   findAll() {
