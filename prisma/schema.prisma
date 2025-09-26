@@ -197,17 +197,18 @@ model TransactionHistory {
 }
 
 model Purchase {
-  id               String             @id @default(ulid())
-  transaction      TransactionHistory @relation(fields: [transactionId], references: [id])
-  transactionId    String             @unique
-  productVariant   ProductVariant     @relation(fields: [productVariantId], references: [id])
-  productVariantId String
-  status           PurchaseStatus     @default(PENDING)
-  vendorResponse   Json?
-  vendorRefId      String?
-  refId            String?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
+  id                   String             @id @default(ulid())
+  transaction          TransactionHistory @relation(fields: [transactionId], references: [id])
+  transactionId        String             @unique
+  productVariant       ProductVariant     @relation(fields: [productVariantId], references: [id])
+  productVariantId     String
+  status               PurchaseStatus     @default(PENDING)
+  vendorResponse       Json?
+  vendorStatusResponse Json?
+  vendorRefId          String?
+  refId                String?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
 
   @@index([refId])
 }
