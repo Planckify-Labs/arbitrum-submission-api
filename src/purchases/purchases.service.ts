@@ -4,10 +4,7 @@ import {
   BadRequestException,
   Logger,
 } from "@nestjs/common";
-import {
-  VendorOrderNotTrackableException,
-  mapVendorErrorToException,
-} from "./exceptions/vendor-api.exceptions";
+import { mapVendorErrorToException } from "./exceptions/vendor-api.exceptions";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreatePurchaseDto, UpdatePurchaseDto } from "./dto/purchase.dto";
 import { SearchPurchaseDto } from "./dto/search-purchase.dto";
@@ -330,24 +327,15 @@ export class PurchasesService {
       throw new NotFoundException(`Purchase with ID ${id} not found`);
     }
 
-    if (!purchase.vendorRefId) {
-      this.logger.warn(
-        `Purchase ${id} has no vendorRefId, cannot track vendor status`,
-        { purchaseId: id, status: purchase.status },
-      );
-      throw new VendorOrderNotTrackableException(
-        "Order cannot be tracked - missing vendor reference ID",
-      );
-    }
-
     const needsFreshStatus = this.shouldFetchFreshVendorStatus(purchase);
 
-    const vendorStatusResponse = needsFreshStatus
-      ? await this.fetchAndUpdateVendorStatus({
-          id: purchase.id,
-          vendorRefId: purchase.vendorRefId,
-        })
-      : purchase.vendorStatusResponse;
+    const vendorStatusResponse =
+      needsFreshStatus && purchase.vendorRefId
+        ? await this.fetchAndUpdateVendorStatus({
+            id: purchase.id,
+            vendorRefId: purchase.vendorRefId,
+          })
+        : purchase.vendorStatusResponse;
 
     const voucherCode = this.extractVoucherCode(vendorStatusResponse);
 

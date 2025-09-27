@@ -35,6 +35,7 @@ export interface TPurchaseStatusUpdate {
   refId: string;
   purchaseId?: string;
   status:
+    | "processing"
     | "pending"
     | "blockchain_verifying"
     | "blockchain_verified"

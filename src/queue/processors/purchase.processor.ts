@@ -60,17 +60,12 @@ export class PurchaseProcessor extends WorkerHost {
         throw new Error(`Purchase with ID ${purchaseId} not found`);
       }
 
-      await this.prisma.purchase.update({
-        where: { id: purchaseId },
-        data: { status: PurchaseStatus.PENDING },
-      });
-
       await this.updatePurchaseStatus(refId, {
         refId,
         purchaseId,
-        status: "blockchain_verifying",
-        stage: "blockchain_verification",
-        message: "Starting blockchain transaction verification",
+        status: "processing",
+        stage: "validation",
+        message: "Validating booking and preparing for blockchain verification",
       });
 
       const booking = await this.validateAndPrepareBooking(
@@ -80,10 +75,15 @@ export class PurchaseProcessor extends WorkerHost {
         contractAddress,
       );
 
+      await this.prisma.purchase.update({
+        where: { id: purchaseId },
+        data: { status: PurchaseStatus.PENDING },
+      });
+
       await this.updatePurchaseStatus(refId, {
         refId,
         purchaseId,
-        status: "blockchain_verifying",
+        status: "pending",
         stage: "blockchain_verification",
         message: "Verifying blockchain transaction",
       });
@@ -145,6 +145,11 @@ export class PurchaseProcessor extends WorkerHost {
       await this.prisma.bookingOrder.update({
         where: { id: bookingId },
         data: { status: BookingStatus.EXECUTED },
+      });
+
+      await this.prisma.purchase.update({
+        where: { id: purchaseId },
+        data: { status: PurchaseStatus.COMPLETED },
       });
 
       await this.updatePurchaseStatus(refId, {
@@ -455,7 +460,6 @@ export class PurchaseProcessor extends WorkerHost {
       data: {
         vendorRefId,
         vendorResponse: vendorResponse as Prisma.InputJsonValue,
-        status: PurchaseStatus.COMPLETED,
       },
     });
   }
