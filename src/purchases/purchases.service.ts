@@ -2,7 +2,12 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Logger,
 } from "@nestjs/common";
+import {
+  VendorOrderNotTrackableException,
+  mapVendorErrorToException,
+} from "./exceptions/vendor-api.exceptions";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreatePurchaseDto, UpdatePurchaseDto } from "./dto/purchase.dto";
 import { SearchPurchaseDto } from "./dto/search-purchase.dto";
@@ -10,13 +15,17 @@ import { Prisma, PurchaseStatus, ReferenceIdStatus } from "@generated/prisma";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import { ReferenceIdService } from "../reference-id/reference-id.service";
 import { QueueService } from "../queue/queue.service";
+import { VCGamersService } from "../providers/vendor-api/implementations/vcgamers/vcgamers.service";
 
 @Injectable()
 export class PurchasesService {
+  private readonly logger = new Logger(PurchasesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly referenceIdService: ReferenceIdService,
     private readonly queueService: QueueService,
+    private readonly vcGamersService: VCGamersService,
   ) {}
 
   async create(createPurchaseDto: CreatePurchaseDto) {
@@ -252,11 +261,19 @@ export class PurchasesService {
     });
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, options?: { vendorResponse?: boolean }) {
     const purchase = await this.prisma.purchase.findUnique({
       where: { id },
       include: {
-        transaction: true,
+        transaction: {
+          include: {
+            token: {
+              include: {
+                blockchain: true,
+              },
+            },
+          },
+        },
         productVariant: {
           include: {
             product: true,
@@ -269,7 +286,62 @@ export class PurchasesService {
       throw new NotFoundException(`Purchase with ID ${id} not found`);
     }
 
-    return purchase;
+    if (!purchase.vendorRefId) {
+      this.logger.warn(
+        `Purchase ${id} has no vendorRefId, cannot track vendor status`,
+        { purchaseId: id, status: purchase.status },
+      );
+      throw new VendorOrderNotTrackableException(
+        "Order cannot be tracked - missing vendor reference ID",
+      );
+    }
+
+    const needsFreshStatus = this.shouldFetchFreshVendorStatus(purchase);
+
+    const vendorStatusResponse = needsFreshStatus
+      ? await this.fetchAndUpdateVendorStatus({
+          id: purchase.id,
+          vendorRefId: purchase.vendorRefId,
+        })
+      : purchase.vendorStatusResponse;
+
+    const voucherCode = this.extractVoucherCode(vendorStatusResponse);
+
+    const vendorName = this.extractVendorName(vendorStatusResponse);
+
+    if (options?.vendorResponse) {
+      return {
+        id: purchase.id,
+        status: purchase.status,
+        transactionId: purchase.transactionId,
+        productVariantId: purchase.productVariantId,
+        vendorResponse: purchase.vendorResponse,
+        vendorRefId: purchase.vendorRefId,
+        refId: purchase.refId,
+        createdAt: purchase.createdAt,
+        updatedAt: purchase.updatedAt,
+        transaction: purchase.transaction,
+        productVariant: purchase.productVariant,
+        vendorName,
+        voucherCode,
+        lastChecked: purchase.updatedAt,
+        vendorStatusResponse:
+          this.extractRawVendorResponse(vendorStatusResponse),
+      };
+    } else {
+      return {
+        id: purchase.id,
+        status: purchase.status,
+        transactionId: purchase.transactionId,
+        productVariantId: purchase.productVariantId,
+        refId: purchase.refId,
+        createdAt: purchase.createdAt,
+        updatedAt: purchase.updatedAt,
+        transaction: purchase.transaction,
+        productVariant: purchase.productVariant,
+        voucherCode,
+      };
+    }
   }
 
   async updateStatus(id: string, updatePurchaseDto: UpdatePurchaseDto) {
@@ -296,17 +368,6 @@ export class PurchasesService {
         },
       },
     });
-  }
-
-  async getStatus(id: string) {
-    const purchase = await this.findOne(id);
-    return {
-      id: purchase.id,
-      status: purchase.status,
-      vendorResponse: purchase.vendorResponse,
-      vendorRefId: purchase.vendorRefId,
-      updatedAt: purchase.updatedAt,
-    };
   }
 
   async search(
@@ -524,6 +585,198 @@ export class PurchasesService {
         createdAt: "desc",
       },
     });
+  }
+
+  private shouldFetchFreshVendorStatus(purchase: {
+    id: string;
+    vendorStatusResponse: unknown;
+  }): boolean {
+    const existingVendorStatus = purchase.vendorStatusResponse as {
+      vendorName?: string;
+      vendorStatusResponse?: { data?: { status?: 1 | 2 } };
+    } | null;
+
+    if (
+      !existingVendorStatus ||
+      !existingVendorStatus.vendorStatusResponse?.data
+    ) {
+      return true;
+    }
+
+    if (existingVendorStatus.vendorStatusResponse.data.status === 2) {
+      this.logger.debug(
+        `Purchase ${purchase.id} has final vendor status, using cached response`,
+        {
+          purchaseId: purchase.id,
+          vendorStatus: existingVendorStatus.vendorStatusResponse.data.status,
+        },
+      );
+      return false;
+    }
+
+    this.logger.debug(
+      `Purchase ${purchase.id} needs fresh vendor status check`,
+      {
+        purchaseId: purchase.id,
+        vendorStatus: existingVendorStatus.vendorStatusResponse.data.status,
+      },
+    );
+    return true;
+  }
+
+  private async fetchAndUpdateVendorStatus(purchase: {
+    id: string;
+    vendorRefId: string;
+  }): Promise<unknown> {
+    this.logger.debug(
+      `Fetching fresh vendor status for purchase ${purchase.id}`,
+      { purchaseId: purchase.id, vendorRefId: purchase.vendorRefId },
+    );
+
+    try {
+      const vendorStatusResponse = await this.vcGamersService.getOrderStatus(
+        purchase.vendorRefId,
+      );
+
+      if (vendorStatusResponse.success && vendorStatusResponse.data) {
+        const wrappedResponse = {
+          vendorName: "vcGamer",
+          vendorStatusResponse: vendorStatusResponse.data,
+        };
+
+        try {
+          await this.prisma.purchase.update({
+            where: { id: purchase.id },
+            data: {
+              vendorStatusResponse:
+                wrappedResponse as unknown as Prisma.InputJsonValue,
+            },
+          });
+          this.logger.debug(
+            `Successfully updated vendor status for purchase ${purchase.id}`,
+            {
+              purchaseId: purchase.id,
+              vendorStatus: vendorStatusResponse.data.data?.status,
+            },
+          );
+        } catch (dbError) {
+          this.logger.error(
+            `Failed to update vendor status in database for purchase ${purchase.id} - continuing with response`,
+            {
+              purchaseId: purchase.id,
+              error: dbError.message,
+              vendorStatus: vendorStatusResponse.data.data?.status,
+            },
+          );
+        }
+
+        return wrappedResponse;
+      } else {
+        const wrappedErrorResponse = {
+          vendorName: "vcGamer",
+          vendorStatusResponse: vendorStatusResponse,
+        };
+
+        try {
+          await this.prisma.purchase.update({
+            where: { id: purchase.id },
+            data: {
+              vendorStatusResponse:
+                wrappedErrorResponse as unknown as Prisma.InputJsonValue,
+            },
+          });
+        } catch (dbError) {
+          this.logger.error(
+            `Failed to store error vendor status response for purchase ${purchase.id}`,
+            {
+              purchaseId: purchase.id,
+              dbError: dbError.message,
+              vendorError: vendorStatusResponse.error,
+            },
+          );
+        }
+
+        throw mapVendorErrorToException(
+          vendorStatusResponse.statusCode,
+          vendorStatusResponse.message || "Vendor API error",
+          vendorStatusResponse.originalError,
+        );
+      }
+    } catch (error) {
+      const wrappedErrorResponse = {
+        vendorName: "vcGamer",
+        vendorStatusResponse: {
+          success: false,
+          statusCode: 500,
+          message: "Unexpected error occurred while checking order status",
+          error: error.message || "Unknown error",
+        },
+      };
+
+      try {
+        await this.prisma.purchase.update({
+          where: { id: purchase.id },
+          data: {
+            vendorStatusResponse: wrappedErrorResponse as Prisma.InputJsonValue,
+          },
+        });
+      } catch (dbError) {
+        this.logger.error(
+          `Failed to store error vendor status response for purchase ${purchase.id}`,
+          {
+            purchaseId: purchase.id,
+            originalError: error.message,
+            dbError: dbError.message,
+          },
+        );
+      }
+
+      throw error;
+    }
+  }
+
+  private extractVoucherCode(vendorStatusResponse: unknown): string | null {
+    try {
+      const response = vendorStatusResponse as {
+        vendorStatusResponse?: {
+          data?: { detail?: { voucher_code?: string } };
+        };
+      };
+      return response?.vendorStatusResponse?.data?.detail?.voucher_code || null;
+    } catch (error) {
+      this.logger.debug("Failed to extract voucher code", {
+        error: (error as Error).message,
+      });
+      return null;
+    }
+  }
+
+  private extractVendorName(vendorStatusResponse: unknown): string | null {
+    try {
+      const response = vendorStatusResponse as {
+        vendorName?: string;
+      };
+      return response?.vendorName || null;
+    } catch (error) {
+      this.logger.debug("Failed to extract vendor name", {
+        error: (error as Error).message,
+      });
+      return null;
+    }
+  }
+
+  private extractRawVendorResponse(vendorStatusResponse: unknown): unknown {
+    try {
+      const response = vendorStatusResponse as {
+        vendorStatusResponse?: unknown;
+      };
+      return response?.vendorStatusResponse || null;
+    } catch (error) {
+      this.logger.debug("Failed to extract raw vendor response", {
+        error: (error as Error).message,
+      });
+      return null;
+    }
   }
 
   async getReferenceIdWithPurchase(refId: string) {

@@ -174,6 +174,32 @@ export class PurchaseResponseDto {
   vendorRefId?: string;
 
   @ApiProperty({
+    description: "Voucher code extracted from vendor response for easy client access",
+    example: "ABC123XYZ",
+    required: false,
+  })
+  voucherCode?: string | null;
+
+  @ApiProperty({
+    description: "Complete vendor status response data (only included when vendorResponse=true query parameter is used)",
+    example: {
+      vendorName: "vcGamer",
+      vendorStatusResponse: {
+        code: 200,
+        status: "success",
+        data: {
+          status: 2,
+          detail: {
+            voucher_code: "ABC123XYZ"
+          }
+        }
+      }
+    },
+    required: false,
+  })
+  vendorStatusResponse?: unknown;
+
+  @ApiProperty({
     description: "Creation timestamp",
     example: "2024-03-15T12:00:00Z",
   })

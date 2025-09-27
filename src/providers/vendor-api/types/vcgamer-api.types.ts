@@ -11,6 +11,12 @@ export interface TVCgamerResponse<T> {
   message: string;
   data?: T;
   error?: string;
+  originalError?: {
+    status?: number;
+    message: string;
+    responseData?: unknown;
+    type?: string;
+  };
 }
 
 export interface TVCGamerProduct {
@@ -56,4 +62,45 @@ export interface TVCGamerOrderResponse {
     transaction_status: string;
     trx_code: string;
   };
+}
+
+export interface TVCGamersCustomerData {
+  [key: string]: string;
+}
+
+export interface TVCGamersOrderParam {
+  alias: string;
+  key: string;
+  value: string;
+}
+
+export interface TVCGamersOrderDetail {
+  variation_key: string;
+  variation_name: string;
+  price: number;
+  customer_data: TVCGamersCustomerData;
+  voucher_code: string;
+  order_param: TVCGamersOrderParam[];
+}
+
+export interface TVCGamersHistoryStatus {
+  status_name: string;
+  timestamp: string;
+}
+
+export interface TVCGamersOrderStatusData {
+  code: string;
+  status: number;
+  date: string;
+  grand_total: number;
+  delivery_duration: number;
+  ref_id: string;
+  detail: TVCGamersOrderDetail;
+  history_status: TVCGamersHistoryStatus[];
+}
+
+export interface TVCGamersOrderStatusResponse {
+  code: number;
+  status: string;
+  data: TVCGamersOrderStatusData;
 }

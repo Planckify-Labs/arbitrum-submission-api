@@ -8,6 +8,7 @@ import {
   TVCGamerProductVariantResponse,
   TVCGamerOrderRequest,
   TVCGamerOrderResponse,
+  TVCGamersOrderStatusResponse,
 } from "../../types/vcgamer-api.types";
 import { PrismaService } from "../../../../prisma/prisma.service";
 import { VendorAPICacheService } from "../../../../valkey/services/vendor-api-cache.service";
@@ -30,17 +31,49 @@ interface VCGamersProductResponse {
 
 @Injectable()
 export class VCGamersService extends BaseVendorService {
-  constructor(configService: ConfigService, prisma: PrismaService, vendorAPICacheService: VendorAPICacheService) {
+  constructor(
+    configService: ConfigService,
+    prisma: PrismaService,
+    vendorAPICacheService: VendorAPICacheService,
+  ) {
     super(configService, prisma, vendorAPICacheService, "vcGamer");
   }
 
   protected createSignature(params: string): string {
-    console.log("Creating signature with params:", params);
-    const hmac = crypto
-      .createHmac("sha512", this.config.apiSecret || "")
-      .update(params)
-      .digest("hex");
-    return Buffer.from(hmac).toString("base64");
+    try {
+      if (!this.config.apiSecret) {
+        throw new Error("API secret is not configured");
+      }
+
+      if (!params || params.trim() === "") {
+        throw new Error("Signature parameters cannot be empty");
+      }
+
+      this.logger.debug("Creating signature for VCGamers request", {
+        paramsLength: params.length,
+        hasApiSecret: !!this.config.apiSecret,
+      });
+
+      const hmac = crypto
+        .createHmac("sha512", this.config.apiSecret)
+        .update(params)
+        .digest("hex");
+
+      const signature = Buffer.from(hmac).toString("base64");
+
+      this.logger.debug("Successfully created signature", {
+        signatureLength: signature.length,
+      });
+
+      return signature;
+    } catch (error) {
+      this.logger.error("Failed to create signature", {
+        error: error.message,
+        hasApiSecret: !!this.config.apiSecret,
+        paramsProvided: !!params,
+      });
+      throw new Error(`Signature generation failed: ${error.message}`);
+    }
   }
 
   async getProducts(): Promise<TVCgamerResponse<TVCGamerProduct[]>> {
@@ -147,5 +180,128 @@ export class VCGamersService extends BaseVendorService {
       data: response.data,
       error: response.error,
     };
+  }
+
+  async getOrderStatus(
+    transactionCode: string,
+  ): Promise<TVCgamerResponse<TVCGamersOrderStatusResponse>> {
+    try {
+      if (!transactionCode || transactionCode.trim() === "") {
+        this.logger.error(
+          "Invalid transaction code provided for order status check",
+          {
+            transactionCode,
+          },
+        );
+        return {
+          success: false,
+          statusCode: 400,
+          message: "Invalid transaction code",
+          error: "Transaction code is required and cannot be empty",
+        };
+      }
+
+      const params = `${this.config.apiSecret}orderstatus${transactionCode}`;
+      let signature: string;
+
+      try {
+        signature = this.createSignature(params);
+      } catch (signatureError) {
+        this.logger.error(
+          "Failed to create signature for order status request",
+          {
+            transactionCode,
+            error: signatureError.message,
+          },
+        );
+        return {
+          success: false,
+          statusCode: 401,
+          message: "Authentication signature generation failed",
+          error: "Unable to generate authentication signature",
+        };
+      }
+
+      this.logger.debug("Making order status request to VCGamers", {
+        transactionCode,
+        endpoint: `/v2/public/order-status?tid=${transactionCode}&sign=${signature}`,
+      });
+
+      const response = await this.makeRequest<TVCGamersOrderStatusResponse>(
+        "GET",
+        `/v2/public/order-status?tid=${transactionCode}&sign=${signature}`,
+      );
+
+      this.logger.debug("VCGamers order status response received", {
+        transactionCode,
+        success: response.success,
+        statusCode: response.statusCode,
+        hasData: !!response.data,
+      });
+
+      if (!response.success) {
+        this.logger.warn("VCGamers order status request failed", {
+          transactionCode,
+          statusCode: response.statusCode,
+          error: response.error,
+          originalError: response.originalError,
+        });
+
+        return {
+          ...response,
+          data: undefined,
+        };
+      }
+
+      if (!response.data || typeof response.data !== "object") {
+        this.logger.error("Invalid response data structure from VCGamers", {
+          transactionCode,
+          responseData: response.data,
+        });
+
+        return {
+          success: false,
+          statusCode: 502,
+          message: "Invalid vendor response format",
+          error: "Vendor returned invalid response structure",
+          originalError: {
+            message: "Invalid response data structure",
+            responseData: response.data,
+          },
+        };
+      }
+
+      this.logger.log("Successfully retrieved order status from VCGamers", {
+        transactionCode,
+        status: response.data.data?.status,
+        statusCode: response.statusCode,
+      });
+
+      return {
+        success: response.success,
+        statusCode: response.statusCode,
+        message: response.message,
+        data: response.data,
+        error: response.error,
+        originalError: response.originalError,
+      };
+    } catch (error) {
+      this.logger.error("Unexpected error in getOrderStatus", {
+        transactionCode,
+        error: error.message,
+        stack: error.stack,
+      });
+
+      return {
+        success: false,
+        statusCode: 500,
+        message: "Unexpected error occurred while checking order status",
+        error: error.message || "Unknown error",
+        originalError: {
+          message: error.message,
+          type: "unexpected_error",
+        },
+      };
+    }
   }
 }

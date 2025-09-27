@@ -137,21 +137,106 @@ export function ApiGetPurchase() {
       example: "Bearer <token>",
     }),
     ApiOperation({
-      summary: "Get purchase by ID",
-      description: "Retrieves a specific purchase by its ID",
+      summary: "Get purchase by ID with intelligent vendor status fetching",
+      description: `Retrieves a specific purchase by its ID with enhanced vendor status information.
+
+## Enhanced Features
+- **Intelligent Status Fetching**: Only makes vendor API calls when needed (status != 2 for VCGamers)
+- **Voucher Code Extraction**: Automatically extracts voucher codes for easy client access
+- **Performance Optimized**: Avoids unnecessary API calls for completed orders
+- **Comprehensive Data**: Includes all purchase details plus vendor status information
+
+## Query Parameters
+- **vendorResponse**: Set to 'true' to include complete vendor status response in the response
+
+## Response Fields
+- **voucherCode**: Extracted voucher code from vendor response (always included)
+- **vendorStatusResponse**: Complete vendor status data (only when vendorResponse=true)`,
     }),
     ApiParam({
       name: "id",
       description: "Purchase ID",
       example: "01H1G5V...",
     }),
+    ApiQuery({
+      name: "vendorResponse",
+      required: false,
+      description: "Include complete vendor status response data in the response",
+      example: "true",
+      type: "string",
+    }),
     ApiResponse({
       status: 200,
-      description: "Returns the purchase details",
+      description: "Returns the enhanced purchase details with vendor status information",
+      schema: {
+        type: "object",
+        properties: {
+          id: {
+            type: "string",
+            example: "01H1G5V...",
+            description: "Purchase ID",
+          },
+          status: {
+            type: "string",
+            example: "COMPLETED",
+            description: "Purchase status",
+          },
+          vendorRefId: {
+            type: "string",
+            example: "VC123456789",
+            description: "Vendor reference ID",
+          },
+          voucherCode: {
+            type: "string",
+            nullable: true,
+            example: "ABC123XYZ",
+            description: "Voucher code extracted from vendor response for easy client access",
+          },
+          vendorStatusResponse: {
+            type: "object",
+            description: "Complete vendor status response (only included when vendorResponse=true)",
+            example: {
+              vendorName: "vcGamer",
+              vendorStatusResponse: {
+                code: 200,
+                status: "success",
+                data: {
+                  status: 2,
+                  detail: {
+                    voucher_code: "ABC123XYZ"
+                  }
+                }
+              }
+            }
+          },
+          transaction: {
+            type: "object",
+            description: "Associated transaction details",
+          },
+          productVariant: {
+            type: "object",
+            description: "Product variant details",
+          },
+          createdAt: {
+            type: "string",
+            format: "date-time",
+            description: "Creation timestamp",
+          },
+          updatedAt: {
+            type: "string",
+            format: "date-time",
+            description: "Last update timestamp",
+          },
+        },
+      },
     }),
     ApiResponse({
       status: 404,
       description: "Purchase not found",
+    }),
+    ApiResponse({
+      status: 422,
+      description: "Order cannot be tracked - missing vendor reference ID",
     }),
   );
 }
@@ -249,34 +334,6 @@ export function ApiUpdatePurchaseStatus() {
     ApiResponse({
       status: 400,
       description: "Invalid input data",
-    }),
-  );
-}
-
-export function ApiGetPurchaseStatus() {
-  return applyDecorators(
-    ApiHeader({
-      name: "Authorization",
-      required: true,
-      description: "JWT token",
-      example: "Bearer <token>",
-    }),
-    ApiOperation({
-      summary: "Get purchase status",
-      description: "Retrieves the current status of a purchase",
-    }),
-    ApiParam({
-      name: "id",
-      description: "Purchase ID",
-      example: "01H1G5V...",
-    }),
-    ApiResponse({
-      status: 200,
-      description: "Returns the purchase status details",
-    }),
-    ApiResponse({
-      status: 404,
-      description: "Purchase not found",
     }),
   );
 }

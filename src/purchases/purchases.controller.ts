@@ -21,7 +21,6 @@ import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import {
   ApiGetPurchase,
   ApiGetPurchases,
-  ApiGetPurchaseStatus,
   ApiUpdatePurchaseStatus,
   ApiSearchPurchases,
   ApiGetUserPurchases,
@@ -163,15 +162,16 @@ export class PurchasesController {
 
   @Get(":id")
   @ApiGetPurchase()
-  findOne(@Param("id") id: string) {
-    return this.purchasesService.findOne(id);
+  findOne(
+    @Param("id") id: string,
+    @Query("vendorResponse") vendorResponse?: string,
+  ) {
+    const includeVendorResponse = vendorResponse === "true";
+    return this.purchasesService.findOne(id, { 
+      vendorResponse: includeVendorResponse 
+    });
   }
 
-  @Get(":id/status")
-  @ApiGetPurchaseStatus()
-  getStatus(@Param("id") id: string) {
-    return this.purchasesService.getStatus(id);
-  }
 
   @Put(":id/status")
   @ApiUpdatePurchaseStatus()
