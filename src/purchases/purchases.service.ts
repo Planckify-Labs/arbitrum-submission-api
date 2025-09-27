@@ -279,6 +279,13 @@ export class PurchasesService {
             product: true,
           },
         },
+        bookingOrder: {
+          select: {
+            id: true,
+            createdAt: true,
+            customerInfo: true,
+          },
+        },
       },
     });
 
@@ -311,17 +318,7 @@ export class PurchasesService {
 
     if (options?.vendorResponse) {
       return {
-        id: purchase.id,
-        status: purchase.status,
-        transactionId: purchase.transactionId,
-        productVariantId: purchase.productVariantId,
-        vendorResponse: purchase.vendorResponse,
-        vendorRefId: purchase.vendorRefId,
-        refId: purchase.refId,
-        createdAt: purchase.createdAt,
-        updatedAt: purchase.updatedAt,
-        transaction: purchase.transaction,
-        productVariant: purchase.productVariant,
+        ...purchase,
         vendorName,
         voucherCode,
         lastChecked: purchase.updatedAt,
@@ -340,6 +337,7 @@ export class PurchasesService {
         transaction: purchase.transaction,
         productVariant: purchase.productVariant,
         voucherCode,
+        booking: purchase.bookingOrder,
       };
     }
   }

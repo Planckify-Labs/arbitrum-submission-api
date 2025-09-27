@@ -114,6 +114,7 @@ export class PurchaseProcessor extends WorkerHost {
       const purchase = await this.createPurchaseRecord(
         transaction.id,
         booking.productVariantId,
+        booking.id,
         refId,
       );
 
@@ -373,12 +374,14 @@ export class PurchaseProcessor extends WorkerHost {
   private async createPurchaseRecord(
     transactionId: string,
     productVariantId: string,
+    bookingOrderId: string,
     refId: string,
   ) {
     return await this.prisma.purchase.create({
       data: {
         transaction: { connect: { id: transactionId } },
         productVariant: { connect: { id: productVariantId } },
+        bookingOrder: { connect: { id: bookingOrderId } },
         status: PurchaseStatus.PENDING,
         refId,
       },

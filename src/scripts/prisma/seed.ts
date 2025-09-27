@@ -610,6 +610,18 @@ async function main() {
         isActive: true,
       },
     }),
+    prisma.smartContract.upsert({
+      where: { id: "smart-contract-payment-sepolia" },
+      update: {},
+      create: {
+        id: "smart-contract-payment-sepolia",
+        name: "Payment Processor Sepolia",
+        blockchainId: blockchains[2].id,
+        address: "0xf64BA8EEBD3f9e268bC1989Af0dde77ab2418779",
+        abiId: contractABIs[1].id,
+        isActive: true,
+      },
+    }),
   ]);
 
   const tokens = await Promise.all([
@@ -1286,10 +1298,36 @@ async function main() {
     );
   }
 
+  // Create booking order for the purchase
+  const bookingOrder = await prisma.bookingOrder.create({
+    data: {
+      walletAddress: users[0].walletAddress!,
+      productVariantId: productVariants[0].id,
+      productPriceId: productPrice.id,
+      customerInfo: {
+        userId: "12345",
+        server: "Asia",
+      },
+      payment: {
+        amount: 10,
+        tokenAddress: tokens[0].contractAddress,
+        chainId: 1,
+      },
+      exchangeRate: {
+        rate: 15700,
+        fromCurrency: "ETH",
+        toCurrency: "IDR",
+      },
+      status: "EXECUTED",
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
+    },
+  });
+
   await prisma.purchase.create({
     data: {
       transactionId: transaction.id,
       productVariantId: productVariants[0].id,
+      bookingOrderId: bookingOrder.id,
       status: "COMPLETED",
       vendorResponse: JSON.parse(
         '{"success": true, "message": "Top up successful", "transactionId": "VC123456789"}',
