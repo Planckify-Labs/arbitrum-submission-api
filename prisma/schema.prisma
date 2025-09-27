@@ -202,6 +202,8 @@ model Purchase {
   transactionId        String             @unique
   productVariant       ProductVariant     @relation(fields: [productVariantId], references: [id])
   productVariantId     String
+  bookingOrder         BookingOrder       @relation(fields: [bookingOrderId], references: [id])
+  bookingOrderId       String             @unique
   status               PurchaseStatus     @default(PENDING)
   vendorResponse       Json?
   vendorStatusResponse Json?
@@ -426,6 +428,7 @@ model BookingOrder {
   exchangeRate     Json
   status           BookingStatus  @default(PENDING)
   expiresAt        DateTime
+  purchase         Purchase?
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
