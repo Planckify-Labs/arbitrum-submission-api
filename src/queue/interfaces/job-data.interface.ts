@@ -7,6 +7,7 @@ export interface TPurchaseJobData {
   transactionHash: string;
   userId: string;
   tokenId: string;
+  purchaseId: string;
 }
 
 export interface TBlockchainVerificationJobData {

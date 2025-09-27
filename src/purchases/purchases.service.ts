@@ -194,13 +194,41 @@ export class PurchasesService {
       );
     }
 
+    const placeholderTransaction = await this.prisma.transactionHistory.create({
+      data: {
+        user: { connect: { id: user.id } },
+        token: { connect: { id: token.id } },
+        amount: payment.amount,
+        amountInFiat: "0",
+        fiatCurrency: "IDR",
+        type: "PAYMENT",
+        status: "PENDING",
+        senderAddress: walletAddress,
+        recipientAddress: contractAddress,
+        txHash: transactionHash,
+      },
+    });
+
+    const purchase = await this.prisma.purchase.create({
+      data: {
+        transaction: { connect: { id: placeholderTransaction.id } },
+        productVariant: {
+          connect: { id: bookingForMetadata.productVariantId },
+        },
+        bookingOrder: { connect: { id: bookingId } },
+        status: PurchaseStatus.PROCESSING,
+        refId,
+      },
+    });
+
     try {
       await this.referenceIdService.markAsProcessing(refId, {
         requestType: "PURCHASE",
         walletAddress,
         bookingId,
+        purchaseId: purchase.id,
         stage: "queued_for_processing",
-        message: "Purchase queued for background processing",
+        message: "Purchase created and queued for background processing",
       });
 
       const jobId = await this.queueService.addPurchaseJob({
@@ -212,24 +240,33 @@ export class PurchasesService {
         transactionHash,
         userId: user.id,
         tokenId: token.id,
+        purchaseId: purchase.id,
       });
 
       console.log(`Purchase job queued with ID: ${jobId} for refId: ${refId}`);
 
       return {
+        id: purchase.id,
         refId,
-        status: PurchaseStatus.PENDING,
-        message: "Purchase is being processed in the background",
+        status: PurchaseStatus.PROCESSING,
+        message: "Purchase created and is being processed in the background",
         processingStatus: "queued",
         jobId,
         bookingId,
         estimatedProcessingTime: "2-5 minutes",
+        createdAt: purchase.createdAt,
       };
     } catch (error) {
+      await this.prisma.purchase.update({
+        where: { id: purchase.id },
+        data: { status: PurchaseStatus.FAILED },
+      });
+
       await this.referenceIdService.markAsFailed(refId, {
         requestType: "PURCHASE",
         walletAddress,
         bookingId,
+        purchaseId: purchase.id,
         error: error.message,
         errorType: "queue_error",
       });

@@ -43,13 +43,31 @@ export class PurchaseProcessor extends WorkerHost {
       networkId,
       contractAddress,
       transactionHash,
+      purchaseId,
     } = job.data;
 
     this.logger.log(`Processing purchase job ${job.id} for refId: ${refId}`);
 
     try {
+      const existingPurchase = await this.prisma.purchase.findUnique({
+        where: { id: purchaseId },
+        include: {
+          transaction: true,
+        },
+      });
+
+      if (!existingPurchase) {
+        throw new Error(`Purchase with ID ${purchaseId} not found`);
+      }
+
+      await this.prisma.purchase.update({
+        where: { id: purchaseId },
+        data: { status: PurchaseStatus.PENDING },
+      });
+
       await this.updatePurchaseStatus(refId, {
         refId,
+        purchaseId,
         status: "blockchain_verifying",
         stage: "blockchain_verification",
         message: "Starting blockchain transaction verification",
@@ -62,15 +80,9 @@ export class PurchaseProcessor extends WorkerHost {
         contractAddress,
       );
 
-      const user = await this.createOrGetUser(walletAddress);
-
-      const token = await this.validateToken(
-        networkId,
-        booking.payment.tokenAddress,
-      );
-
       await this.updatePurchaseStatus(refId, {
         refId,
+        purchaseId,
         status: "blockchain_verifying",
         stage: "blockchain_verification",
         message: "Verifying blockchain transaction",
@@ -100,27 +112,23 @@ export class PurchaseProcessor extends WorkerHost {
         booking.payment.amount,
       );
 
-      const transaction = await this.createTransactionRecord(
-        user.id,
-        token.id,
-        booking.payment.amount,
-        booking.exchangeRate as { rate: number } | null,
-        booking.productPrice?.sellPrice?.toString() || "0",
-        walletAddress,
-        contractAddress,
-        transactionHash,
-      );
+      const exchangeRateObj = booking.exchangeRate as { rate: number } | null;
+      const rate = exchangeRateObj?.rate || 0;
+      const sellPrice = booking.productPrice?.sellPrice?.toString() || "0";
+      const amountInFiat =
+        rate && sellPrice ? (Number(sellPrice) * rate).toString() : "0";
 
-      const purchase = await this.createPurchaseRecord(
-        transaction.id,
-        booking.productVariantId,
-        booking.id,
-        refId,
-      );
+      const transaction = await this.prisma.transactionHistory.update({
+        where: { id: existingPurchase.transactionId },
+        data: {
+          amountInFiat,
+          status: TransactionStatus.CONFIRMED,
+        },
+      });
 
       await this.updatePurchaseStatus(refId, {
         refId,
-        purchaseId: purchase.id,
+        purchaseId,
         status: "blockchain_verified",
         stage: "blockchain_verified",
         message: "Blockchain transaction verified successfully",
@@ -128,7 +136,7 @@ export class PurchaseProcessor extends WorkerHost {
 
       if (booking.productPrice?.vendor?.name === "vcGamer") {
         await this.processVendorOrder(
-          purchase.id,
+          purchaseId,
           booking as unknown as TBookingWithRelations,
           refId,
         );
@@ -141,7 +149,7 @@ export class PurchaseProcessor extends WorkerHost {
 
       await this.updatePurchaseStatus(refId, {
         refId,
-        purchaseId: purchase.id,
+        purchaseId,
         status: "completed",
         stage: "completed",
         message: "Purchase completed successfully",
@@ -151,7 +159,7 @@ export class PurchaseProcessor extends WorkerHost {
         requestType: "PURCHASE",
         walletAddress,
         bookingId,
-        purchaseId: purchase.id,
+        purchaseId,
         vendorName: booking.productPrice?.vendor?.name,
         vendorId: booking.productPrice?.vendorId,
         productCode: booking.productVariant.product.code,
@@ -166,7 +174,7 @@ export class PurchaseProcessor extends WorkerHost {
 
       return {
         success: true,
-        purchaseId: purchase.id,
+        purchaseId,
         transactionId: transaction.id,
       };
     } catch (error: unknown) {
@@ -177,8 +185,14 @@ export class PurchaseProcessor extends WorkerHost {
         error,
       );
 
+      await this.prisma.purchase.update({
+        where: { id: purchaseId },
+        data: { status: PurchaseStatus.FAILED },
+      });
+
       await this.updatePurchaseStatus(refId, {
         refId,
+        purchaseId,
         status: "failed",
         stage: "error",
         message: "Purchase processing failed",
@@ -189,6 +203,7 @@ export class PurchaseProcessor extends WorkerHost {
         requestType: "PURCHASE",
         walletAddress,
         bookingId,
+        purchaseId,
         error: errorMessage,
         errorType: "purchase_processing_error",
       });
@@ -367,23 +382,6 @@ export class PurchaseProcessor extends WorkerHost {
         senderAddress,
         recipientAddress,
         txHash,
-      },
-    });
-  }
-
-  private async createPurchaseRecord(
-    transactionId: string,
-    productVariantId: string,
-    bookingOrderId: string,
-    refId: string,
-  ) {
-    return await this.prisma.purchase.create({
-      data: {
-        transaction: { connect: { id: transactionId } },
-        productVariant: { connect: { id: productVariantId } },
-        bookingOrder: { connect: { id: bookingOrderId } },
-        status: PurchaseStatus.PENDING,
-        refId,
       },
     });
   }
