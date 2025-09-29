@@ -52,7 +52,11 @@ export class TransactionsService {
     const transaction = await this.prisma.transactionHistory.findUnique({
       where: { id },
       include: {
-        token: true,
+        token: {
+          include: {
+            blockchain: true,
+          },
+        },
         purchase: true,
       },
     });
