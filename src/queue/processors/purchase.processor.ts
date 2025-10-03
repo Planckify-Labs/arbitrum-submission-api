@@ -360,37 +360,6 @@ export class PurchaseProcessor extends WorkerHost {
     return verificationResult;
   }
 
-  private async createTransactionRecord(
-    userId: string,
-    tokenId: string,
-    amount: string,
-    exchangeRate: { rate: number } | null,
-    sellPrice: string,
-    senderAddress: string,
-    recipientAddress: string,
-    txHash: string,
-  ) {
-    const exchangeRateObj = exchangeRate as { rate: number } | null;
-    const rate = exchangeRateObj?.rate || 0;
-    const amountInFiat =
-      rate && sellPrice ? (Number(sellPrice) * rate).toString() : "0";
-
-    return await this.prisma.transactionHistory.create({
-      data: {
-        user: { connect: { id: userId } },
-        token: { connect: { id: tokenId } },
-        amount,
-        amountInFiat,
-        fiatCurrency: "IDR",
-        type: TransactionType.PAYMENT,
-        status: TransactionStatus.CONFIRMED,
-        senderAddress,
-        recipientAddress,
-        txHash,
-      },
-    });
-  }
-
   private async processVendorOrder(
     purchaseId: string,
     booking: TBookingWithRelations,
