@@ -4,13 +4,13 @@ import { Transform } from "class-transformer";
 
 export class SearchProductVariantDto {
   @ApiProperty({
-    description: "Search by SKU (case insensitive)",
+    description: "Search by variant code (case insensitive)",
     required: false,
     example: "MLBB-60D",
   })
   @IsString()
   @IsOptional()
-  sku?: string;
+  variantCode?: string;
 
   @ApiProperty({
     description: "Search by variant name (case insensitive)",
@@ -31,7 +31,8 @@ export class SearchProductVariantDto {
   productId?: string;
 
   @ApiProperty({
-    description: "General search term that matches against name or SKU",
+    description:
+      "General search term that matches against name or variant code",
     required: false,
   })
   @IsString()

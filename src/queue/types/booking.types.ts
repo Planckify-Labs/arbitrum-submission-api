@@ -11,7 +11,7 @@ export interface TBookingWithRelations {
   exchangeRate: { rate: number } | null;
   productVariant: {
     id: string;
-    sku: string;
+    variantCode: string;
     product: {
       id: string;
       code: string;

@@ -36,6 +36,15 @@ export class CreateProductDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiProperty({
+    example: false,
+    required: false,
+    description: "Indicates if this product is a voucher",
+  })
+  @IsOptional()
+  @IsBoolean()
+  isVoucher?: boolean;
 }
 
 export class UpdateProductDto extends PartialType(CreateProductDto) {}

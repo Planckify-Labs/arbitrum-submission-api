@@ -41,6 +41,7 @@ model Product {
   category    Category            @relation(fields: [categoryId], references: [id])
   categoryId  String
   isActive    Boolean             @default(true)
+  isVoucher   Boolean             @default(false)
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
   variants    ProductVariant[]
@@ -70,7 +71,7 @@ model ProductVariant {
   id            String         @id @default(ulid())
   name          String
   description   String?
-  sku           String         @unique
+  variantCode   String         @unique
   product       Product        @relation(fields: [productId], references: [id])
   productId     String
   isActive      Boolean        @default(true)
@@ -82,7 +83,7 @@ model ProductVariant {
   subCategory   Category?      @relation(fields: [subCategoryId], references: [id])
   subCategoryId String?
 
-  @@index([sku])
+  @@index([variantCode])
 }
 
 model Vendor {

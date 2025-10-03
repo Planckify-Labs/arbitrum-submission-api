@@ -169,7 +169,7 @@ export class PurchaseProcessor extends WorkerHost {
         vendorId: booking.productPrice?.vendorId,
         productCode: booking.productVariant.product.code,
         productName: booking.productVariant.product.name,
-        variantSku: booking.productVariant.sku,
+        variantCode: booking.productVariant.variantCode,
         status: "completed_successfully",
       });
 
@@ -412,7 +412,7 @@ export class PurchaseProcessor extends WorkerHost {
     }
 
     const brandKey = booking.productVariant.product.code;
-    const variationKey = booking.productVariant.sku;
+    const variationKey = booking.productVariant.variantCode;
     const price = Number(booking.productPrice?.priceFromVendor || 0);
 
     let formData: Array<{ key: string; value: string }>;
@@ -436,7 +436,7 @@ export class PurchaseProcessor extends WorkerHost {
       vendorId: booking.productPrice?.vendorId,
       productCode: booking.productVariant.product.code,
       productName: booking.productVariant.product.name,
-      variantSku: booking.productVariant.sku,
+      variantCode: booking.productVariant.variantCode,
       vendorAction: "creating_order",
     });
 

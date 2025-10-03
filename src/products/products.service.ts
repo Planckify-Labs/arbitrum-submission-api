@@ -34,6 +34,18 @@ export class ProductsService {
       take,
       skip: cursor ? 1 : 0,
       cursor: cursor ? { id: cursor } : undefined,
+      include: {
+        category: true,
+        variants: {
+          include: {
+            ProductPrice: {
+              include: {
+                vendor: true,
+              },
+            },
+          },
+        },
+      },
       orderBy: {
         name: "asc",
       },
@@ -42,7 +54,8 @@ export class ProductsService {
 
   search(params: SearchProductDto, paginationDto: CursorPaginationDto) {
     const { cursor, take = 10 } = paginationDto;
-    const { query, vendorId, active, code, id, name, vendorName } = params;
+    const { query, vendorId, active, code, id, name, vendorName, isVoucher } =
+      params;
 
     const where: Prisma.ProductWhereInput = {};
 
@@ -120,11 +133,73 @@ export class ProductsService {
       where.isActive = active;
     }
 
+    if (isVoucher !== undefined) {
+      where.isVoucher = isVoucher;
+    }
+
     return this.prisma.product.findMany({
       take,
       skip: cursor ? 1 : 0,
       cursor: cursor ? { id: cursor } : undefined,
       where,
+      include: {
+        category: true,
+        variants: {
+          include: {
+            ProductPrice: {
+              include: {
+                vendor: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        name: "asc",
+      },
+    });
+  }
+
+  findVouchers(paginationDto: CursorPaginationDto) {
+    const { cursor, take = 10 } = paginationDto;
+
+    return this.prisma.product.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
+      where: {
+        isVoucher: true,
+        isActive: true,
+      },
+      include: {
+        category: true,
+        variants: {
+          include: {
+            ProductPrice: {
+              include: {
+                vendor: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        name: "asc",
+      },
+    });
+  }
+
+  findNonVouchers(paginationDto: CursorPaginationDto) {
+    const { cursor, take = 10 } = paginationDto;
+
+    return this.prisma.product.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
+      where: {
+        isVoucher: false,
+        isActive: true,
+      },
       include: {
         category: true,
         variants: {
@@ -461,13 +536,13 @@ export class ProductsService {
     paginationDto: CursorPaginationDto,
   ) {
     const { cursor, take = 10 } = paginationDto;
-    const { sku, name, productId, isActive, query } = params;
+    const { variantCode, name, productId, isActive, query } = params;
 
     const where: Prisma.ProductVariantWhereInput = {};
 
-    if (sku) {
-      where.sku = {
-        contains: sku,
+    if (variantCode) {
+      where.variantCode = {
+        contains: variantCode,
         mode: "insensitive",
       };
     }
@@ -487,10 +562,10 @@ export class ProductsService {
       where.isActive = isActive;
     }
 
-    if (query && !sku && !name) {
+    if (query && !variantCode && !name) {
       where.OR = [
         { name: { contains: query, mode: "insensitive" } },
-        { sku: { contains: query, mode: "insensitive" } },
+        { variantCode: { contains: query, mode: "insensitive" } },
       ];
     }
 
@@ -522,6 +597,18 @@ export class ProductsService {
           take: take ? take : 6,
           where: {
             isActive: true,
+          },
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            imageUrl: true,
+            code: true,
+            categoryId: true,
+            isActive: true,
+            isVoucher: true,
+            createdAt: true,
+            updatedAt: true,
           },
         },
       },

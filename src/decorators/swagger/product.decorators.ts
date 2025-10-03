@@ -21,6 +21,7 @@ const productSchema = {
     },
     imageUrl: { type: "string", example: "https://example.com/mlbb.jpg" },
     isActive: { type: "boolean", example: true },
+    isVoucher: { type: "boolean", example: false },
     createdAt: { type: "string", format: "date-time" },
     updatedAt: { type: "string", format: "date-time" },
     variants: {
@@ -30,7 +31,7 @@ const productSchema = {
         properties: {
           id: { type: "string" },
           name: { type: "string" },
-          sku: { type: "string" },
+          variantCode: { type: "string" },
         },
       },
     },
@@ -726,7 +727,7 @@ export function ApiGetProductVariants() {
               type: "string",
               example: "60 Mobile Legends Diamonds",
             },
-            sku: { type: "string", example: "MLBB-60D" },
+            variantCode: { type: "string", example: "MLBB-60D" },
             productId: { type: "string", example: "01H1G5V..." },
             isActive: { type: "boolean", example: true },
             createdAt: { type: "string", format: "date-time" },
@@ -772,9 +773,9 @@ export function ApiSearchProductVariants() {
       description: "Search product variants using various criteria",
     }),
     ApiQuery({
-      name: "sku",
+      name: "variantCode",
       required: false,
-      description: "Search by SKU (case insensitive)",
+      description: "Search by variant code (case insensitive)",
       type: "string",
       example: "MLBB-60D",
     }),
@@ -801,7 +802,8 @@ export function ApiSearchProductVariants() {
     ApiQuery({
       name: "query",
       required: false,
-      description: "General search term that matches against name or SKU",
+      description:
+        "General search term that matches against name or variant code",
       type: "string",
     }),
     ApiResponse({
@@ -814,7 +816,7 @@ export function ApiSearchProductVariants() {
           properties: {
             id: { type: "string", example: "01H1G5V..." },
             name: { type: "string", example: "60 Diamonds" },
-            sku: { type: "string", example: "MLBB-60D" },
+            variantCode: { type: "string", example: "MLBB-60D" },
             productId: { type: "string", example: "01H1G5V..." },
             isActive: { type: "boolean", example: true },
           },
@@ -855,7 +857,7 @@ export function ApiGetProductVariant() {
             type: "string",
             example: "60 Mobile Legends Diamonds",
           },
-          sku: { type: "string", example: "MLBB-60D" },
+          variantCode: { type: "string", example: "MLBB-60D" },
           productId: { type: "string", example: "01H1G5V..." },
           isActive: { type: "boolean", example: true },
           createdAt: { type: "string", format: "date-time" },
@@ -1493,7 +1495,7 @@ export function ApiGetProductVariantPublic() {
             type: "string",
             example: "60 Mobile Legends Diamonds",
           },
-          sku: { type: "string", example: "MLBB-60D" },
+          variantCode: { type: "string", example: "MLBB-60D" },
           productId: { type: "string", example: "01H1G5V..." },
           isActive: { type: "boolean", example: true },
           createdAt: { type: "string", format: "date-time" },

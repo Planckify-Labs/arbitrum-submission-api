@@ -84,6 +84,22 @@ export class ProductsController {
     return this.productsService.findAll(paginationDto);
   }
 
+  @Get("vouchers")
+  @Public()
+  @ApiKey()
+  @ApiGetProductsPublic()
+  findVouchers(@Query() paginationDto: CursorPaginationDto) {
+    return this.productsService.findVouchers(paginationDto);
+  }
+
+  @Get("non-vouchers")
+  @Public()
+  @ApiKey()
+  @ApiGetProductsPublic()
+  findNonVouchers(@Query() paginationDto: CursorPaginationDto) {
+    return this.productsService.findNonVouchers(paginationDto);
+  }
+
   @Get("grouped-by-categories")
   @Public()
   @ApiKey()

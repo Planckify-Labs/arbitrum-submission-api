@@ -1010,6 +1010,7 @@ async function main() {
         description: product.description?.replace(/<[^>]*>/g, "") || "",
         imageUrl: product.image_url,
         isActive: true,
+        isVoucher: product.is_voucher,
       },
     });
     productsMap.set(product.key, createdProduct);
@@ -1068,11 +1069,11 @@ async function main() {
     for (const variant of variantsResponse.data) {
       try {
         const createdVariant = await prisma.productVariant.upsert({
-          where: { sku: variant.key },
+          where: { variantCode: variant.key },
           update: {},
           create: {
             name: variant.variation_name,
-            sku: variant.key,
+            variantCode: variant.key,
             description: `${variant.variation_name} for ${variant.brand_name}`,
             productId: createdProduct.id,
           },
@@ -1107,71 +1108,71 @@ async function main() {
 
   const productVariants = await Promise.all([
     prisma.productVariant.upsert({
-      where: { sku: "MLBB-86" },
+      where: { variantCode: "MLBB-86" },
       update: {},
       create: {
         name: "86 Diamonds",
-        sku: "MLBB-86",
+        variantCode: "MLBB-86",
         description: "86 Diamonds for Mobile Legends",
         productId: firstProduct.id,
       },
     }),
     prisma.productVariant.upsert({
-      where: { sku: "MLBB-172" },
+      where: { variantCode: "MLBB-172" },
       update: {},
       create: {
         name: "172 Diamonds",
-        sku: "MLBB-172",
+        variantCode: "MLBB-172",
         description: "172 Diamonds for Mobile Legends",
         productId: firstProduct.id,
       },
     }),
     prisma.productVariant.upsert({
-      where: { sku: "GOGP-10" },
+      where: { variantCode: "GOGP-10" },
       update: {},
       create: {
         name: "$10 Google Play Card",
-        sku: "GOGP-10",
+        variantCode: "GOGP-10",
         description: "$10 Google Play Gift Card",
         productId: firstProduct.id,
       },
     }),
     prisma.productVariant.upsert({
-      where: { sku: "GOGP-25" },
+      where: { variantCode: "GOGP-25" },
       update: {},
       create: {
         name: "$25 Google Play Card",
-        sku: "GOGP-25",
+        variantCode: "GOGP-25",
         description: "$25 Google Play Gift Card",
         productId: firstProduct.id,
       },
     }),
     prisma.productVariant.upsert({
-      where: { sku: "XLDB1GB2H" },
+      where: { variantCode: "XLDB1GB2H" },
       update: {},
       create: {
         name: "Data Blue 1 GB 2 Hari",
-        sku: "XLDB1GB2H",
+        variantCode: "XLDB1GB2H",
         description: "XL Data Blue 1 GB valid for 2 days",
         productId: firstProduct.id,
       },
     }),
     prisma.productVariant.upsert({
-      where: { sku: "XLHR1GB2H" },
+      where: { variantCode: "XLHR1GB2H" },
       update: {},
       create: {
         name: "HOTROD 1 GB 2 Hari",
-        sku: "XLHR1GB2H",
+        variantCode: "XLHR1GB2H",
         description: "XL HOTROD 1 GB valid for 2 days",
         productId: firstProduct.id,
       },
     }),
     prisma.productVariant.upsert({
-      where: { sku: "XLHR500M7H" },
+      where: { variantCode: "XLHR500M7H" },
       update: {},
       create: {
         name: "HOTROD 500 MB 7 Hari",
-        sku: "XLHR500M7H",
+        variantCode: "XLHR500M7H",
         description: "XL HOTROD 500 MB valid for 7 days",
         productId: firstProduct.id,
       },
@@ -1298,7 +1299,6 @@ async function main() {
     );
   }
 
-  // Create booking order for the purchase
   const bookingOrder = await prisma.bookingOrder.create({
     data: {
       walletAddress: users[0].walletAddress!,
@@ -1319,7 +1319,7 @@ async function main() {
         toCurrency: "IDR",
       },
       status: "EXECUTED",
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
     },
   });
 
@@ -1336,7 +1336,6 @@ async function main() {
     },
   });
 
-  // Seed Dapp Categories
   console.log("🌱 Seeding Dapp categories...");
   const dappCategories = await Promise.all([
     prisma.dappCategory.upsert({
@@ -1373,10 +1372,8 @@ async function main() {
 
   console.log(`✅ Created ${dappCategories.length} dapp categories`);
 
-  // Seed Dapps
   console.log("🌱 Seeding Dapps...");
   const dapps = await Promise.all([
-    // DEX Category (5 dapps)
     prisma.dapp.upsert({
       where: { id: "uniswap-dapp" },
       update: {},
@@ -1386,7 +1383,7 @@ async function main() {
         description: "The largest decentralized exchange on Ethereum",
         logoUrl: "https://app.uniswap.org/favicon.ico",
         websiteUrl: "https://app.uniswap.org",
-        categoryId: dappCategories[0].id, // DEX
+        categoryId: dappCategories[0].id,
         isPopular: true,
         isSponsor: true,
         isHighlight: true,
@@ -1403,7 +1400,7 @@ async function main() {
         description: "Community-driven decentralized exchange",
         logoUrl: "https://sushi.com/favicon.ico",
         websiteUrl: "https://sushi.com",
-        categoryId: dappCategories[0].id, // DEX
+        categoryId: dappCategories[0].id,
         isPopular: true,
         isSponsor: false,
         isHighlight: true,
@@ -1420,7 +1417,7 @@ async function main() {
         description: "The most popular DEX on BNB Smart Chain",
         logoUrl: "https://pancakeswap.finance/favicon.ico",
         websiteUrl: "https://pancakeswap.finance",
-        categoryId: dappCategories[0].id, // DEX
+        categoryId: dappCategories[0].id,
         isPopular: true,
         isSponsor: true,
         isHighlight: false,
@@ -1437,7 +1434,7 @@ async function main() {
         description: "DEX aggregator with the best rates",
         logoUrl: "https://1inch.io/favicon.ico",
         websiteUrl: "https://1inch.io",
-        categoryId: dappCategories[0].id, // DEX
+        categoryId: dappCategories[0].id,
         isPopular: true,
         isSponsor: true,
         isHighlight: true,
@@ -1454,7 +1451,7 @@ async function main() {
         description: "Exchange liquidity pool for stablecoins",
         logoUrl: "https://curve.fi/favicon.ico",
         websiteUrl: "https://curve.fi",
-        categoryId: dappCategories[0].id, // DEX
+        categoryId: dappCategories[0].id,
         isPopular: true,
         isSponsor: false,
         isHighlight: false,
@@ -1463,7 +1460,6 @@ async function main() {
       },
     }),
 
-    // DeFi Category (5 dapps)
     prisma.dapp.upsert({
       where: { id: "compound-dapp" },
       update: {},
@@ -1473,7 +1469,7 @@ async function main() {
         description: "Algorithmic money markets protocol",
         logoUrl: "https://compound.finance/favicon.ico",
         websiteUrl: "https://compound.finance",
-        categoryId: dappCategories[1].id, // DeFi
+        categoryId: dappCategories[1].id,
         isPopular: true,
         isSponsor: true,
         isHighlight: true,
@@ -1490,7 +1486,7 @@ async function main() {
         description: "Open source and non-custodial liquidity protocol",
         logoUrl: "https://aave.com/favicon.ico",
         websiteUrl: "https://aave.com",
-        categoryId: dappCategories[1].id, // DeFi
+        categoryId: dappCategories[1].id,
         isPopular: true,
         isSponsor: false,
         isHighlight: true,
@@ -1507,7 +1503,7 @@ async function main() {
         description: "Decentralized credit platform on Ethereum",
         logoUrl: "https://makerdao.com/favicon.ico",
         websiteUrl: "https://makerdao.com",
-        categoryId: dappCategories[1].id, // DeFi
+        categoryId: dappCategories[1].id,
         isPopular: true,
         isSponsor: true,
         isHighlight: false,
@@ -1524,7 +1520,7 @@ async function main() {
         description: "Yield farming made simple",
         logoUrl: "https://yearn.finance/favicon.ico",
         websiteUrl: "https://yearn.finance",
-        categoryId: dappCategories[1].id, // DeFi
+        categoryId: dappCategories[1].id,
         isPopular: true,
         isSponsor: true,
         isHighlight: true,
@@ -1541,7 +1537,7 @@ async function main() {
         description: "Derivatives liquidity protocol",
         logoUrl: "https://synthetix.io/favicon.ico",
         websiteUrl: "https://synthetix.io",
-        categoryId: dappCategories[1].id, // DeFi
+        categoryId: dappCategories[1].id,
         isPopular: true,
         isSponsor: false,
         isHighlight: false,
@@ -1550,7 +1546,6 @@ async function main() {
       },
     }),
 
-    // Gaming Category (5 dapps)
     prisma.dapp.upsert({
       where: { id: "axie-infinity-dapp" },
       update: {},
@@ -1560,7 +1555,7 @@ async function main() {
         description: "Play-to-earn blockchain game with cute creatures",
         logoUrl: "https://axieinfinity.com/favicon.ico",
         websiteUrl: "https://axieinfinity.com",
-        categoryId: dappCategories[2].id, // Gaming
+        categoryId: dappCategories[2].id,
         isPopular: true,
         isSponsor: true,
         isHighlight: true,
@@ -1577,7 +1572,7 @@ async function main() {
         description: "Virtual reality platform powered by Ethereum",
         logoUrl: "https://decentraland.org/favicon.ico",
         websiteUrl: "https://decentraland.org",
-        categoryId: dappCategories[2].id, // Gaming
+        categoryId: dappCategories[2].id,
         isPopular: true,
         isSponsor: false,
         isHighlight: true,
@@ -1594,7 +1589,7 @@ async function main() {
         description: "Virtual world where players can build and monetize",
         logoUrl: "https://sandbox.game/favicon.ico",
         websiteUrl: "https://sandbox.game",
-        categoryId: dappCategories[2].id, // Gaming
+        categoryId: dappCategories[2].id,
         isPopular: true,
         isSponsor: true,
         isHighlight: false,
@@ -1611,7 +1606,7 @@ async function main() {
         description: "Digital trading card game on blockchain",
         logoUrl: "https://splinterlands.com/favicon.ico",
         websiteUrl: "https://splinterlands.com",
-        categoryId: dappCategories[2].id, // Gaming
+        categoryId: dappCategories[2].id,
         isPopular: true,
         isSponsor: true,
         isHighlight: true,
@@ -1628,7 +1623,7 @@ async function main() {
         description: "Free-to-play tactical card game",
         logoUrl: "https://godsunchained.com/favicon.ico",
         websiteUrl: "https://godsunchained.com",
-        categoryId: dappCategories[2].id, // Gaming
+        categoryId: dappCategories[2].id,
         isPopular: true,
         isSponsor: false,
         isHighlight: false,
@@ -1640,14 +1635,13 @@ async function main() {
 
   console.log(`✅ Created ${dapps.length} dapps`);
 
-  // Seed User Dapp Favorites
   console.log("🌱 Seeding user dapp favorites...");
   const userDappFavorites = await Promise.all([
     prisma.userDappFavorite.upsert({
       where: {
         userId_dappId: {
           userId: users[0].id,
-          dappId: dapps[0].id, // Uniswap
+          dappId: dapps[0].id,
         },
       },
       update: {},
@@ -1660,7 +1654,7 @@ async function main() {
       where: {
         userId_dappId: {
           userId: users[0].id,
-          dappId: dapps[1].id, // OpenSea
+          dappId: dapps[1].id,
         },
       },
       update: {},
@@ -1673,7 +1667,7 @@ async function main() {
       where: {
         userId_dappId: {
           userId: users[1].id,
-          dappId: dapps[2].id, // Axie Infinity
+          dappId: dapps[2].id,
         },
       },
       update: {},
@@ -1686,7 +1680,7 @@ async function main() {
       where: {
         userId_dappId: {
           userId: users[1].id,
-          dappId: dapps[5].id, // MetaMask
+          dappId: dapps[5].id,
         },
       },
       update: {},

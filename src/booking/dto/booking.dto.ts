@@ -10,19 +10,15 @@ import {
 } from "class-validator";
 import { Type } from "class-transformer";
 
-// Define types for customer info formats
-// Object format
 interface CustomerInfoObject {
   [key: string]: string | number | boolean | string[];
 }
 
-// Array format (VCGamers format)
 interface CustomerInfoKeyValue {
   key: string;
   value: string;
 }
 
-// Customer info can be either format
 type CustomerInfo = CustomerInfoObject | CustomerInfoKeyValue[];
 
 export class PaymentDetailsDto {
@@ -147,11 +143,11 @@ export class ProductVariantDto {
   name: string;
 
   @ApiProperty({
-    description: "Product variant SKU",
+    description: "Product variant code",
     example: "ML-86D",
   })
   @IsString()
-  sku: string;
+  variantCode: string;
 }
 
 export class ProductDetailsDto {

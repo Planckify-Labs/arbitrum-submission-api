@@ -42,4 +42,17 @@ export class SearchProductDto {
   @IsOptional()
   @IsString()
   vendorName?: string;
+
+  @ApiProperty({
+    required: false,
+    description: "Filter products by voucher status",
+  })
+  @IsOptional()
+  @IsBoolean()
+  @Transform(({ value }) => {
+    if (value === "true") return true;
+    if (value === "false") return false;
+    return value;
+  })
+  isVoucher?: boolean;
 }

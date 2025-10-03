@@ -426,7 +426,7 @@ export class BookingService {
         variant: {
           id: booking.productVariant.id,
           name: booking.productVariant.name,
-          sku: booking.productVariant.sku,
+          variantCode: booking.productVariant.variantCode,
         },
         price: {
           amount: Number(booking.productPrice.sellPrice),
