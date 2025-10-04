@@ -33,6 +33,21 @@ export class SearchTransactionDto {
   @IsString()
   recipientAddress?: string;
 
+  @ApiProperty({ example: "0x789...ghi", required: false })
+  @IsOptional()
+  @IsString()
+  txHash?: string;
+
+  @ApiProperty({ example: "100.50", required: false })
+  @IsOptional()
+  @IsString()
+  minAmount?: string;
+
+  @ApiProperty({ example: "500.00", required: false })
+  @IsOptional()
+  @IsString()
+  maxAmount?: string;
+
   @ApiProperty({ example: "2024-03-14T00:00:00.000Z", required: false })
   @IsOptional()
   @IsDateString()

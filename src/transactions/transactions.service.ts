@@ -159,6 +159,9 @@ export class TransactionsService {
       tokenId,
       senderAddress,
       recipientAddress,
+      txHash,
+      minAmount,
+      maxAmount,
       startDate,
       endDate,
     } = searchParams;
@@ -169,8 +172,32 @@ export class TransactionsService {
     if (status) where.status = status;
     if (userId) where.userId = userId;
     if (tokenId) where.tokenId = tokenId;
-    if (senderAddress) where.senderAddress = senderAddress;
-    if (recipientAddress) where.recipientAddress = recipientAddress;
+
+    if (senderAddress) {
+      where.senderAddress = {
+        equals: senderAddress,
+        mode: "insensitive",
+      };
+    }
+    if (recipientAddress) {
+      where.recipientAddress = {
+        equals: recipientAddress,
+        mode: "insensitive",
+      };
+    }
+
+    if (txHash) {
+      where.txHash = {
+        equals: txHash,
+        mode: "insensitive",
+      };
+    }
+
+    if (minAmount || maxAmount) {
+      where.amount = {};
+      if (minAmount) where.amount.gte = minAmount;
+      if (maxAmount) where.amount.lte = maxAmount;
+    }
 
     if (startDate || endDate) {
       where.createdAt = {};

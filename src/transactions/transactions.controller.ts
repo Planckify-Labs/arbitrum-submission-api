@@ -1,9 +1,18 @@
-import { Controller, Get, Post, Body, Param, Put, Query, Req, UnauthorizedException } from "@nestjs/common";
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Put,
+  Query,
+  Req,
+  UnauthorizedException,
+} from "@nestjs/common";
 import { Request } from "express";
 import { ApiTags } from "@nestjs/swagger";
 import { TransactionsService } from "./transactions.service";
 import { CreateTransactionDto } from "./dto/create-transaction.dto";
-import { UpdateTransactionDto } from "./dto/update-transaction.dto";
 import { SearchTransactionDto } from "./dto/search-transaction.dto";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import {
@@ -42,10 +51,10 @@ export class TransactionsController {
 
   @Get("search")
   @ApiSearchTransactions()
-  search(
-    @Query() searchParams: SearchTransactionDto,
-    @Query() paginationDto: CursorPaginationDto,
-  ) {
+  search(@Query() queryParams: SearchTransactionDto & CursorPaginationDto) {
+    const { cursor, take, ...searchParams } = queryParams;
+    const paginationDto: CursorPaginationDto = { cursor, take };
+
     return this.transactionsService.search(searchParams, paginationDto);
   }
 
