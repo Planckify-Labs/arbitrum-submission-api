@@ -149,6 +149,30 @@ export class SmartContractsService {
     return smartContract;
   }
 
+  async findByChainId(chainId: number) {
+    const smartContract = await this.prisma.smartContract.findFirst({
+      where: {
+        blockchain: {
+          chainId: chainId,
+        },
+        isActive: true,
+      },
+      include: {
+        blockchain: true,
+        abi: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    if (!smartContract) {
+      throw new NotFoundException(`Active smart contract for chain ID "${chainId}" not found`);
+    }
+
+    return smartContract;
+  }
+
   async update(id: string, updateSmartContractDto: UpdateSmartContractDto) {
     try {
       return await this.prisma.smartContract.update({

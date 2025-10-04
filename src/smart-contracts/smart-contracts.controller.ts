@@ -19,13 +19,11 @@ import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import {
   ApiCreateSmartContract,
   ApiDeleteSmartContract,
-  ApiGetSmartContract,
-  ApiGetSmartContracts,
-  ApiSearchSmartContracts,
   ApiUpdateSmartContract,
   ApiGetSmartContractsPublic,
   ApiSearchSmartContractsPublic,
   ApiGetSmartContractPublic,
+  ApiGetSmartContractByChainIdPublic,
 } from "../decorators/swagger/smart-contract.decorators";
 import { Public } from "../decorators/public.decorator";
 import { ApiKey } from "../decorators/api-key.decorator";
@@ -58,6 +56,14 @@ export class SmartContractsController {
     @Query() paginationDto: CursorPaginationDto,
   ) {
     return this.smartContractsService.search(searchParams, paginationDto);
+  }
+
+  @Get("chain/:chainId")
+  @Public()
+  @ApiKey()
+  @ApiGetSmartContractByChainIdPublic()
+  findByChainId(@Param("chainId") chainId: string) {
+    return this.smartContractsService.findByChainId(Number(chainId));
   }
 
   @Get(":id")

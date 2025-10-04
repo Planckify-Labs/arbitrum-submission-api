@@ -147,7 +147,6 @@ export function ApiDeleteSmartContract() {
   );
 }
 
-// Public API Key versions for public endpoints
 export function ApiGetSmartContractsPublic() {
   return applyDecorators(
     ApiHeader({
@@ -218,6 +217,41 @@ export function ApiGetSmartContractPublic() {
       type: SmartContractResponseDto,
     }),
     ApiResponse(notFoundResponse),
+    ApiResponse({
+      status: 401,
+      description: "Invalid or missing API key",
+    }),
+  );
+}
+
+export function ApiGetSmartContractByChainIdPublic() {
+  return applyDecorators(
+    ApiHeader({
+      name: "X-API-Key",
+      required: true,
+      description: "API Key for public access",
+      example: "your-api-key-here",
+    }),
+    ApiOperation({
+      summary: "Get active smart contract by chain ID (Public API)",
+      description:
+        "Returns the first active smart contract for the specified chain ID, ordered by creation date (newest first)",
+    }),
+    ApiParam({
+      name: "chainId",
+      description: "Blockchain Chain ID",
+      example: "1",
+      type: "number",
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns an active smart contract for the chain",
+      type: SmartContractResponseDto,
+    }),
+    ApiResponse({
+      status: 404,
+      description: "Active smart contract for chain ID not found",
+    }),
     ApiResponse({
       status: 401,
       description: "Invalid or missing API key",
