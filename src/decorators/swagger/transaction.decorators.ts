@@ -182,3 +182,46 @@ export function ApiGetTokenTransactions() {
     }),
   );
 }
+
+export function ApiGetMyTransactionHistory() {
+  return applyDecorators(
+    ApiOperation({ 
+      summary: "Get authenticated user's transaction history",
+      description: "Fetch transaction history for the authenticated user with optional type filtering"
+    }),
+    ApiHeader({
+      name: "Authorization",
+      required: true,
+      description: "JWT token",
+      example: "Bearer <token>",
+    }),
+    ApiQuery({ 
+      name: "type", 
+      enum: TransactionType, 
+      required: false,
+      description: "Filter by transaction type (PAYMENT, REFUND, TRANSFER)"
+    }),
+    ApiQuery({ 
+      name: "cursor", 
+      type: String, 
+      required: false,
+      description: "Cursor for pagination"
+    }),
+    ApiQuery({ 
+      name: "take", 
+      type: Number, 
+      required: false,
+      description: "Number of records to fetch (default: 10)"
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns user's transaction history",
+      type: TransactionResponseDto,
+      isArray: true,
+    }),
+    ApiResponse({
+      status: 401,
+      description: "Unauthorized - Invalid or missing JWT token",
+    }),
+  );
+}

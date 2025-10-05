@@ -8,12 +8,14 @@ import {
   Query,
   Req,
   UnauthorizedException,
+  UseGuards,
 } from "@nestjs/common";
 import { Request } from "express";
-import { ApiTags } from "@nestjs/swagger";
+import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
 import { TransactionsService } from "./transactions.service";
 import { CreateTransactionDto } from "./dto/create-transaction.dto";
 import { SearchTransactionDto } from "./dto/search-transaction.dto";
+import { UserTransactionHistoryDto } from "./dto/user-transaction-history.dto";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import {
   ApiCreateTransaction,
@@ -23,8 +25,12 @@ import {
   ApiSearchTransactions,
   ApiGetBlockchainTransactions,
   ApiGetTokenTransactions,
+  ApiGetMyTransactionHistory,
 } from "../decorators/swagger/transaction.decorators";
+import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 
+@UseGuards(JwtAuthGuard)
+@ApiBearerAuth()
 @Controller("transactions")
 @ApiTags("transactions")
 export class TransactionsController {
@@ -56,6 +62,24 @@ export class TransactionsController {
     const paginationDto: CursorPaginationDto = { cursor, take };
 
     return this.transactionsService.search(searchParams, paginationDto);
+  }
+
+  @Get("my-history")
+  @ApiGetMyTransactionHistory()
+  getMyTransactionHistory(
+    @Req() req: Request & { user: { id: string } },
+    @Query() queryParams: UserTransactionHistoryDto,
+  ) {
+    const userId = req.user.id;
+    const { type, cursor, take } = queryParams;
+    const paginationDto: CursorPaginationDto = { cursor, take };
+    console.log("type: ", type);
+
+    return this.transactionsService.findUserTransactionHistory(
+      userId,
+      type,
+      paginationDto,
+    );
   }
 
   @Get(":id")

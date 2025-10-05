@@ -3,7 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { CreateTransactionDto } from "./dto/create-transaction.dto";
 import { UpdateTransactionDto } from "./dto/update-transaction.dto";
 import { SearchTransactionDto } from "./dto/search-transaction.dto";
-import { Prisma } from "@generated/prisma";
+import { Prisma, TransactionType } from "@generated/prisma";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
 
 @Injectable()
@@ -140,6 +140,62 @@ export class TransactionsService {
       include: {
         token: true,
         purchase: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+  }
+
+  async findUserTransactionHistory(
+    userId: string,
+    type?: TransactionType,
+    paginationDto?: CursorPaginationDto,
+  ) {
+    const { cursor, take = 10 } = paginationDto || {};
+
+    const where: Prisma.TransactionHistoryWhereInput = {
+      userId,
+    };
+
+    if (type) {
+      where.type = type;
+    }
+
+    return await this.prisma.transactionHistory.findMany({
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
+      where,
+      include: {
+        token: {
+          select: {
+            blockchain: {
+              select: {
+                name: true,
+                blockExplorer: true,
+              },
+            },
+            contractAddress: true,
+            name: true,
+            symbol: true,
+            logoUrl: true,
+          },
+        },
+        purchase: {
+          include: {
+            productVariant: {
+              select: {
+                name: true,
+                product: {
+                  select: {
+                    imageUrl: true,
+                  },
+                },
+              },
+            },
+          },
+        },
       },
       orderBy: {
         createdAt: "desc",
