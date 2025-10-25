@@ -163,14 +163,16 @@ export class PurchasesService {
       );
     }
 
+    const normalizedWalletAddress = walletAddress.toLowerCase();
+
     let user = await this.prisma.user.findUnique({
-      where: { walletAddress },
+      where: { walletAddress: normalizedWalletAddress },
     });
 
     if (!user) {
       user = await this.prisma.user.create({
         data: {
-          walletAddress,
+          walletAddress: normalizedWalletAddress,
           authProvider: "WALLET",
         },
       });
@@ -200,8 +202,8 @@ export class PurchasesService {
         fiatCurrency: "IDR",
         type: "PAYMENT",
         status: "PENDING",
-        senderAddress: walletAddress,
-        recipientAddress: contractAddress,
+        senderAddress: normalizedWalletAddress,
+        recipientAddress: contractAddress.toLowerCase(),
         txHash: transactionHash,
       },
     });

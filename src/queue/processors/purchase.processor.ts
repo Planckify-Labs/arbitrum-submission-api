@@ -295,14 +295,16 @@ export class PurchaseProcessor extends WorkerHost {
   }
 
   private async createOrGetUser(walletAddress: string) {
+    const normalizedWalletAddress = walletAddress.toLowerCase();
+
     let user = await this.prisma.user.findUnique({
-      where: { walletAddress },
+      where: { walletAddress: normalizedWalletAddress },
     });
 
     if (!user) {
       user = await this.prisma.user.create({
         data: {
-          walletAddress,
+          walletAddress: normalizedWalletAddress,
           authProvider: "WALLET",
         },
       });

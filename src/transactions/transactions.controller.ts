@@ -4,7 +4,6 @@ import {
   Post,
   Body,
   Param,
-  Put,
   Query,
   Req,
   UnauthorizedException,
@@ -73,7 +72,6 @@ export class TransactionsController {
     const userId = req.user.id;
     const { type, cursor, take } = queryParams;
     const paginationDto: CursorPaginationDto = { cursor, take };
-    console.log("type: ", type);
 
     return this.transactionsService.findUserTransactionHistory(
       userId,
