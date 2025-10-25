@@ -1092,6 +1092,7 @@ async function main() {
             realValue: variant.price,
             sellPrice: sellPrice,
             isActive: variant.is_active,
+            currency: "IDR",
           },
         });
 
@@ -1191,6 +1192,7 @@ async function main() {
         priceFromVendor: 47500,
         sellPrice: 52500,
         isActive: true,
+        currency: "IDR",
       },
     }),
     prisma.productPrice.upsert({
@@ -1204,6 +1206,7 @@ async function main() {
         priceFromVendor: 95000,
         sellPrice: 105000,
         isActive: true,
+        currency: "IDR",
       },
     }),
     prisma.productPrice.upsert({
@@ -1217,6 +1220,7 @@ async function main() {
         priceFromVendor: 145000,
         sellPrice: 155000,
         isActive: true,
+        currency: "IDR",
       },
     }),
     prisma.productPrice.upsert({
@@ -1230,6 +1234,7 @@ async function main() {
         priceFromVendor: 365000,
         sellPrice: 385000,
         isActive: true,
+        currency: "IDR",
       },
     }),
     prisma.productPrice.upsert({
@@ -1243,6 +1248,7 @@ async function main() {
         priceFromVendor: 4500,
         sellPrice: 5000,
         isActive: true,
+        currency: "IDR",
       },
     }),
     prisma.productPrice.upsert({
@@ -1256,6 +1262,7 @@ async function main() {
         priceFromVendor: 4500,
         sellPrice: 5000,
         isActive: true,
+        currency: "IDR",
       },
     }),
     prisma.productPrice.upsert({
@@ -1269,6 +1276,7 @@ async function main() {
         priceFromVendor: 5100,
         sellPrice: 5700,
         isActive: true,
+        currency: "IDR",
       },
     }),
   ]);

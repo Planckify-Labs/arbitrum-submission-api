@@ -32,6 +32,14 @@ export class CreateProductPriceDto {
   @Type(() => Number)
   sellPrice: number;
 
+  @ApiProperty({
+    example: "IDR",
+    description: "Currency code (e.g., IDR, USD, SGD)",
+  })
+  @IsNotEmpty()
+  @IsString()
+  currency: string;
+
   @ApiProperty({ example: true })
   @IsOptional()
   @IsBoolean()

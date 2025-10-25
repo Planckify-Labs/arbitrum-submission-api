@@ -145,6 +145,12 @@ export class BookingService {
         );
       }
 
+      if (exchangeRate.toCurrency !== productPrice.currency) {
+        throw new BadRequestException(
+          `Product price currency (${productPrice.currency}) does not match exchange rate target currency (${exchangeRate.toCurrency})`,
+        );
+      }
+
       const sellPrice = new Decimal(productPrice.sellPrice.toString());
       const rate = new Decimal(exchangeRate.rate.toString());
       const tokenAmountDecimal = sellPrice.div(rate);
@@ -430,7 +436,7 @@ export class BookingService {
         },
         price: {
           amount: Number(booking.productPrice.sellPrice),
-          currency: exchangeRateInfo.toCurrency,
+          currency: booking.productPrice.currency,
         },
       },
       payment: {
