@@ -176,6 +176,7 @@ model ProductPrice {
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
   BookingOrder     BookingOrder[]
+  currency         String
 }
 
 model TransactionHistory {
