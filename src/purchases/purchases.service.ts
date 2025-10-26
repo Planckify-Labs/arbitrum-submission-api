@@ -193,13 +193,29 @@ export class PurchasesService {
       );
     }
 
+    // Calculate amountInFiat based on exchange rate and product price
+    const exchangeRateObj = bookingForMetadata.exchangeRate as {
+      rate: number;
+      toCurrency: string;
+      fromCurrency: string;
+    } | null;
+    const rate = exchangeRateObj?.rate || 0;
+    const sellPrice =
+      bookingForMetadata.productPrice?.sellPrice?.toString() || "0";
+    const amountInFiat =
+      rate &&
+      sellPrice &&
+      exchangeRateObj?.toCurrency == bookingForMetadata.productPrice?.currency
+        ? sellPrice
+        : (Number(sellPrice) * rate).toString() || "0";
+
     const placeholderTransaction = await this.prisma.transactionHistory.create({
       data: {
         user: { connect: { id: user.id } },
         token: { connect: { id: token.id } },
         amount: payment.amount,
-        amountInFiat: "0",
-        fiatCurrency: "IDR",
+        amountInFiat: amountInFiat,
+        fiatCurrency: exchangeRateObj?.toCurrency || "IDR",
         type: "PAYMENT",
         status: "PENDING",
         senderAddress: normalizedWalletAddress,
