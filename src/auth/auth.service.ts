@@ -134,13 +134,22 @@ export class AuthService {
       role: user.role,
     };
 
+    const jwtExpirationTime = this.configService.get<string>(
+      "JWT_EXPIRATION_TIME",
+      "1h",
+    );
+    const refreshTokenExpirationTime = this.configService.get<string>(
+      "REFRESH_TOKEN_EXPIRATION_TIME",
+      "7d",
+    );
+
     return {
       access_token: this.jwtService.sign(payload, {
-        expiresIn: process.env.JWT_EXPIRATION_TIME,
+        expiresIn: jwtExpirationTime,
       }),
       refresh_token: this.jwtService.sign(
         { sub: user.id, type: "refresh" },
-        { expiresIn: process.env.REFRESH_TOKEN_EXPIRATION_TIME },
+        { expiresIn: refreshTokenExpirationTime },
       ),
       user: {
         id: user.id,
@@ -240,13 +249,22 @@ export class AuthService {
       role: user.role,
     };
 
+    const jwtExpirationTime = this.configService.get<string>(
+      "JWT_EXPIRATION_TIME",
+      "1h",
+    );
+    const refreshTokenExpirationTime = this.configService.get<string>(
+      "REFRESH_TOKEN_EXPIRATION_TIME",
+      "7d",
+    );
+
     return {
       access_token: this.jwtService.sign(payload, {
-        expiresIn: process.env.JWT_EXPIRATION_TIME || "1h",
+        expiresIn: jwtExpirationTime,
       }),
       refresh_token: this.jwtService.sign(
         { sub: user.id, type: "refresh" },
-        { expiresIn: process.env.REFRESH_TOKEN_EXPIRATION_TIME || "7d" },
+        { expiresIn: refreshTokenExpirationTime },
       ),
       user: {
         id: user.id,
@@ -311,9 +329,14 @@ export class AuthService {
         tokenPayload["username"] = user.username;
       }
 
+      const jwtExpirationTime = this.configService.get<string>(
+        "JWT_EXPIRATION_TIME",
+        "1h",
+      );
+
       return {
         access_token: this.jwtService.sign(tokenPayload, {
-          expiresIn: process.env.JWT_EXPIRATION_TIME || "1h",
+          expiresIn: jwtExpirationTime,
         }),
       };
     } catch (error) {
