@@ -174,6 +174,12 @@ export class TransactionsService {
               select: {
                 name: true,
                 blockExplorer: true,
+                tokens: {
+                  where: {
+                    isNativeCurrency: true,
+                    isActive: true,
+                  },
+                },
               },
             },
             contractAddress: true,
