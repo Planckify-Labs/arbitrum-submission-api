@@ -2,19 +2,56 @@ import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import { setupSwagger } from "./config/swagger.config";
 import { ValidationPipe } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import helmet from "helmet";
+import { getAppConfig } from "./config/app.config";
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  const configService = app.get(ConfigService);
+  const appConfig = getAppConfig(configService);
+
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          scriptSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", "data:", "https:"],
+        },
+      },
+      crossOriginEmbedderPolicy: false,
+      crossOriginResourcePolicy: { policy: "cross-origin" },
+    }),
+  );
+
+  app.enableCors({
+    origin: appConfig.corsOrigins,
+    credentials: appConfig.corsCredentials,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-API-Key"],
+    exposedHeaders: ["X-Total-Count", "X-Rate-Limit-Remaining"],
+  });
 
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
+      forbidNonWhitelisted: true,
       transform: true,
+      transformOptions: {
+        enableImplicitConversion: true,
+      },
     }),
   );
 
   setupSwagger(app);
 
-  await app.listen(4000);
+  await app.listen(appConfig.port);
+
+  console.log(`Application is running on: http://localhost:${appConfig.port}`);
+  console.log(`Swagger documentation: http://localhost:${appConfig.port}/docs`);
+  console.log(`Environment: ${appConfig.nodeEnv}`);
+  console.log(`CORS Origins: ${appConfig.corsOrigins.join(", ")}`);
 }
 bootstrap();

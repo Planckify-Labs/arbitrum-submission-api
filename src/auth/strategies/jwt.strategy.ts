@@ -6,7 +6,8 @@ import { PrismaService } from "../../prisma/prisma.service";
 
 interface JwtPayload {
   sub: string;
-  walletAddress: string;
+  walletAddress?: string;
+  username?: string;
   iat: number;
   exp: number;
 }
@@ -37,13 +38,27 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       select: {
         id: true,
         walletAddress: true,
+        username: true,
         role: true,
         status: true,
       },
     });
 
-    if (!user || user.walletAddress !== payload.walletAddress) {
-      throw new UnauthorizedException("User not found or wallet mismatch");
+    if (!user) {
+      throw new UnauthorizedException("User not found");
+    }
+
+    const normalizedPayloadWallet = payload.walletAddress?.toLowerCase();
+    const normalizedUserWallet = user.walletAddress?.toLowerCase();
+
+    const walletMismatch =
+      normalizedPayloadWallet &&
+      normalizedUserWallet !== normalizedPayloadWallet;
+    const usernameMismatch =
+      payload.username && user.username !== payload.username;
+
+    if (walletMismatch || usernameMismatch) {
+      throw new UnauthorizedException("User identity mismatch");
     }
 
     if (user.status !== "ACTIVE") {
@@ -52,7 +67,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     return {
       id: user.id,
-      walletAddress: user.walletAddress,
+      walletAddress: user.walletAddress || undefined,
+      username: user.username || undefined,
       role: user.role,
     };
   }

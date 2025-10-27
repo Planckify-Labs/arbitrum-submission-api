@@ -12,33 +12,25 @@ import { AuthResponseDto } from "./dto/auth-response.dto";
 import { ConfigService } from "@nestjs/config";
 import * as argon2 from "argon2";
 import { UserRole, UserStatus, AuthProvider } from "../../generated/prisma";
+import { NonceCacheService } from "../valkey/services/nonce-cache.service";
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
-  private readonly nonceCache = new Map<
-    string,
-    { nonce: string; expires: Date }
-  >();
   private readonly defaultChainId: number;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly nonceCacheService: NonceCacheService,
   ) {
     this.defaultChainId = this.configService.get<number>("CHAIN_ID", 1);
   }
 
-  generateNonce(walletAddress: string): string {
+  async generateNonce(walletAddress: string): Promise<string> {
     const nonce = randomBytes(32).toString("hex");
-    const nonceExpireMinutes = parseInt(
-      this.configService.get<string>("NONCE_EXPIRE_TIME_MINUTES") || "5",
-      10,
-    );
-    const expires = new Date(Date.now() + nonceExpireMinutes * 60 * 1000);
-
-    this.nonceCache.set(walletAddress.toLowerCase(), { nonce, expires });
+    await this.nonceCacheService.setNonce(walletAddress, nonce);
     return nonce;
   }
 
@@ -92,17 +84,13 @@ export class AuthService {
       }
 
       const walletAddress = fields.address.toLowerCase();
-      const cachedData = this.nonceCache.get(walletAddress);
+      const cachedData = await this.nonceCacheService.getNonce(walletAddress);
 
-      if (
-        !cachedData ||
-        cachedData.nonce !== fields.nonce ||
-        cachedData.expires < new Date()
-      ) {
+      if (!cachedData || cachedData.nonce !== fields.nonce) {
         return false;
       }
 
-      this.nonceCache.delete(walletAddress);
+      await this.nonceCacheService.deleteNonce(walletAddress);
       return true;
     } catch (error) {
       this.logger.error(`Signature verification failed: ${error.message}`);
@@ -162,6 +150,8 @@ export class AuthService {
   async adminLogin(
     username: string,
     password: string,
+    ipAddress: string = "N/A",
+    userAgent: string = "N/A",
   ): Promise<AuthResponseDto> {
     const user = await this.prisma.user.findUnique({
       where: { username },
@@ -238,8 +228,8 @@ export class AuthService {
         adminUser: { connect: { id: user.id } },
         action: "LOGIN",
         resource: "AUTH",
-        ipAddress: "N/A",
-        userAgent: "N/A",
+        ipAddress,
+        userAgent,
       },
     });
 

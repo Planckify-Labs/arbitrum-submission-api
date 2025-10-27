@@ -12,6 +12,7 @@ import {
 } from "viem";
 import { readContract } from "viem/actions";
 import { privateKeyToAccount } from "viem/accounts";
+import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { TakumiWalletAbi } from "./abis/takumi-wallet.abi";
 import {
@@ -20,18 +21,25 @@ import {
   TTransactionVerificationRequest,
 } from "./types/blockchain-verification.types";
 import { VerifyContractTransactionDto } from "./dto/verify-contract-transaction.dto";
+import { getBlockchainConfig } from "../config/app.config";
 
 @Injectable()
 export class BlockchainVerificationService {
   private readonly logger = new Logger(BlockchainVerificationService.name);
   private readonly clients: Map<number, PublicClient> = new Map();
   private readonly walletClients: Map<number, WalletClient> = new Map();
-  private readonly DEFAULT_MIN_CONFIRMATIONS = 12;
-  private readonly adminAccount = privateKeyToAccount(
-    process.env.ADMIN_WALLET_PRIVATE_KEY as `0x${string}`,
-  );
+  private readonly minConfirmations: number;
+  private readonly adminAccount;
 
-  constructor(private readonly prisma: PrismaService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
+  ) {
+    const blockchainConfig = getBlockchainConfig(this.configService);
+    this.minConfirmations = blockchainConfig.minConfirmations;
+    this.adminAccount = privateKeyToAccount(
+      blockchainConfig.adminWalletPrivateKey as `0x${string}`,
+    );
     this.initializeClients();
   }
 
@@ -138,7 +146,7 @@ export class BlockchainVerificationService {
       expectedSender,
       expectedRecipient,
       expectedChainId,
-      minimumConfirmations = this.DEFAULT_MIN_CONFIRMATIONS,
+      minimumConfirmations = this.minConfirmations,
     } = request;
 
     this.logger.log(
@@ -251,7 +259,7 @@ export class BlockchainVerificationService {
   async isTransactionConfirmed(
     transactionHash: string,
     chainId: number,
-    minimumConfirmations: number = this.DEFAULT_MIN_CONFIRMATIONS,
+    minimumConfirmations: number = this.minConfirmations,
   ): Promise<boolean> {
     try {
       const client = this.getClient(chainId);

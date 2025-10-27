@@ -6,7 +6,10 @@ import {
   Post,
   Query,
   UseGuards,
+  UnauthorizedException,
+  Req,
 } from "@nestjs/common";
+import { Request } from "express";
 import { ApiTags, ApiOperation, ApiResponse } from "@nestjs/swagger";
 import { AuthService } from "./auth.service";
 import { VerifyDto } from "./dto/verify.dto";
@@ -32,11 +35,11 @@ export class AuthController {
   })
   @Public()
   @Get("nonce/:walletAddress")
-  getNonce(
+  async getNonce(
     @Param("walletAddress") walletAddress: string,
     @Query() nonceDto: NonceDto,
   ) {
-    const nonce = this.authService.generateNonce(walletAddress);
+    const nonce = await this.authService.generateNonce(walletAddress);
     const message = this.authService.createSiweMessage(
       walletAddress,
       nonce,
@@ -58,12 +61,14 @@ export class AuthController {
     const isValid = await this.authService.verifySignature(message, signature);
 
     if (!isValid) {
-      throw new Error("Invalid signature");
+      throw new UnauthorizedException("Invalid signature");
     }
 
     const addressMatch = message.match(/0x[a-fA-F0-9]{40}/i);
     if (!addressMatch) {
-      throw new Error("Could not extract wallet address from message");
+      throw new UnauthorizedException(
+        "Could not extract wallet address from message",
+      );
     }
     const walletAddress = addressMatch[0];
 
@@ -76,6 +81,7 @@ export class AuthController {
     description: "Token refreshed successfully",
     type: Object,
   })
+  @Public()
   @Post("refresh")
   async refresh(
     @Body() refreshTokenDto: RefreshTokenDto,
@@ -89,12 +95,25 @@ export class AuthController {
     description: "Admin authenticated successfully",
     type: AuthResponseDto,
   })
+  @Public()
   @Post("admin/login")
   async adminLogin(
     @Body() adminLoginDto: AdminLoginDto,
+    @Req() req: Request,
   ): Promise<AuthResponseDto> {
     const { username, password } = adminLoginDto;
-    return await this.authService.adminLogin(username, password);
+    const ipAddress =
+      (req.ip as string) ||
+      (req.headers["x-forwarded-for"] as string) ||
+      (req.headers["x-real-ip"] as string) ||
+      "unknown";
+    const userAgent = (req.headers["user-agent"] as string) || "unknown";
+    return await this.authService.adminLogin(
+      username,
+      password,
+      ipAddress,
+      userAgent,
+    );
   }
 
   @ApiOperation({ summary: "Create a new admin user (Super Admin only)" })

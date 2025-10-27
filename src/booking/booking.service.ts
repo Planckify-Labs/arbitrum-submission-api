@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from "@nestjs/common";
 import { PrismaClient } from "@generated/prisma";
 import { CreateBookingDto } from "./dto/booking.dto";
@@ -245,13 +246,25 @@ export class BookingService {
     });
   }
 
-  async markBookingExecuted(bookingId: string) {
+  async markBookingExecuted(
+    bookingId: string,
+    user: { id: string; walletAddress?: string; role: string },
+  ) {
     const booking = await this.prisma.bookingOrder.findUnique({
       where: { id: bookingId },
     });
 
     if (!booking) {
       throw new NotFoundException("Booking not found");
+    }
+
+    if (
+      user.walletAddress &&
+      booking.walletAddress.toLowerCase() !== user.walletAddress.toLowerCase()
+    ) {
+      if (user.role !== "ADMIN" && user.role !== "SUPER_ADMIN") {
+        throw new ForbiddenException("You can only execute your own bookings");
+      }
     }
 
     if (booking.status !== BookingStatus.PENDING) {
@@ -272,13 +285,25 @@ export class BookingService {
     });
   }
 
-  async cancelBooking(bookingId: string) {
+  async cancelBooking(
+    bookingId: string,
+    user: { id: string; walletAddress?: string; role: string },
+  ) {
     const booking = await this.prisma.bookingOrder.findUnique({
       where: { id: bookingId },
     });
 
     if (!booking) {
       throw new NotFoundException("Booking not found");
+    }
+
+    if (
+      user.walletAddress &&
+      booking.walletAddress.toLowerCase() !== user.walletAddress.toLowerCase()
+    ) {
+      if (user.role !== "ADMIN" && user.role !== "SUPER_ADMIN") {
+        throw new ForbiddenException("You can only cancel your own bookings");
+      }
     }
 
     if (booking.status !== BookingStatus.PENDING) {

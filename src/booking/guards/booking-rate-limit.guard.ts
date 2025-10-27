@@ -6,14 +6,23 @@ import {
   HttpStatus,
 } from "@nestjs/common";
 import { Request } from "express";
+import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../../prisma/prisma.service";
+import { getBookingConfig } from "../../config/app.config";
 
 @Injectable()
 export class BookingRateLimitGuard implements CanActivate {
-  private readonly RATE_LIMIT_WINDOW_MINUTES = 15;
-  private readonly MAX_BOOKINGS_PER_WINDOW = 10;
+  private readonly rateLimitWindowMinutes: number;
+  private readonly maxBookingsPerWindow: number;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
+  ) {
+    const bookingConfig = getBookingConfig(this.configService);
+    this.rateLimitWindowMinutes = bookingConfig.rateLimitWindowMinutes;
+    this.maxBookingsPerWindow = bookingConfig.rateLimitMaxRequests;
+  }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
@@ -27,7 +36,7 @@ export class BookingRateLimitGuard implements CanActivate {
     }
 
     const windowStart = new Date(
-      Date.now() - this.RATE_LIMIT_WINDOW_MINUTES * 60 * 1000,
+      Date.now() - this.rateLimitWindowMinutes * 60 * 1000,
     );
 
     const recentBookings = await this.prisma.bookingOrder.count({
@@ -39,9 +48,9 @@ export class BookingRateLimitGuard implements CanActivate {
       },
     });
 
-    if (recentBookings >= this.MAX_BOOKINGS_PER_WINDOW) {
+    if (recentBookings >= this.maxBookingsPerWindow) {
       throw new HttpException(
-        `Rate limit exceeded. Maximum ${this.MAX_BOOKINGS_PER_WINDOW} bookings per ${this.RATE_LIMIT_WINDOW_MINUTES} minutes`,
+        `Rate limit exceeded. Maximum ${this.maxBookingsPerWindow} bookings per ${this.rateLimitWindowMinutes} minutes`,
         HttpStatus.TOO_MANY_REQUESTS,
       );
     }

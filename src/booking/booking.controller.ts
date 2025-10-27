@@ -78,14 +78,16 @@ export class BookingController {
   }
 
   @Put(":id/execute")
+  @UseGuards(JwtAuthGuard)
   @ApiExecuteBooking()
-  executeBooking(@Param("id") id: string) {
-    return this.bookingService.markBookingExecuted(id);
+  executeBooking(@Param("id") id: string, @Request() req) {
+    return this.bookingService.markBookingExecuted(id, req.user);
   }
 
   @Put(":id/cancel")
+  @UseGuards(JwtAuthGuard)
   @ApiCancelBooking()
-  cancelBooking(@Param("id") id: string) {
-    return this.bookingService.cancelBooking(id);
+  cancelBooking(@Param("id") id: string, @Request() req) {
+    return this.bookingService.cancelBooking(id, req.user);
   }
 }

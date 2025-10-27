@@ -17,7 +17,7 @@ export class ApiKeysService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly vendorAPICacheService: VendorAPICacheService,
-  ) { }
+  ) {}
 
   async create(createApiKeyDto: CreateApiKeyDto, createdById?: string) {
     const keyValue = this.generateApiKey();
@@ -340,14 +340,19 @@ export class ApiKeysService {
       },
     });
 
-    if (apiKey.metadata && typeof apiKey.metadata === 'object') {
-      const metadata = apiKey.metadata as any;
-      if (metadata.vendorId) {
+    if (apiKey.metadata && typeof apiKey.metadata === "object") {
+      const metadata = apiKey.metadata as Prisma.JsonObject;
+      if (metadata.vendorId && typeof metadata.vendorId === "string") {
         try {
-          await this.vendorAPICacheService.invalidateVendorAPICache(metadata.vendorId);
+          await this.vendorAPICacheService.invalidateVendorAPICache(
+            metadata.vendorId,
+          );
           await this.vendorAPICacheService.getVendorAPI(metadata.vendorId);
         } catch (error) {
-          console.warn(`Failed to update vendor cache for vendor ${metadata.vendorId}:`, error);
+          console.warn(
+            `Failed to update vendor cache for vendor ${metadata.vendorId}:`,
+            error,
+          );
         }
       }
     }
