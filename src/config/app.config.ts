@@ -1,5 +1,20 @@
 import { ConfigService } from "@nestjs/config";
 
+function toNumber(value: unknown, fallback: number): number {
+  if (typeof value === "number" && !Number.isNaN(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (!Number.isNaN(parsed)) {
+      return parsed;
+    }
+  }
+
+  return fallback;
+}
+
 export interface AppConfig {
   port: number;
   nodeEnv: string;
@@ -29,7 +44,7 @@ export interface BlockchainConfig {
 
 export function getAppConfig(configService: ConfigService): AppConfig {
   return {
-    port: configService.get<number>("PORT", 4000),
+    port: toNumber(configService.get("PORT"), 4000),
     nodeEnv: configService.get<string>("NODE_ENV", "development"),
     corsOrigins: configService
       .get<string>("CORS_ORIGINS", "http://localhost:3000")
@@ -45,14 +60,20 @@ export function getRateLimitConfig(
   configService: ConfigService,
 ): RateLimitConfig {
   return {
-    windowMs: configService.get<number>("RATE_LIMIT_WINDOW_MS", 60000),
-    maxRequests: configService.get<number>("RATE_LIMIT_MAX_REQUESTS", 100),
-    apiKeyWindowMs: configService.get<number>(
-      "RATE_LIMIT_API_KEY_WINDOW_MS",
+    windowMs: toNumber(
+      configService.get("RATE_LIMIT_WINDOW_MS"),
       60000,
     ),
-    apiKeyMaxRequests: configService.get<number>(
-      "RATE_LIMIT_API_KEY_MAX_REQUESTS",
+    maxRequests: toNumber(
+      configService.get("RATE_LIMIT_MAX_REQUESTS"),
+      100,
+    ),
+    apiKeyWindowMs: toNumber(
+      configService.get("RATE_LIMIT_API_KEY_WINDOW_MS"),
+      60000,
+    ),
+    apiKeyMaxRequests: toNumber(
+      configService.get("RATE_LIMIT_API_KEY_MAX_REQUESTS"),
       1000,
     ),
   };
@@ -60,13 +81,16 @@ export function getRateLimitConfig(
 
 export function getBookingConfig(configService: ConfigService): BookingConfig {
   return {
-    expiryMinutes: configService.get<number>("BOOKING_EXPIRY_MINUTES", 15),
-    rateLimitWindowMinutes: configService.get<number>(
-      "BOOKING_RATE_LIMIT_WINDOW_MINUTES",
+    expiryMinutes: toNumber(
+      configService.get("BOOKING_EXPIRY_MINUTES"),
       15,
     ),
-    rateLimitMaxRequests: configService.get<number>(
-      "BOOKING_RATE_LIMIT_MAX_REQUESTS",
+    rateLimitWindowMinutes: toNumber(
+      configService.get("BOOKING_RATE_LIMIT_WINDOW_MINUTES"),
+      15,
+    ),
+    rateLimitMaxRequests: toNumber(
+      configService.get("BOOKING_RATE_LIMIT_MAX_REQUESTS"),
       10,
     ),
   };
@@ -92,7 +116,7 @@ export function getBlockchainConfig(
 
   return {
     adminWalletPrivateKey: privateKey,
-    chainId: configService.get<number>("CHAIN_ID", 1),
-    minConfirmations: configService.get<number>("MIN_CONFIRMATIONS", 12),
+    chainId: toNumber(configService.get("CHAIN_ID"), 1),
+    minConfirmations: toNumber(configService.get("MIN_CONFIRMATIONS"), 12),
   };
 }
