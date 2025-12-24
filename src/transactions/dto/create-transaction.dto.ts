@@ -2,12 +2,11 @@ import { ApiProperty } from "@nestjs/swagger";
 import {
   IsEnum,
   IsNotEmpty,
-  IsNumber,
+  IsNumberString,
   IsOptional,
   IsString,
 } from "class-validator";
 import { TransactionStatus, TransactionType } from "../../../generated/prisma";
-import { Type } from "class-transformer";
 
 export class CreateTransactionDto {
   @ApiProperty({ example: "01H1G5V..." })
@@ -25,17 +24,15 @@ export class CreateTransactionDto {
   @IsEnum(TransactionStatus)
   status?: TransactionStatus;
 
-  @ApiProperty({ example: 50000 })
+  @ApiProperty({ example: "1000000000000000000", description: "Amount in raw token units (e.g., wei)" })
   @IsNotEmpty()
-  @IsNumber()
-  @Type(() => Number)
-  amount: number;
+  @IsNumberString()
+  amount: string;
 
-  @ApiProperty({ example: 750000, required: false })
+  @ApiProperty({ example: "750000", required: false })
   @IsOptional()
-  @IsNumber()
-  @Type(() => Number)
-  amountInFiat?: number;
+  @IsNumberString()
+  amountInFiat?: string;
 
   @ApiProperty({ example: "IDR", required: false })
   @IsOptional()
