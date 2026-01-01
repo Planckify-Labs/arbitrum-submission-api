@@ -19,7 +19,7 @@ import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { AdminLoginDto } from "./dto/admin-login.dto";
 import { CreateAdminDto } from "./dto/create-admin.dto";
 import { Roles } from "../decorators/roles.decorator";
-import { UserRole } from "../../generated/prisma";
+import { UserRole } from "@generated/prisma";
 import { NonceDto } from "./dto/nonce.dto";
 import { Public } from "src/decorators/public.decorator";
 

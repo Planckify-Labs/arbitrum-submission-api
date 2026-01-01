@@ -1,4 +1,4 @@
-import { ApiKeyStatus, ApiKeyType } from "@generated/prisma/client";
+import { ApiKeyStatus, ApiKeyType } from "@generated/prisma";
 import { ApiProperty } from "@nestjs/swagger";
 import {
   IsString,

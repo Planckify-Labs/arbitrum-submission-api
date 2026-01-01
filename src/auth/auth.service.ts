@@ -11,7 +11,7 @@ import { randomBytes } from "crypto";
 import { AuthResponseDto } from "./dto/auth-response.dto";
 import { ConfigService } from "@nestjs/config";
 import * as argon2 from "argon2";
-import { UserRole, UserStatus, AuthProvider } from "../../generated/prisma";
+import { UserRole, UserStatus, AuthProvider } from "@generated/prisma";
 import { NonceCacheService } from "../valkey/services/nonce-cache.service";
 
 @Injectable()

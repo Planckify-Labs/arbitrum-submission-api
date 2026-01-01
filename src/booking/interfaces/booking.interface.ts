@@ -1,6 +1,7 @@
 import { BookingStatus } from "../enums/booking-status.enum";
 import { ProductVariant, ProductPrice, Product } from "@generated/prisma";
-import { JsonValue } from "@prisma/client/runtime/library";
+import { Prisma } from "@generated/prisma";
+type JsonValue = Prisma.JsonValue;
 
 export interface BookingPayment {
   tokenAddress: string;

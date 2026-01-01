@@ -4,7 +4,6 @@ import {
   BadRequestException,
   ForbiddenException,
 } from "@nestjs/common";
-import { PrismaClient } from "@generated/prisma";
 import { CreateBookingDto } from "./dto/booking.dto";
 import { ConfigService } from "@nestjs/config";
 import {
@@ -15,26 +14,25 @@ import {
 } from "./interfaces/booking.interface";
 import { PrismaService } from "../prisma/prisma.service";
 import { BookingQueryDto } from "./dto/booking-query.dto";
-import { Decimal } from "@prisma/client/runtime/library";
+import { Prisma } from "@generated/prisma";
+const Decimal = Prisma.Decimal;
 import { BookingStatus } from "./enums/booking-status.enum";
 import { BlockchainsService } from "../blockchains/blockchains.service";
 import {
   ProductInputValidatorService,
   CustomerInfo,
 } from "../products/services/product-input-validator.service";
-import { Prisma } from "@generated/prisma";
 
 @Injectable()
 export class BookingService {
-  private readonly prisma: PrismaClient;
   private readonly BOOKING_EXPIRY_MINUTES: number;
 
   constructor(
+    private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     private readonly blockchainsService: BlockchainsService,
     private readonly productInputValidator: ProductInputValidatorService,
   ) {
-    this.prisma = new PrismaClient();
     this.BOOKING_EXPIRY_MINUTES = this.configService.get(
       "BOOKING_EXPIRY_MINUTES",
       15,

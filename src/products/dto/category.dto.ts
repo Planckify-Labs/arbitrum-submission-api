@@ -6,7 +6,7 @@ import {
   IsBoolean,
   IsEnum,
 } from "class-validator";
-import { CategoryType } from "generated/prisma";
+import { CategoryType } from "@generated/prisma";
 
 export class CreateCategoryDto {
   @ApiProperty({ example: "Games" })

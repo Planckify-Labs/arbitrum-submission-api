@@ -6,7 +6,7 @@ import {
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateDappDto, UpdateDappDto } from "./dto/dapp.dto";
-import { Prisma } from "generated/prisma";
+import { Prisma } from "@generated/prisma";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
 
 @Injectable()

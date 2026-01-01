@@ -8,7 +8,7 @@ import {
   CreateDappCategoryDto,
   UpdateDappCategoryDto,
 } from "./dto/dapp-category.dto";
-import { Prisma } from "generated/prisma";
+import { Prisma } from "@generated/prisma";
 
 @Injectable()
 export class DappCategoriesService {

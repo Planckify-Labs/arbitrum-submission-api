@@ -6,7 +6,7 @@ import {
   IsOptional,
   IsString,
 } from "class-validator";
-import { TransactionStatus, TransactionType } from "../../../generated/prisma";
+import { TransactionStatus, TransactionType } from "@generated/prisma";
 
 export class CreateTransactionDto {
   @ApiProperty({ example: "01H1G5V..." })

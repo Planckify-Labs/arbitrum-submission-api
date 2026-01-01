@@ -1,5 +1,5 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { AuthProvider } from "../../../generated/prisma";
+import { AuthProvider } from "@generated/prisma";
 
 export class UserResponseDto {
   @ApiProperty({ example: "01H1G5V..." })

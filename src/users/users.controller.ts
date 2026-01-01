@@ -16,7 +16,7 @@ import { CreateUserDto } from "./dto/create-user.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { Roles } from "../decorators/roles.decorator";
-import { UserRole } from "../../generated/prisma";
+import { UserRole } from "@generated/prisma";
 import { UserResourceGuard } from "./guards/user-resource.guard";
 import { UserResponseDto } from "./dto/user-response.dto";
 
