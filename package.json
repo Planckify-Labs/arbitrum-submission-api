@@ -90,8 +90,5 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
-  },
-  "prisma": {
-    "seed": "ts-node src/scripts/prisma/seed.ts"
   }
 }
