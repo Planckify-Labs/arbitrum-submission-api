@@ -1,8 +1,8 @@
 # Build stage
 FROM node:22-alpine AS builder
 
-# Install pnpm via npm (avoids corepack signature issues)
-RUN npm install -g pnpm@9
+# Install pnpm globally
+RUN npm i -g pnpm
 
 WORKDIR /app
 
@@ -20,7 +20,7 @@ RUN pnpm prisma generate
 COPY . .
 
 # Build the application
-RUN pnpm build
+RUN pnpm run build
 
 # Prune dev dependencies
 RUN pnpm prune --prod
