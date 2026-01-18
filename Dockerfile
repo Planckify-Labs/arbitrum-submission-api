@@ -1,5 +1,5 @@
 # Build stage
-FROM node:20.18-alpine AS builder
+FROM node:22-alpine AS builder
 
 # Install pnpm via npm (avoids corepack signature issues)
 RUN npm install -g pnpm@9
@@ -26,7 +26,7 @@ RUN pnpm build
 RUN pnpm prune --prod
 
 # Production stage
-FROM node:20.18-alpine AS production
+FROM node:22-alpine AS production
 
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs && \
