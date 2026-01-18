@@ -12,12 +12,11 @@ COPY package.json pnpm-lock.yaml ./
 # Install all dependencies (including dev for building)
 RUN pnpm install --frozen-lockfile
 
-# Copy prisma schema and generate client
-COPY prisma ./prisma/
-RUN pnpm prisma generate
-
-# Copy source code
+# Copy all source code
 COPY . .
+
+# Generate Prisma client (after copying source)
+RUN pnpm prisma generate
 
 # Build the application
 RUN pnpm run build
