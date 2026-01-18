@@ -21,6 +21,9 @@ RUN touch .env
 # Generate Prisma client (after copying source)
 RUN pnpm prisma generate
 
+# Verify generated files exist
+RUN ls -la generated/prisma/
+
 # Build the application
 RUN pnpm run build
 
