@@ -10,8 +10,8 @@ until docker exec takumipay-postgres pg_isready -U takumipay -d takumipay > /dev
 done
 echo "PostgreSQL is ready!"
 
-echo "Running Prisma migrations..."
-pnpm prisma migrate deploy
+echo "Pushing schema to database..."
+pnpm prisma db push
 
 echo "Running Prisma seed..."
 pnpm prisma db seed
