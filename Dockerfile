@@ -1,8 +1,8 @@
 # Build stage
 FROM node:20.18-alpine AS builder
 
-# Install pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# Install pnpm via npm (avoids corepack signature issues)
+RUN npm install -g pnpm@9
 
 WORKDIR /app
 
@@ -27,9 +27,6 @@ RUN pnpm prune --prod
 
 # Production stage
 FROM node:20.18-alpine AS production
-
-# Install pnpm for prisma commands
-RUN corepack enable && corepack prepare pnpm@latest --activate
 
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs && \
