@@ -18,14 +18,20 @@ COPY . .
 # Create dummy .env for Prisma (excluded by .dockerignore)
 RUN touch .env
 
-# Generate Prisma client (after copying source)
+# Generate Prisma client (outputs to src/generated/prisma)
 RUN pnpm prisma generate
 
-# Verify generated files exist
-RUN ls -la generated/prisma/
+# Create index.ts for module resolution (Prisma 7 doesn't generate this automatically)
+RUN echo 'export * from "./client"' > src/generated/prisma/index.ts
+
+# Verify generated files exist in src
+RUN ls -la src/generated/prisma/
 
 # Build the application
 RUN pnpm run build
+
+# Verify generated files are compiled to dist
+RUN ls -la dist/generated/prisma/
 
 # Prune dev dependencies
 RUN pnpm prune --prod
