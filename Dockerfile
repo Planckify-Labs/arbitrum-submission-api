@@ -51,6 +51,10 @@ COPY --from=builder --chown=nestjs:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=nestjs:nodejs /app/package.json ./
 COPY --from=builder --chown=nestjs:nodejs /app/prisma ./prisma
 
+# Copy and setup entrypoint script
+COPY --chown=nestjs:nodejs scripts/docker-entrypoint.sh ./
+RUN chmod +x docker-entrypoint.sh
+
 # Set environment
 ENV NODE_ENV=production
 
@@ -64,5 +68,5 @@ EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:4000/health || exit 1
 
-# Start the application
-CMD ["node", "dist/main"]
+# Start the application (runs prisma db push then node)
+CMD ["./docker-entrypoint.sh"]
