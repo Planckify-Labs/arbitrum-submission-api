@@ -1,0 +1,54 @@
+# Dependencies
+node_modules
+
+# Build output
+dist
+
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Environment files (use docker-compose env instead)
+.env
+.env.*
+!.env.example
+
+# Logs
+logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Test files
+coverage
+test
+**/*.spec.ts
+**/*.test.ts
+jest.config.js
+
+# Documentation
+*.md
+!README.md
+
+# Docker files (not needed in context)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Cache and temp
+.cache
+.tmp
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Data files (vendor cache)
+data/

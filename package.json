@@ -21,7 +21,12 @@
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "docker:reset": "docker compose down -v && docker compose up -d",
-    "db:setup": "./scripts/setup-db.sh"
+    "docker:prod": "docker compose -f docker-compose.prod.yml up -d --build",
+    "docker:prod:down": "docker compose -f docker-compose.prod.yml down",
+    "docker:prod:reset": "docker compose -f docker-compose.prod.yml down -v && docker compose -f docker-compose.prod.yml up -d --build",
+    "docker:prod:logs": "docker compose -f docker-compose.prod.yml logs -f",
+    "db:setup": "./scripts/setup-db.sh",
+    "db:setup:prod": "./scripts/setup-db-prod.sh"
   },
   "dependencies": {
     "@nestjs/bullmq": "^11.0.3",

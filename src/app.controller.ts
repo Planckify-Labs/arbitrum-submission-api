@@ -1,6 +1,7 @@
 import { Controller, Get } from "@nestjs/common";
 import { AppService } from "./app.service";
-import { ApiTags } from "@nestjs/swagger";
+import { ApiTags, ApiOperation, ApiResponse } from "@nestjs/swagger";
+import { Public } from "./decorators/public.decorator";
 
 @Controller()
 @ApiTags("app")
@@ -10,5 +11,16 @@ export class AppController {
   @Get()
   getHello(): string {
     return this.appService.getHello();
+  }
+
+  @Get("health")
+  @Public()
+  @ApiOperation({ summary: "Health check endpoint" })
+  @ApiResponse({ status: 200, description: "Service is healthy" })
+  getHealth(): { status: string; timestamp: string } {
+    return {
+      status: "ok",
+      timestamp: new Date().toISOString(),
+    };
   }
 }

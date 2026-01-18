@@ -1,0 +1,91 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: takumipay-api
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:4000:4000"
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://takumipay:${POSTGRES_PASSWORD:-takumipay-123}@postgres:5432/takumipay
+      VALKEY_HOST: valkey
+      VALKEY_PORT: 6379
+      VALKEY_REQUEST_TIMEOUT: 5000
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION_TIME: ${JWT_EXPIRATION_TIME:-90D}
+      REFRESH_TOKEN_EXPIRATION_TIME: ${REFRESH_TOKEN_EXPIRATION_TIME:-200D}
+      MAX_LOGIN_ATTEMPTS: ${MAX_LOGIN_ATTEMPTS:-5}
+      ACCOUNT_LOCK_DURATION_MINUTES: ${ACCOUNT_LOCK_DURATION_MINUTES:-30}
+      NONCE_EXPIRE_TIME_MINUTES: ${NONCE_EXPIRE_TIME_MINUTES:-5}
+      SIWE_DOMAIN: ${SIWE_DOMAIN}
+      SIWE_URI: ${SIWE_URI}
+      SIWE_STATEMENT: ${SIWE_STATEMENT:-Sign in to TakumiPay}
+      ADMIN_WALLET_PRIVATE_KEY: ${ADMIN_WALLET_PRIVATE_KEY}
+      CHAIN_ID: ${CHAIN_ID:-1}
+      MIN_CONFIRMATIONS: ${MIN_CONFIRMATIONS:-12}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://app.takumipay.com}
+      CORS_CREDENTIALS: ${CORS_CREDENTIALS:-true}
+      VCGAMERS_SECRET: ${VCGAMERS_SECRET}
+      CORE_PAYMENT_API_URL: ${CORE_PAYMENT_API_URL}
+      CORE_PAYMENT_API_TIMEOUT: ${CORE_PAYMENT_API_TIMEOUT:-60000}
+      CORE_PAYMENT_API_RETRY_COUNT: ${CORE_PAYMENT_API_RETRY_COUNT:-3}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - takumipay-network
+
+  postgres:
+    image: timescale/timescaledb-ha:pg18
+    container_name: takumipay-postgres
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5433:5432"
+    environment:
+      POSTGRES_USER: takumipay
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-takumipay-123}
+      POSTGRES_DB: takumipay
+    volumes:
+      - postgres_data:/home/postgres/pgdata/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U takumipay -d takumipay"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - takumipay-network
+
+  valkey:
+    image: valkey/valkey:9-alpine
+    container_name: takumipay-valkey
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6380:6379"
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - takumipay-network
+
+volumes:
+  postgres_data:
+  valkey_data:
+
+networks:
+  takumipay-network:
+    driver: bridge
