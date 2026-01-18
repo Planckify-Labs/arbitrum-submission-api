@@ -1,0 +1,48 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: takumipay-api
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:4000:4000"
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      # Database (external - set in Dokploy environment)
+      DATABASE_URL: ${DATABASE_URL}
+      # Valkey/Redis (external - set in Dokploy environment)
+      VALKEY_HOST: ${VALKEY_HOST}
+      VALKEY_PORT: ${VALKEY_PORT:-6379}
+      VALKEY_REQUEST_TIMEOUT: ${VALKEY_REQUEST_TIMEOUT:-5000}
+      # Auth
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION_TIME: ${JWT_EXPIRATION_TIME:-90D}
+      REFRESH_TOKEN_EXPIRATION_TIME: ${REFRESH_TOKEN_EXPIRATION_TIME:-200D}
+      MAX_LOGIN_ATTEMPTS: ${MAX_LOGIN_ATTEMPTS:-5}
+      ACCOUNT_LOCK_DURATION_MINUTES: ${ACCOUNT_LOCK_DURATION_MINUTES:-30}
+      # SIWE
+      NONCE_EXPIRE_TIME_MINUTES: ${NONCE_EXPIRE_TIME_MINUTES:-5}
+      SIWE_DOMAIN: ${SIWE_DOMAIN}
+      SIWE_URI: ${SIWE_URI}
+      SIWE_STATEMENT: ${SIWE_STATEMENT:-Sign in to TakumiPay}
+      # Blockchain
+      ADMIN_WALLET_PRIVATE_KEY: ${ADMIN_WALLET_PRIVATE_KEY}
+      CHAIN_ID: ${CHAIN_ID:-1}
+      MIN_CONFIRMATIONS: ${MIN_CONFIRMATIONS:-12}
+      # CORS
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://app.takumipay.com}
+      CORS_CREDENTIALS: ${CORS_CREDENTIALS:-true}
+      # Vendor
+      VCGAMERS_SECRET: ${VCGAMERS_SECRET}
+      # Core Payment API
+      CORE_PAYMENT_API_URL: ${CORE_PAYMENT_API_URL}
+      CORE_PAYMENT_API_TIMEOUT: ${CORE_PAYMENT_API_TIMEOUT:-60000}
+      CORE_PAYMENT_API_RETRY_COUNT: ${CORE_PAYMENT_API_RETRY_COUNT:-3}
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

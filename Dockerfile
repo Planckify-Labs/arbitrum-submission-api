@@ -15,6 +15,9 @@ RUN pnpm install --frozen-lockfile
 # Copy all source code
 COPY . .
 
+# Create dummy .env for Prisma (excluded by .dockerignore)
+RUN touch .env
+
 # Generate Prisma client (after copying source)
 RUN pnpm prisma generate
 

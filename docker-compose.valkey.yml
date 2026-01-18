@@ -1,0 +1,21 @@
+services:
+  valkey:
+    image: valkey/valkey:9-alpine
+    container_name: takumipay-valkey
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:6379:6379"
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  valkey_data:
+
+# After deploying, use these in your API:
+# VALKEY_HOST=<SERVER_IP or valkey.yourdomain.com>
+# VALKEY_PORT=6379
