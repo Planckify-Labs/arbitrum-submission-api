@@ -15,6 +15,7 @@ services:
       # Valkey/Redis (external - set in Dokploy environment)
       VALKEY_HOST: ${VALKEY_HOST}
       VALKEY_PORT: ${VALKEY_PORT:-6379}
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD}
       VALKEY_REQUEST_TIMEOUT: ${VALKEY_REQUEST_TIMEOUT:-5000}
       # Auth
       JWT_SECRET: ${JWT_SECRET}

@@ -5,10 +5,13 @@ services:
     restart: unless-stopped
     ports:
       - "0.0.0.0:6379:6379"
+    command: valkey-server --requirepass ${VALKEY_PASSWORD}
+    environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD}
     volumes:
       - valkey_data:/data
     healthcheck:
-      test: ["CMD", "valkey-cli", "ping"]
+      test: ["CMD", "valkey-cli", "-a", "${VALKEY_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -19,3 +22,4 @@ volumes:
 # After deploying, use these in your API:
 # VALKEY_HOST=<SERVER_IP or valkey.yourdomain.com>
 # VALKEY_PORT=6379
+# VALKEY_PASSWORD=<your-password>

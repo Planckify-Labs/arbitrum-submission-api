@@ -12,25 +12,29 @@ import { QueueService } from "./queue.service";
   imports: [
     BullModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        connection: {
-          host: configService.get<string>("VALKEY_HOST", "localhost"),
-          port: configService.get<number>("VALKEY_PORT", 6379),
-          retryDelayOnFailover: 100,
-          enableReadyCheck: false,
-          maxRetriesPerRequest: null,
-          lazyConnect: true,
-        },
-        defaultJobOptions: {
-          removeOnComplete: 100,
-          removeOnFail: 50,
-          attempts: 3,
-          backoff: {
-            type: "exponential",
-            delay: 2000,
+      useFactory: async (configService: ConfigService) => {
+        const password = configService.get<string>("VALKEY_PASSWORD");
+        return {
+          connection: {
+            host: configService.get<string>("VALKEY_HOST", "localhost"),
+            port: configService.get<number>("VALKEY_PORT", 6379),
+            ...(password && { password }),
+            retryDelayOnFailover: 100,
+            enableReadyCheck: false,
+            maxRetriesPerRequest: null,
+            lazyConnect: true,
           },
-        },
-      }),
+          defaultJobOptions: {
+            removeOnComplete: 100,
+            removeOnFail: 50,
+            attempts: 3,
+            backoff: {
+              type: "exponential",
+              delay: 2000,
+            },
+          },
+        };
+      },
       inject: [ConfigService],
     }),
     BullModule.registerQueue(

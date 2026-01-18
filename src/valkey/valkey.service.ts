@@ -12,6 +12,7 @@ export class ValkeyService implements OnModuleInit, OnModuleDestroy {
   private isConnected: boolean = false;
 
   constructor(private configService: ConfigService) {
+    const password = this.configService.get<string>('VALKEY_PASSWORD');
     this.config = {
       addresses: [
         {
@@ -19,6 +20,11 @@ export class ValkeyService implements OnModuleInit, OnModuleDestroy {
           port: this.configService.get<number>('VALKEY_PORT', 6379),
         },
       ],
+      ...(password && {
+        credentials: {
+          password,
+        },
+      }),
     };
   }
 
@@ -29,13 +35,17 @@ export class ValkeyService implements OnModuleInit, OnModuleDestroy {
 
   private async initializeConnection(): Promise<void> {
     try {
-      const clientConfig = {
+      const clientConfig: any = {
         addresses: this.config.addresses,
         requestTimeout: this.config.requestTimeout || 5000,
       };
 
+      if (this.config.credentials?.password) {
+        clientConfig.credentials = this.config.credentials;
+      }
+
       this.logger.log(`Attempting to connect to Valkey at ${this.config.addresses[0].host}:${this.config.addresses[0].port}`);
-      this.logger.log(`Client config: ${JSON.stringify(clientConfig, null, 2)}`);
+      this.logger.log(`Client config: ${JSON.stringify({ ...clientConfig, credentials: clientConfig.credentials ? '***' : undefined }, null, 2)}`);
 
       this.client = await GlideClient.createClient(clientConfig);
       this.logger.log('Valkey client connected successfully');

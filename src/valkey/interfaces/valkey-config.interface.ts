@@ -3,11 +3,17 @@ export interface ValkeyAddress {
   port: number;
 }
 
+export interface ValkeyCredentials {
+  password: string;
+  username?: string;
+}
+
 export interface ValkeyConfig {
   addresses: ValkeyAddress[];
   useTLS?: boolean;
   requestTimeout?: number;
   clientName?: string;
+  credentials?: ValkeyCredentials;
 }
 
 export interface CacheOptions {
