@@ -972,6 +972,17 @@ async function main() {
         isActive: true,
       },
     }),
+    prisma.exchangeRate.create({
+      data: {
+        fromCurrency: "IDRX",
+        toCurrency: "IDR",
+        rate: 1,
+        sourceProviderId: exchangeSource.id,
+        region: "ID",
+        markup: 0,
+        isActive: true,
+      },
+    }),
   ]);
 
   const users = await Promise.all([
