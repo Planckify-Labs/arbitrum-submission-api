@@ -19,36 +19,43 @@ import {
   CreateProductInputFieldDto,
   UpdateProductInputFieldDto,
 } from "./dto/product-input-field.dto";
+import { ProductCacheService } from "../valkey/services/product-cache.service";
+
+// Standard product include for consistency
+const productInclude = {
+  category: true,
+  variants: {
+    include: {
+      ProductPrice: {
+        include: {
+          vendor: true,
+        },
+      },
+    },
+  },
+} as const;
 
 @Injectable()
 export class ProductsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly vcGamersService: VCGamersService,
+    private readonly productCache: ProductCacheService,
   ) {}
 
-  findAll(paginationDto: CursorPaginationDto) {
+  async findAll(paginationDto: CursorPaginationDto) {
     const { cursor, take = 10 } = paginationDto;
 
-    return this.prisma.product.findMany({
-      take,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
-      include: {
-        category: true,
-        variants: {
-          include: {
-            ProductPrice: {
-              include: {
-                vendor: true,
-              },
-            },
-          },
+    return this.productCache.getProductList(cursor ?? "first", async () => {
+      return this.prisma.product.findMany({
+        take,
+        skip: cursor ? 1 : 0,
+        cursor: cursor ? { id: cursor } : undefined,
+        include: productInclude,
+        orderBy: {
+          name: "asc",
         },
-      },
-      orderBy: {
-        name: "asc",
-      },
+      });
     });
   }
 
@@ -137,23 +144,13 @@ export class ProductsService {
       where.isVoucher = isVoucher;
     }
 
+    // Search queries are not cached due to high variability
     return this.prisma.product.findMany({
       take,
       skip: cursor ? 1 : 0,
       cursor: cursor ? { id: cursor } : undefined,
       where,
-      include: {
-        category: true,
-        variants: {
-          include: {
-            ProductPrice: {
-              include: {
-                vendor: true,
-              },
-            },
-          },
-        },
-      },
+      include: productInclude,
       orderBy: {
         name: "asc",
       },
@@ -171,18 +168,7 @@ export class ProductsService {
         isVoucher: true,
         isActive: true,
       },
-      include: {
-        category: true,
-        variants: {
-          include: {
-            ProductPrice: {
-              include: {
-                vendor: true,
-              },
-            },
-          },
-        },
-      },
+      include: productInclude,
       orderBy: {
         name: "asc",
       },
@@ -200,18 +186,7 @@ export class ProductsService {
         isVoucher: false,
         isActive: true,
       },
-      include: {
-        category: true,
-        variants: {
-          include: {
-            ProductPrice: {
-              include: {
-                vendor: true,
-              },
-            },
-          },
-        },
-      },
+      include: productInclude,
       orderBy: {
         name: "asc",
       },
@@ -232,40 +207,20 @@ export class ProductsService {
   }
 
   async findByCategory(categoryId: string) {
-    const products = await this.prisma.product.findMany({
-      where: { categoryId },
-      include: {
-        category: true,
-        variants: {
-          include: {
-            ProductPrice: {
-              include: {
-                vendor: true,
-              },
-            },
-          },
-        },
-      },
+    return this.productCache.getProductsByCategory(categoryId, async () => {
+      return this.prisma.product.findMany({
+        where: { categoryId },
+        include: productInclude,
+      });
     });
-
-    return products;
   }
 
   async findByCode(code: string) {
-    const product = await this.prisma.product.findFirst({
-      where: { code },
-      include: {
-        category: true,
-        variants: {
-          include: {
-            ProductPrice: {
-              include: {
-                vendor: true,
-              },
-            },
-          },
-        },
-      },
+    const product = await this.productCache.getProductByCode(code, async () => {
+      return this.prisma.product.findFirst({
+        where: { code },
+        include: productInclude,
+      });
     });
 
     if (!product) {
@@ -276,19 +231,21 @@ export class ProductsService {
   }
 
   async findPrices(id: string) {
-    const product = await this.prisma.product.findUnique({
-      where: { id },
-      include: {
-        variants: {
-          include: {
-            ProductPrice: {
-              include: {
-                vendor: true,
+    const product = await this.productCache.getProductPrices(id, async () => {
+      return this.prisma.product.findUnique({
+        where: { id },
+        include: {
+          variants: {
+            include: {
+              ProductPrice: {
+                include: {
+                  vendor: true,
+                },
               },
             },
           },
         },
-      },
+      });
     });
 
     if (!product) {
@@ -311,7 +268,7 @@ export class ProductsService {
     }
 
     try {
-      return await this.prisma.productPrice.create({
+      const price = await this.prisma.productPrice.create({
         data: {
           ...data,
           productVariantId,
@@ -321,6 +278,11 @@ export class ProductsService {
           productVariant: true,
         },
       });
+
+      // Invalidate product cache after price creation
+      await this.productCache.invalidateProduct(productVariant.productId);
+
+      return price;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         throw new NotFoundException("Failed to create product price");
@@ -331,7 +293,7 @@ export class ProductsService {
 
   async updatePrice(priceId: string, data: UpdateProductPriceDto) {
     try {
-      return await this.prisma.productPrice.update({
+      const price = await this.prisma.productPrice.update({
         where: { id: priceId },
         data,
         include: {
@@ -339,6 +301,11 @@ export class ProductsService {
           productVariant: true,
         },
       });
+
+      // Invalidate product cache after price update
+      await this.productCache.invalidateProduct(price.productVariant.productId);
+
+      return price;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         throw new NotFoundException(`Price with ID ${priceId} not found`);
@@ -349,9 +316,22 @@ export class ProductsService {
 
   async removePrice(priceId: string) {
     try {
-      return await this.prisma.productPrice.delete({
+      // Get price with variant to know which product to invalidate
+      const existingPrice = await this.prisma.productPrice.findUnique({
+        where: { id: priceId },
+        include: { productVariant: true },
+      });
+
+      const result = await this.prisma.productPrice.delete({
         where: { id: priceId },
       });
+
+      // Invalidate product cache after price deletion
+      if (existingPrice) {
+        await this.productCache.invalidateProduct(existingPrice.productVariant.productId);
+      }
+
+      return result;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         throw new NotFoundException(`Price with ID ${priceId} not found`);
@@ -361,20 +341,11 @@ export class ProductsService {
   }
 
   async findOne(id: string) {
-    const product = await this.prisma.product.findUnique({
-      where: { id },
-      include: {
-        category: true,
-        variants: {
-          include: {
-            ProductPrice: {
-              include: {
-                vendor: true,
-              },
-            },
-          },
-        },
-      },
+    const product = await this.productCache.getProductDetails(id, async () => {
+      return this.prisma.product.findUnique({
+        where: { id },
+        include: productInclude,
+      });
     });
 
     if (!product) {
@@ -384,34 +355,33 @@ export class ProductsService {
     return product;
   }
 
-  create(data: CreateProductDto) {
-    return this.prisma.product.create({
+  async create(data: CreateProductDto) {
+    const product = await this.prisma.product.create({
       data,
       include: {
         category: true,
         variants: true,
       },
     });
+
+    // Invalidate catalog cache after product creation
+    await this.productCache.invalidateProduct();
+
+    return product;
   }
 
   async update(id: string, data: UpdateProductDto) {
     try {
-      return await this.prisma.product.update({
+      const product = await this.prisma.product.update({
         where: { id },
         data,
-        include: {
-          category: true,
-          variants: {
-            include: {
-              ProductPrice: {
-                include: {
-                  vendor: true,
-                },
-              },
-            },
-          },
-        },
+        include: productInclude,
       });
+
+      // Invalidate specific product cache after update
+      await this.productCache.invalidateProduct(id);
+
+      return product;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         throw new NotFoundException(`Product with ID ${id} not found`);
@@ -422,9 +392,14 @@ export class ProductsService {
 
   async remove(id: string) {
     try {
-      return await this.prisma.product.delete({
+      const result = await this.prisma.product.delete({
         where: { id },
       });
+
+      // Invalidate product cache after deletion
+      await this.productCache.invalidateProduct(id);
+
+      return result;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         throw new NotFoundException(`Product with ID ${id} not found`);
@@ -448,24 +423,34 @@ export class ProductsService {
     return category;
   }
 
-  createCategory(data: CreateCategoryDto) {
-    return this.prisma.category.create({
+  async createCategory(data: CreateCategoryDto) {
+    const category = await this.prisma.category.create({
       data,
       include: {
         Product: true,
       },
     });
+
+    // Invalidate category cache after creation
+    await this.productCache.invalidateCategory();
+
+    return category;
   }
 
   async updateCategory(id: string, data: UpdateCategoryDto) {
     try {
-      return await this.prisma.category.update({
+      const category = await this.prisma.category.update({
         where: { id },
         data,
         include: {
           Product: true,
         },
       });
+
+      // Invalidate category cache after update
+      await this.productCache.invalidateCategory(id);
+
+      return category;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         throw new NotFoundException(`Category with ID ${id} not found`);
@@ -476,9 +461,14 @@ export class ProductsService {
 
   async removeCategory(id: string) {
     try {
-      return await this.prisma.category.delete({
+      const result = await this.prisma.category.delete({
         where: { id },
       });
+
+      // Invalidate category cache after deletion
+      await this.productCache.invalidateCategory(id);
+
+      return result;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         throw new NotFoundException(`Category with ID ${id} not found`);
@@ -496,18 +486,20 @@ export class ProductsService {
       throw new NotFoundException(`Product with ID ${productId} not found`);
     }
 
-    return this.prisma.productVariant.findMany({
-      where: { productId },
-      include: {
-        ProductPrice: {
-          include: {
-            vendor: true,
+    return this.productCache.getProductVariants(productId, async () => {
+      return this.prisma.productVariant.findMany({
+        where: { productId },
+        include: {
+          ProductPrice: {
+            include: {
+              vendor: true,
+            },
           },
         },
-      },
-      orderBy: {
-        name: "asc",
-      },
+        orderBy: {
+          name: "asc",
+        },
+      });
     });
   }
 
@@ -569,6 +561,7 @@ export class ProductsService {
       ];
     }
 
+    // Search queries are not cached due to high variability
     return await this.prisma.productVariant.findMany({
       take,
       skip: cursor ? 1 : 0,
@@ -589,50 +582,52 @@ export class ProductsService {
   }
 
   async findAllGroupedByCategories(take?: number) {
-    const categories = await this.prisma.category.findMany({
-      select: {
-        id: true,
-        name: true,
-        Product: {
-          take: take ? take : 6,
-          where: {
-            isActive: true,
-          },
-          select: {
-            id: true,
-            name: true,
-            description: true,
-            imageUrl: true,
-            code: true,
-            categoryId: true,
-            isActive: true,
-            isVoucher: true,
-            createdAt: true,
-            updatedAt: true,
-          },
-        },
-      },
-      where: {
-        isActive: true,
-        Product: {
-          some: {
-            isActive: true,
+    return this.productCache.getCatalogGrouped(async () => {
+      const categories = await this.prisma.category.findMany({
+        select: {
+          id: true,
+          name: true,
+          Product: {
+            take: take ? take : 6,
+            where: {
+              isActive: true,
+            },
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              imageUrl: true,
+              code: true,
+              categoryId: true,
+              isActive: true,
+              isVoucher: true,
+              createdAt: true,
+              updatedAt: true,
+            },
           },
         },
-      },
-      orderBy: {
-        name: "asc",
-      },
-    });
+        where: {
+          isActive: true,
+          Product: {
+            some: {
+              isActive: true,
+            },
+          },
+        },
+        orderBy: {
+          name: "asc",
+        },
+      });
 
-    return categories.map((category) => {
-      return {
-        category: {
-          id: category.id,
-          name: category.name,
-        },
-        products: category.Product,
-      };
+      return categories.map((category) => {
+        return {
+          category: {
+            id: category.id,
+            name: category.name,
+          },
+          products: category.Product,
+        };
+      });
     });
   }
 
@@ -648,7 +643,7 @@ export class ProductsService {
       throw new NotFoundException(`Product with ID ${productId} not found`);
     }
 
-    return this.prisma.productInputField.create({
+    const inputField = await this.prisma.productInputField.create({
       data: {
         product: {
           connect: { id: productId },
@@ -656,6 +651,11 @@ export class ProductsService {
         forms: JSON.parse(JSON.stringify(createInputFieldDto.fields)),
       },
     });
+
+    // Invalidate product cache after input field creation
+    await this.productCache.invalidateProduct(productId);
+
+    return inputField;
   }
 
   async updateProductInputField(
@@ -683,12 +683,17 @@ export class ProductsService {
       throw new BadRequestException("No form fields provided for update");
     }
 
-    return this.prisma.productInputField.update({
+    const inputField = await this.prisma.productInputField.update({
       where: { id: fieldId },
       data: {
         forms: JSON.parse(JSON.stringify(updateInputFieldDto.fields)),
       },
     });
+
+    // Invalidate product cache after input field update
+    await this.productCache.invalidateProduct(productId);
+
+    return inputField;
   }
 
   async deleteProductInputField(productId: string, fieldId: string) {
@@ -705,8 +710,13 @@ export class ProductsService {
       );
     }
 
-    return this.prisma.productInputField.delete({
+    const result = await this.prisma.productInputField.delete({
       where: { id: fieldId },
     });
+
+    // Invalidate product cache after input field deletion
+    await this.productCache.invalidateProduct(productId);
+
+    return result;
   }
 }

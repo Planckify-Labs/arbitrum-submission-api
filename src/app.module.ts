@@ -21,9 +21,11 @@ import { ApiKeysModule } from "./api-keys/api-keys.module";
 import { ValkeyModule } from "./valkey/valkey.module";
 import { QueueModule } from "./queue/queue.module";
 import { DappsModule } from "./dapps/dapps.module";
-import { APP_GUARD } from "@nestjs/core";
+import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 import { JwtAuthGuard } from "./auth/guards/jwt-auth.guard";
 import { ApiKeyGuard } from "./auth/guards/api-key.guard";
+import { CacheInterceptor } from "./valkey/interceptors/cache.interceptor";
+import { InvalidateCacheInterceptor } from "./valkey/interceptors/invalidate-cache.interceptor";
 
 @Module({
   imports: [
@@ -60,6 +62,14 @@ import { ApiKeyGuard } from "./auth/guards/api-key.guard";
     {
       provide: APP_GUARD,
       useClass: ApiKeyGuard,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: CacheInterceptor,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: InvalidateCacheInterceptor,
     },
   ],
 })

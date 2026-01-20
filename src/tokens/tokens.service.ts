@@ -5,10 +5,14 @@ import { UpdateTokenDto } from "./dto/update-token.dto";
 import { SearchTokenDto } from "./dto/search-token.dto";
 import { Prisma } from "@generated/prisma";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
+import { TokenCacheService } from "../valkey/services/token-cache.service";
 
 @Injectable()
 export class TokensService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly tokenCache: TokenCacheService,
+  ) {}
 
   async create(createTokenDto: CreateTokenDto) {
     const blockchain = await this.prisma.blockchain.findUnique({
@@ -57,28 +61,32 @@ export class TokensService {
   async findAll(paginationDto: CursorPaginationDto) {
     const { cursor, take = 10 } = paginationDto;
 
-    return await this.prisma.token.findMany({
-      take,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
-      include: {
-        blockchain: true,
-        regionAvailability: true,
-      },
-      orderBy: {
-        symbol: "asc",
-      },
-    });
+    return this.tokenCache.getAllTokens(cursor, () =>
+      this.prisma.token.findMany({
+        take,
+        skip: cursor ? 1 : 0,
+        cursor: cursor ? { id: cursor } : undefined,
+        include: {
+          blockchain: true,
+          regionAvailability: true,
+        },
+        orderBy: {
+          symbol: "asc",
+        },
+      }),
+    );
   }
 
   async findOne(id: string) {
-    const token = await this.prisma.token.findUnique({
-      where: { id },
-      include: {
-        blockchain: true,
-        regionAvailability: true,
-      },
-    });
+    const token = await this.tokenCache.getById(id, () =>
+      this.prisma.token.findUnique({
+        where: { id },
+        include: {
+          blockchain: true,
+          regionAvailability: true,
+        },
+      }),
+    );
 
     if (!token) {
       throw new NotFoundException(`Token with ID ${id} not found`);
@@ -147,7 +155,7 @@ export class TokensService {
       }
     }
 
-    return this.prisma.token.update({
+    const result = await this.prisma.token.update({
       where: { id },
       data: updateTokenDto,
       include: {
@@ -155,6 +163,9 @@ export class TokensService {
         regionAvailability: true,
       },
     });
+    // Invalidate cache after update
+    await this.tokenCache.invalidateToken(id);
+    return result;
   }
 
   async remove(id: string) {
@@ -163,6 +174,8 @@ export class TokensService {
     await this.prisma.token.delete({
       where: { id },
     });
+    // Invalidate cache after delete
+    await this.tokenCache.invalidateToken(id);
   }
 
   async search(

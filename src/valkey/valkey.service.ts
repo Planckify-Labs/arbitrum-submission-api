@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GlideClient, GlideString } from '@valkey/valkey-glide';
-import { ValkeyConfig, CacheOptions } from './interfaces/valkey-config.interface';
+import type { ValkeyConfig, CacheOptions, GlideClientConfig } from './interfaces/valkey-config.interface';
 
 @Injectable()
 export class ValkeyService implements OnModuleInit, OnModuleDestroy {
@@ -35,14 +35,13 @@ export class ValkeyService implements OnModuleInit, OnModuleDestroy {
 
   private async initializeConnection(): Promise<void> {
     try {
-      const clientConfig: any = {
+      const clientConfig: GlideClientConfig = {
         addresses: this.config.addresses,
         requestTimeout: this.config.requestTimeout || 5000,
+        ...(this.config.credentials?.password && {
+          credentials: this.config.credentials,
+        }),
       };
-
-      if (this.config.credentials?.password) {
-        clientConfig.credentials = this.config.credentials;
-      }
 
       this.logger.log(`Attempting to connect to Valkey at ${this.config.addresses[0].host}:${this.config.addresses[0].port}`);
       this.logger.log(`Client config: ${JSON.stringify({ ...clientConfig, credentials: clientConfig.credentials ? '***' : undefined }, null, 2)}`);
@@ -272,7 +271,7 @@ export class ValkeyService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async customCommand(command: string[]): Promise<any> {
+  async customCommand(command: string[]): Promise<unknown> {
     if (!this.client) {
       this.logger.error('Valkey client is not initialized');
       throw new Error('Valkey client is not initialized');

@@ -8,10 +8,14 @@ import {
   GetLatestExchangeRateDto,
 } from "./dto/exchange-rate.dto";
 import { Prisma, ExchangeRate } from "@generated/prisma";
+import { ExchangeRateCacheService } from "../valkey/services/exchange-rate-cache.service";
 
 @Injectable()
 export class ExchangeRateService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private exchangeRateCache: ExchangeRateCacheService,
+  ) {}
 
   async create(data: CreateExchangeRateDto) {
     const now = new Date();
@@ -24,42 +28,57 @@ export class ExchangeRateService {
         sourceProvider: true,
       },
     });
+
+    // Invalidate cache for this currency pair after creation
+    await this.exchangeRateCache.invalidateRate(data.fromCurrency, data.toCurrency);
+
     return this.transformExchangeRate(result);
   }
 
   async findLatest(query: GetLatestExchangeRateDto) {
-    const where: Prisma.ExchangeRateWhereInput = {};
+    if (!query.fromCurrency || !query.toCurrency) {
+      // If currencies not specified, skip cache
+      const where: Prisma.ExchangeRateWhereInput = {};
+      if (query.fromCurrency) where.fromCurrency = query.fromCurrency;
+      if (query.toCurrency) where.toCurrency = query.toCurrency;
 
-    if (query.fromCurrency) {
-      where.fromCurrency = query.fromCurrency;
+      const result = await this.prisma.exchangeRate.findFirst({
+        where,
+        orderBy: { createdAt: "desc" },
+        include: { sourceProvider: true },
+      });
+
+      return result ? this.transformExchangeRate(result) : null;
     }
 
-    if (query.toCurrency) {
-      where.toCurrency = query.toCurrency;
-    }
+    // Use cache for specific currency pair
+    const result = await this.exchangeRateCache.getLatestRate(
+      query.fromCurrency,
+      query.toCurrency,
+      async () => {
+        const where: Prisma.ExchangeRateWhereInput = {
+          fromCurrency: query.fromCurrency,
+          toCurrency: query.toCurrency,
+        };
 
-    const result = await this.prisma.exchangeRate.findFirst({
-      where,
-      orderBy: {
-        createdAt: "desc",
+        return this.prisma.exchangeRate.findFirst({
+          where,
+          orderBy: { createdAt: "desc" },
+          include: { sourceProvider: true },
+        });
       },
-      include: {
-        sourceProvider: true,
-      },
-    });
+    );
 
     return result ? this.transformExchangeRate(result) : null;
   }
 
   async findOne(id: number) {
-    const result = await this.prisma.exchangeRate.findFirst({
-      where: { id },
-      include: {
-        sourceProvider: true,
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
+    const result = await this.exchangeRateCache.getRate(id, async () => {
+      return this.prisma.exchangeRate.findFirst({
+        where: { id },
+        include: { sourceProvider: true },
+        orderBy: { createdAt: "desc" },
+      });
     });
 
     if (!result) {
@@ -72,15 +91,9 @@ export class ExchangeRateService {
   async findAll(
     query: QueryExchangeRateDto,
   ): Promise<CursorPaginatedExchangeRateResponse> {
-    console.log("Query params:", query);
     const take = Math.max(1, Math.min(100, query.take || 10));
-    console.log("Take value:", take);
-
     const cursor = this.decodeCursor(query.cursor);
-    console.log("Decoded cursor:", cursor);
-
     const where = this.buildWhereClause(query);
-    console.log("Where clause:", where);
 
     if (cursor) {
       where.OR = [
@@ -94,8 +107,7 @@ export class ExchangeRateService {
       ];
     }
 
-    console.log("Final where clause:", where);
-
+    // Paginated queries are not cached due to cursor complexity
     const rates = await this.prisma.exchangeRate.findMany({
       take: take + 1,
       where,
@@ -105,11 +117,8 @@ export class ExchangeRateService {
       },
     });
 
-    console.log("Found rates:", rates.length);
-
     const hasMore = rates.length > take;
     const items = rates.slice(0, take);
-    console.log("Items after slice:", items.length);
 
     const transformedItems = items.map((rate) =>
       this.transformExchangeRate(rate),
@@ -129,16 +138,34 @@ export class ExchangeRateService {
   }
 
   async getAverageRate(query: QueryExchangeRateDto) {
-    const where = this.buildWhereClause(query);
+    if (!query.fromCurrency || !query.toCurrency) {
+      // If currencies not specified, skip cache
+      const where = this.buildWhereClause(query);
+      const result = await this.prisma.exchangeRate.aggregate({
+        where,
+        _avg: { rate: true },
+      });
+      return result._avg.rate ? Number(result._avg.rate) : null;
+    }
 
-    const result = await this.prisma.exchangeRate.aggregate({
-      where,
-      _avg: {
-        rate: true,
+    // Calculate days for cache key (default to 30 days if date range provided)
+    const days = query.startDate && query.endDate
+      ? Math.ceil((new Date(query.endDate).getTime() - new Date(query.startDate).getTime()) / (1000 * 60 * 60 * 24))
+      : 30;
+
+    return this.exchangeRateCache.getAverageRate(
+      query.fromCurrency,
+      query.toCurrency,
+      days,
+      async () => {
+        const where = this.buildWhereClause(query);
+        const result = await this.prisma.exchangeRate.aggregate({
+          where,
+          _avg: { rate: true },
+        });
+        return result._avg.rate ? Number(result._avg.rate) : null;
       },
-    });
-
-    return result._avg.rate ? Number(result._avg.rate) : null;
+    );
   }
 
   private buildWhereClause(
@@ -220,8 +247,7 @@ export class ExchangeRateService {
         timestamp: new Date(parseInt(timestamp)),
         id: parseInt(id),
       };
-    } catch (error) {
-      console.error("Error decoding cursor:", error);
+    } catch {
       return null;
     }
   }

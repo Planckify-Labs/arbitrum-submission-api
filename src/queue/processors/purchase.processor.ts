@@ -5,6 +5,9 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { BlockchainVerificationService } from "../../blockchain-verification/blockchain-verification.service";
 import { VCGamersService } from "../../providers/vendor-api/implementations/vcgamers/vcgamers.service";
 import { ReferenceIdService } from "../../reference-id/reference-id.service";
+import { BlockchainCacheService } from "../../valkey/services/blockchain-cache.service";
+import { SmartContractCacheService } from "../../valkey/services/smart-contract-cache.service";
+import { TokenCacheService } from "../../valkey/services/token-cache.service";
 import {
   TPurchaseJobData,
   TPurchaseStatusUpdate,
@@ -27,6 +30,9 @@ export class PurchaseProcessor extends WorkerHost {
     private readonly blockchainVerificationService: BlockchainVerificationService,
     private readonly vcGamersService: VCGamersService,
     private readonly referenceIdService: ReferenceIdService,
+    private readonly blockchainCache: BlockchainCacheService,
+    private readonly contractCache: SmartContractCacheService,
+    private readonly tokenCache: TokenCacheService,
   ) {
     super();
   }
@@ -250,20 +256,29 @@ export class PurchaseProcessor extends WorkerHost {
       );
     }
 
-    const blockchain = await this.prisma.blockchain.findUnique({
-      where: { id: networkId },
-    });
+    // Use cache for blockchain lookup (hot path optimization)
+    const blockchain = await this.blockchainCache.getById(networkId, () =>
+      this.prisma.blockchain.findUnique({
+        where: { id: networkId },
+      }),
+    );
 
     if (!blockchain || !blockchain.isActive) {
       throw new Error(`Network ${blockchain?.name || networkId} is not active`);
     }
 
-    const smartContract = await this.prisma.smartContract.findFirst({
-      where: {
-        blockchainId: networkId,
-        address: { equals: contractAddress, mode: "insensitive" },
-      },
-    });
+    // Use cache for smart contract lookup (hot path optimization)
+    const smartContract = await this.contractCache.getByBlockchainAndAddress(
+      networkId,
+      contractAddress,
+      () =>
+        this.prisma.smartContract.findFirst({
+          where: {
+            blockchainId: networkId,
+            address: { equals: contractAddress, mode: "insensitive" },
+          },
+        }),
+    );
 
     if (!smartContract || !smartContract.isActive) {
       throw new Error(
@@ -299,14 +314,20 @@ export class PurchaseProcessor extends WorkerHost {
   }
 
   private async validateToken(networkId: string, tokenAddress: string) {
-    const token = await this.prisma.token.findUnique({
-      where: {
-        blockchainId_contractAddress: {
-          blockchainId: networkId,
-          contractAddress: tokenAddress,
-        },
-      },
-    });
+    // Use cache for token lookup (hot path optimization)
+    const token = await this.tokenCache.getByBlockchainAndAddress(
+      networkId,
+      tokenAddress,
+      () =>
+        this.prisma.token.findUnique({
+          where: {
+            blockchainId_contractAddress: {
+              blockchainId: networkId,
+              contractAddress: tokenAddress,
+            },
+          },
+        }),
+    );
 
     if (!token) {
       throw new Error(

@@ -7,6 +7,7 @@ import { BlockchainVerificationModule } from "../blockchain-verification/blockch
 import { VendorAPIModule } from "../providers/vendor-api/vendor-api.module";
 import { ReferenceIdModule } from "../reference-id/reference-id.module";
 import { QueueService } from "./queue.service";
+import { ValkeyModule } from "../valkey/valkey.module";
 
 @Module({
   imports: [
@@ -79,6 +80,7 @@ import { QueueService } from "./queue.service";
     BlockchainVerificationModule,
     VendorAPIModule,
     ReferenceIdModule,
+    ValkeyModule,
   ],
   providers: [PurchaseProcessor, QueueService],
   exports: [QueueService],

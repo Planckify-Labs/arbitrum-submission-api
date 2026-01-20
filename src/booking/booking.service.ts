@@ -20,8 +20,8 @@ import { BookingStatus } from "./enums/booking-status.enum";
 import { BlockchainsService } from "../blockchains/blockchains.service";
 import {
   ProductInputValidatorService,
-  CustomerInfo,
 } from "../products/services/product-input-validator.service";
+import { BookingCacheService } from "../valkey/services/booking-cache.service";
 
 @Injectable()
 export class BookingService {
@@ -32,6 +32,7 @@ export class BookingService {
     private readonly configService: ConfigService,
     private readonly blockchainsService: BlockchainsService,
     private readonly productInputValidator: ProductInputValidatorService,
+    private readonly bookingCache: BookingCacheService,
   ) {
     this.BOOKING_EXPIRY_MINUTES = this.configService.get(
       "BOOKING_EXPIRY_MINUTES",
@@ -198,40 +199,45 @@ export class BookingService {
       return this.formatBookingResponse(booking as unknown as DbBooking);
     });
 
+    // Invalidate user's booking cache after creating new booking
+    await this.bookingCache.invalidateUserBookings(walletAddress);
+
     return booking;
   }
 
   async getLatestBooking(walletAddress: string) {
-    const booking = await this.prisma.bookingOrder.findFirst({
-      where: {
-        walletAddress,
-        status: BookingStatus.PENDING as BookingStatus,
-        expiresAt: {
-          gt: new Date(),
-        },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-      include: {
-        productVariant: {
-          include: {
-            product: true,
+    return this.bookingCache.getLatestBooking(walletAddress, async () => {
+      const booking = await this.prisma.bookingOrder.findFirst({
+        where: {
+          walletAddress,
+          status: BookingStatus.PENDING as BookingStatus,
+          expiresAt: {
+            gt: new Date(),
           },
         },
-        productPrice: true,
-      },
+        orderBy: {
+          createdAt: "desc",
+        },
+        include: {
+          productVariant: {
+            include: {
+              product: true,
+            },
+          },
+          productPrice: true,
+        },
+      });
+
+      if (!booking) {
+        return null;
+      }
+
+      return this.formatBookingResponse(booking as unknown as DbBooking);
     });
-
-    if (!booking) {
-      return null;
-    }
-
-    return this.formatBookingResponse(booking as unknown as DbBooking);
   }
 
   async expireBookings() {
-    await this.prisma.bookingOrder.updateMany({
+    const result = await this.prisma.bookingOrder.updateMany({
       where: {
         status: BookingStatus.PENDING as BookingStatus,
         expiresAt: {
@@ -242,6 +248,11 @@ export class BookingService {
         status: BookingStatus.EXPIRED as BookingStatus,
       },
     });
+
+    // Invalidate all booking caches after expiry job
+    if (result.count > 0) {
+      await this.bookingCache.invalidateBooking();
+    }
   }
 
   async markBookingExecuted(
@@ -275,12 +286,17 @@ export class BookingService {
       throw new BadRequestException("Booking has expired");
     }
 
-    return this.prisma.bookingOrder.update({
+    const result = await this.prisma.bookingOrder.update({
       where: { id: bookingId },
       data: {
         status: "EXECUTED" as BookingStatus,
       },
     });
+
+    // Invalidate cache after status change
+    await this.bookingCache.invalidateBooking(bookingId, booking.walletAddress);
+
+    return result;
   }
 
   async cancelBooking(
@@ -310,12 +326,17 @@ export class BookingService {
       );
     }
 
-    return this.prisma.bookingOrder.update({
+    const result = await this.prisma.bookingOrder.update({
       where: { id: bookingId },
       data: {
         status: BookingStatus.CANCELLED as BookingStatus,
       },
     });
+
+    // Invalidate cache after status change
+    await this.bookingCache.invalidateBooking(bookingId, booking.walletAddress);
+
+    return result;
   }
 
   async getBookings(walletAddress: string, query: BookingQueryDto) {
@@ -339,6 +360,7 @@ export class BookingService {
       }
     }
 
+    // Booking list queries are not cached due to filter variability
     const bookings = await this.prisma.bookingOrder.findMany({
       where,
       include: {

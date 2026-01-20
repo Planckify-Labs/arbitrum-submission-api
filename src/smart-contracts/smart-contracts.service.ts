@@ -5,10 +5,14 @@ import { UpdateSmartContractDto } from "./dto/update-smart-contract.dto";
 import { SearchSmartContractDto } from "./dto/search-smart-contract.dto";
 import { Prisma } from "@generated/prisma";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
+import { SmartContractCacheService } from "../valkey/services/smart-contract-cache.service";
 
 @Injectable()
 export class SmartContractsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly contractCache: SmartContractCacheService,
+  ) {}
 
   async create(createSmartContractDto: CreateSmartContractDto) {
     return await this.prisma.smartContract.create({
@@ -23,25 +27,27 @@ export class SmartContractsService {
   async findAll(paginationDto: CursorPaginationDto) {
     const { cursor, take = 10 } = paginationDto;
 
-    return await this.prisma.smartContract.findMany({
-      take,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
-      include: {
-        blockchain: true,
-        abi: true,
-      },
-      orderBy: [
-        {
-          blockchain: {
+    return this.contractCache.getAllContracts(cursor, () =>
+      this.prisma.smartContract.findMany({
+        take,
+        skip: cursor ? 1 : 0,
+        cursor: cursor ? { id: cursor } : undefined,
+        include: {
+          blockchain: true,
+          abi: true,
+        },
+        orderBy: [
+          {
+            blockchain: {
+              name: "asc",
+            },
+          },
+          {
             name: "asc",
           },
-        },
-        {
-          name: "asc",
-        },
-      ],
-    });
+        ],
+      }),
+    );
   }
 
   async search(
@@ -134,13 +140,15 @@ export class SmartContractsService {
   }
 
   async findOne(id: string) {
-    const smartContract = await this.prisma.smartContract.findUnique({
-      where: { id },
-      include: {
-        blockchain: true,
-        abi: true,
-      },
-    });
+    const smartContract = await this.contractCache.getById(id, () =>
+      this.prisma.smartContract.findUnique({
+        where: { id },
+        include: {
+          blockchain: true,
+          abi: true,
+        },
+      }),
+    );
 
     if (!smartContract) {
       throw new NotFoundException(`Smart contract with ID "${id}" not found`);
@@ -150,21 +158,23 @@ export class SmartContractsService {
   }
 
   async findByChainId(chainId: number) {
-    const smartContract = await this.prisma.smartContract.findFirst({
-      where: {
-        blockchain: {
-          chainId: chainId,
+    const smartContract = await this.contractCache.getByChainId(chainId, () =>
+      this.prisma.smartContract.findFirst({
+        where: {
+          blockchain: {
+            chainId: chainId,
+          },
+          isActive: true,
         },
-        isActive: true,
-      },
-      include: {
-        blockchain: true,
-        abi: true,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+        include: {
+          blockchain: true,
+          abi: true,
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      }),
+    );
 
     if (!smartContract) {
       throw new NotFoundException(`Active smart contract for chain ID "${chainId}" not found`);
@@ -175,7 +185,7 @@ export class SmartContractsService {
 
   async update(id: string, updateSmartContractDto: UpdateSmartContractDto) {
     try {
-      return await this.prisma.smartContract.update({
+      const result = await this.prisma.smartContract.update({
         where: { id },
         data: updateSmartContractDto,
         include: {
@@ -183,6 +193,9 @@ export class SmartContractsService {
           abi: true,
         },
       });
+      // Invalidate cache after update
+      await this.contractCache.invalidateContract(id);
+      return result;
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -199,6 +212,8 @@ export class SmartContractsService {
       await this.prisma.smartContract.delete({
         where: { id },
       });
+      // Invalidate cache after delete
+      await this.contractCache.invalidateContract(id);
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -208,5 +223,27 @@ export class SmartContractsService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Find smart contract by blockchain ID and address (hot path for purchase verification)
+   * Uses cache for optimal performance
+   */
+  async findByBlockchainAndAddress(blockchainId: string, address: string) {
+    return this.contractCache.getByBlockchainAndAddress(
+      blockchainId,
+      address,
+      () =>
+        this.prisma.smartContract.findFirst({
+          where: {
+            blockchainId,
+            address: { equals: address, mode: "insensitive" },
+          },
+          include: {
+            blockchain: true,
+            abi: true,
+          },
+        }),
+    );
   }
 }

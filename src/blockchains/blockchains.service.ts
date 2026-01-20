@@ -5,10 +5,14 @@ import { UpdateBlockchainDto } from "./dto/update-blockchain.dto";
 import { SearchBlockchainDto } from "./dto/search-blockchain.dto";
 import { Prisma } from "@generated/prisma";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
+import { BlockchainCacheService } from "../valkey/services/blockchain-cache.service";
 
 @Injectable()
 export class BlockchainsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly blockchainCache: BlockchainCacheService,
+  ) {}
 
   async create(createBlockchainDto: CreateBlockchainDto) {
     return await this.prisma.blockchain.create({
@@ -19,21 +23,23 @@ export class BlockchainsService {
   async findAll(paginationDto: CursorPaginationDto) {
     const { cursor, take = 10 } = paginationDto;
 
-    return await this.prisma.blockchain.findMany({
-      take,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
-      include: {
-        tokens: {
-          where: {
-            isNativeCurrency: true,
+    return this.blockchainCache.getAllBlockchains(cursor, () =>
+      this.prisma.blockchain.findMany({
+        take,
+        skip: cursor ? 1 : 0,
+        cursor: cursor ? { id: cursor } : undefined,
+        include: {
+          tokens: {
+            where: {
+              isNativeCurrency: true,
+            },
           },
         },
-      },
-      orderBy: {
-        name: "asc",
-      },
-    });
+        orderBy: {
+          name: "asc",
+        },
+      }),
+    );
   }
 
   async search(
@@ -87,16 +93,18 @@ export class BlockchainsService {
   }
 
   async findOne(id: string) {
-    const blockchain = await this.prisma.blockchain.findUnique({
-      where: { id },
-      include: {
-        tokens: {
-          where: {
-            isNativeCurrency: true,
+    const blockchain = await this.blockchainCache.getById(id, () =>
+      this.prisma.blockchain.findUnique({
+        where: { id },
+        include: {
+          tokens: {
+            where: {
+              isNativeCurrency: true,
+            },
           },
         },
-      },
-    });
+      }),
+    );
 
     if (!blockchain) {
       throw new NotFoundException(`Blockchain with ID "${id}" not found`);
@@ -107,10 +115,13 @@ export class BlockchainsService {
 
   async update(id: string, updateBlockchainDto: UpdateBlockchainDto) {
     try {
-      return await this.prisma.blockchain.update({
+      const result = await this.prisma.blockchain.update({
         where: { id },
         data: updateBlockchainDto,
       });
+      // Invalidate cache after update
+      await this.blockchainCache.invalidateBlockchain(id);
+      return result;
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -127,6 +138,8 @@ export class BlockchainsService {
       await this.prisma.blockchain.delete({
         where: { id },
       });
+      // Invalidate cache after delete
+      await this.blockchainCache.invalidateBlockchain(id);
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
