@@ -119,6 +119,7 @@ model User {
   ApiKey        ApiKey[]
   auditLogs     AdminAuditLog[]
   dappFavorites UserDappFavorite[]
+  addressBook   AddressBook[]
 
   @@unique([authProvider, socialId])
   @@index([role])
@@ -548,4 +549,22 @@ model UserDappFavorite {
   @@unique([userId, dappId])
   @@index([userId])
   @@index([dappId])
+}
+
+model AddressBook {
+  id        String   @id @default(ulid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  label     String
+  address   String
+  ensName   String?
+  notes     String?
+  isEvm     Boolean  @default(true)
+  chainName String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, address])
+  @@index([userId])
+  @@index([userId, label])
 }
