@@ -111,7 +111,6 @@ model User {
   loginAttempts Int                  @default(0)
   lockedUntil   DateTime?
   transactions  TransactionHistory[]
-  apiLogs       ApiRequestLog[]
   createdAt     DateTime             @default(now())
   updatedAt     DateTime             @updatedAt
   Region        Region?              @relation(fields: [regionId], references: [id])
@@ -179,8 +178,10 @@ model ProductPrice {
   currency         String
 }
 
+// TimescaleDB Hypertable - optimized for millions of transactions
+// Composite PK required for hypertable partitioning on createdAt
 model TransactionHistory {
-  id               String            @id @default(ulid())
+  id               String            @default(ulid())
   user             User              @relation(fields: [userId], references: [id])
   userId           String
   token            Token             @relation(fields: [tokenId], references: [id])
@@ -196,12 +197,19 @@ model TransactionHistory {
   purchase         Purchase?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
+
+  @@id([id, createdAt])
+  @@unique([id, createdAt])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@index([txHash])
 }
 
 model Purchase {
   id                   String             @id @default(ulid())
-  transaction          TransactionHistory @relation(fields: [transactionId], references: [id])
-  transactionId        String             @unique
+  transaction          TransactionHistory @relation(fields: [transactionId, transactionCreatedAt], references: [id, createdAt])
+  transactionId        String
+  transactionCreatedAt DateTime
   productVariant       ProductVariant     @relation(fields: [productVariantId], references: [id])
   productVariantId     String
   bookingOrder         BookingOrder       @relation(fields: [bookingOrderId], references: [id])
@@ -214,33 +222,11 @@ model Purchase {
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
 
+  @@unique([transactionId, transactionCreatedAt])
   @@index([refId])
 }
 
-// TODO: find a better way to store the api request log
-model ApiRequestLog {
-  id           String   @id @default(ulid())
-  requestId    String   @unique
-  endpoint     String
-  method       String
-  service      String
-  requestBody  Json
-  responseBody Json?
-  statusCode   Int?
-  success      Boolean
-  errorMessage String?
-  duration     Int
-  ipAddress    String?
-  userAgent    String?
-  user         User?    @relation(fields: [userId], references: [id])
-  userId       String?
-  metadata     Json?
-  createdAt    DateTime @default(now())
-  ApiKey       ApiKey?  @relation(fields: [apiKeyId], references: [id])
-  apiKeyId     String?
-}
-
-// TODO: for better performance, we can use timescaledb to store the exchange rate
+// TimescaleDB Hypertable - already configured with 1-day chunk intervals
 model ExchangeRate {
   id               Int            @default(autoincrement())
   fromCurrency     String
@@ -455,23 +441,22 @@ enum ApiKeyStatus {
 }
 
 model ApiKey {
-  id          String          @id @default(ulid())
+  id          String       @id @default(ulid())
   name        String
   description String?
-  keyValue    String          @unique
+  keyValue    String       @unique
   type        ApiKeyType
-  status      ApiKeyStatus    @default(ACTIVE)
+  status      ApiKeyStatus @default(ACTIVE)
   permissions Json?
   rateLimit   Int?
   expiresAt   DateTime?
   lastUsedAt  DateTime?
-  usageCount  Int             @default(0)
-  createdBy   User?           @relation(fields: [createdById], references: [id])
+  usageCount  Int          @default(0)
+  createdBy   User?        @relation(fields: [createdById], references: [id])
   createdById String?
   metadata    Json?
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
-  apiLogs     ApiRequestLog[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 
   @@index([keyValue])
   @@index([type])
@@ -479,8 +464,10 @@ model ApiKey {
   @@index([expiresAt])
 }
 
+// TimescaleDB Hypertable - optimized for audit log queries at scale
+// Composite PK required for hypertable partitioning on createdAt
 model AdminAuditLog {
-  id          String   @id @default(ulid())
+  id          String   @default(ulid())
   adminUser   User     @relation(fields: [adminUserId], references: [id])
   adminUserId String
   action      String
@@ -493,10 +480,10 @@ model AdminAuditLog {
   metadata    Json?
   createdAt   DateTime @default(now())
 
-  @@index([adminUserId])
-  @@index([action])
-  @@index([resource])
-  @@index([createdAt])
+  @@id([id, createdAt])
+  @@index([adminUserId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@index([resource, createdAt(sort: Desc)])
 }
 
 model DappCategory {
