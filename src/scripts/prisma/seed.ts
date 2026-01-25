@@ -1479,6 +1479,7 @@ async function main() {
   await prisma.purchase.create({
     data: {
       transactionId: transaction.id,
+      transactionCreatedAt: transaction.createdAt,
       productVariantId: productVariants[0].id,
       bookingOrderId: bookingOrder.id,
       status: "COMPLETED",

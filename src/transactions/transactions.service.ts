@@ -34,10 +34,19 @@ export class TransactionsService {
   async findAll(paginationDto: CursorPaginationDto) {
     const { cursor, take = 10 } = paginationDto;
 
+    // For hypertable with composite PK, use createdAt-based cursor pagination
+    let cursorDate: Date | undefined;
+    if (cursor) {
+      const cursorTx = await this.prisma.transactionHistory.findFirst({
+        where: { id: cursor },
+        select: { createdAt: true },
+      });
+      cursorDate = cursorTx?.createdAt;
+    }
+
     return await this.prisma.transactionHistory.findMany({
       take,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
+      where: cursorDate ? { createdAt: { lt: cursorDate } } : undefined,
       include: {
         token: true,
         purchase: true,
@@ -49,7 +58,8 @@ export class TransactionsService {
   }
 
   async findOne(id: string) {
-    const transaction = await this.prisma.transactionHistory.findUnique({
+    // Use findFirst for hypertable with composite PK (id alone is indexed but not unique constraint)
+    const transaction = await this.prisma.transactionHistory.findFirst({
       where: { id },
       include: {
         token: {
@@ -69,10 +79,15 @@ export class TransactionsService {
   }
 
   async updateStatus(id: string, updateTransactionDto: UpdateTransactionDto) {
-    await this.findOne(id);
+    const transaction = await this.findOne(id);
 
     return await this.prisma.transactionHistory.update({
-      where: { id },
+      where: {
+        id_createdAt: {
+          id: transaction.id,
+          createdAt: transaction.createdAt,
+        },
+      },
       data: updateTransactionDto,
       include: {
         token: true,
@@ -162,10 +177,19 @@ export class TransactionsService {
       where.type = type;
     }
 
+    // For hypertable with composite PK, use createdAt-based cursor pagination
+    if (cursor) {
+      const cursorTx = await this.prisma.transactionHistory.findFirst({
+        where: { id: cursor },
+        select: { createdAt: true },
+      });
+      if (cursorTx) {
+        where.createdAt = { lt: cursorTx.createdAt };
+      }
+    }
+
     return await this.prisma.transactionHistory.findMany({
       take,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
       where,
       include: {
         token: {
@@ -263,15 +287,27 @@ export class TransactionsService {
     }
 
     if (startDate || endDate) {
-      where.createdAt = {};
-      if (startDate) where.createdAt.gte = new Date(startDate);
-      if (endDate) where.createdAt.lte = new Date(endDate);
+      where.createdAt = where.createdAt || {};
+      if (startDate)
+        (where.createdAt as Prisma.DateTimeFilter).gte = new Date(startDate);
+      if (endDate)
+        (where.createdAt as Prisma.DateTimeFilter).lte = new Date(endDate);
+    }
+
+    // For hypertable with composite PK, use createdAt-based cursor pagination
+    if (cursor) {
+      const cursorTx = await this.prisma.transactionHistory.findFirst({
+        where: { id: cursor },
+        select: { createdAt: true },
+      });
+      if (cursorTx) {
+        where.createdAt = where.createdAt || {};
+        (where.createdAt as Prisma.DateTimeFilter).lt = cursorTx.createdAt;
+      }
     }
 
     return await this.prisma.transactionHistory.findMany({
       take,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
       where,
       include: {
         token: {

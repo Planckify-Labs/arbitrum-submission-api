@@ -1,4 +1,3 @@
-export * from "./api-log.decorators";
 export * from "./app.decorators";
 export * from "./blockchain.decorators";
 export * from "./booking.decorators";

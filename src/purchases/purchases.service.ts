@@ -247,11 +247,10 @@ export class PurchasesService {
 
     const purchase = await this.prisma.purchase.create({
       data: {
-        transaction: { connect: { id: placeholderTransaction.id } },
-        productVariant: {
-          connect: { id: bookingForMetadata.productVariantId },
-        },
-        bookingOrder: { connect: { id: bookingId } },
+        transactionId: placeholderTransaction.id,
+        transactionCreatedAt: placeholderTransaction.createdAt,
+        productVariantId: bookingForMetadata.productVariantId,
+        bookingOrderId: bookingId,
         status: PurchaseStatus.PROCESSING,
         refId,
       },

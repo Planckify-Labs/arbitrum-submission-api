@@ -119,7 +119,12 @@ export class PurchaseProcessor extends WorkerHost {
       );
 
       const transaction = await this.prisma.transactionHistory.update({
-        where: { id: existingPurchase.transactionId },
+        where: {
+          id_createdAt: {
+            id: existingPurchase.transactionId,
+            createdAt: existingPurchase.transactionCreatedAt,
+          },
+        },
         data: {
           status: TransactionStatus.CONFIRMED,
         },
