@@ -18,6 +18,7 @@ import { AuthResponseDto } from "./dto/auth-response.dto";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { AdminLoginDto } from "./dto/admin-login.dto";
 import { CreateAdminDto } from "./dto/create-admin.dto";
+import { GoogleLoginDto } from "./dto/google-login.dto";
 import { Roles } from "../decorators/roles.decorator";
 import { UserRole } from "@generated/prisma";
 import { NonceDto } from "./dto/nonce.dto";
@@ -87,6 +88,31 @@ export class AuthController {
     @Body() refreshTokenDto: RefreshTokenDto,
   ): Promise<{ access_token: string }> {
     return await this.authService.refresh(refreshTokenDto.refresh_token);
+  }
+
+  @ApiOperation({ summary: "Authenticate with Google ID token" })
+  @ApiResponse({
+    status: 200,
+    description: "Google authentication successful",
+    type: AuthResponseDto,
+  })
+  @ApiResponse({
+    status: 401,
+    description: "Invalid Google token",
+  })
+  @ApiResponse({
+    status: 400,
+    description: "Email conflict with existing account",
+  })
+  @Public()
+  @Post("google")
+  async googleLogin(
+    @Body() googleLoginDto: GoogleLoginDto,
+  ): Promise<AuthResponseDto> {
+    return this.authService.googleLogin(
+      googleLoginDto.idToken,
+      googleLoginDto.platform,
+    );
   }
 
   @ApiOperation({ summary: "Admin login with username and password" })

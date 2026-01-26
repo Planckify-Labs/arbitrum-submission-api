@@ -8,6 +8,7 @@ interface JwtPayload {
   sub: string;
   walletAddress?: string;
   username?: string;
+  email?: string;
   iat: number;
   exp: number;
 }
@@ -39,8 +40,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         id: true,
         walletAddress: true,
         username: true,
+        email: true,
         role: true,
         status: true,
+        authProvider: true,
       },
     });
 
@@ -48,16 +51,21 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException("User not found");
     }
 
+    // Identity validation based on auth type
     const normalizedPayloadWallet = payload.walletAddress?.toLowerCase();
     const normalizedUserWallet = user.walletAddress?.toLowerCase();
+    const normalizedPayloadEmail = payload.email?.toLowerCase();
+    const normalizedUserEmail = user.email?.toLowerCase();
 
     const walletMismatch =
       normalizedPayloadWallet &&
       normalizedUserWallet !== normalizedPayloadWallet;
     const usernameMismatch =
       payload.username && user.username !== payload.username;
+    const emailMismatch =
+      normalizedPayloadEmail && normalizedUserEmail !== normalizedPayloadEmail;
 
-    if (walletMismatch || usernameMismatch) {
+    if (walletMismatch || usernameMismatch || emailMismatch) {
       throw new UnauthorizedException("User identity mismatch");
     }
 
@@ -69,7 +77,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       id: user.id,
       walletAddress: user.walletAddress || undefined,
       username: user.username || undefined,
+      email: user.email || undefined,
       role: user.role,
+      authProvider: user.authProvider,
     };
   }
 }

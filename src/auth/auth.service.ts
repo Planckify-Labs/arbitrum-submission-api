@@ -13,11 +13,14 @@ import { ConfigService } from "@nestjs/config";
 import * as argon2 from "argon2";
 import { UserRole, UserStatus, AuthProvider } from "@generated/prisma";
 import { NonceCacheService } from "../valkey/services/nonce-cache.service";
+import { OAuth2Client, TokenPayload } from "google-auth-library";
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private readonly defaultChainId: number;
+  private readonly googleClient: OAuth2Client;
+  private readonly googleClientIds: string[];
 
   constructor(
     private readonly prisma: PrismaService,
@@ -26,6 +29,15 @@ export class AuthService {
     private readonly nonceCacheService: NonceCacheService,
   ) {
     this.defaultChainId = this.configService.get<number>("CHAIN_ID", 1);
+
+    // Initialize Google OAuth client
+    this.googleClientIds = [
+      this.configService.get<string>("GOOGLE_CLIENT_ID_IOS"),
+      this.configService.get<string>("GOOGLE_CLIENT_ID_ANDROID"),
+      this.configService.get<string>("GOOGLE_CLIENT_ID_WEB"),
+    ].filter((id): id is string => !!id);
+
+    this.googleClient = new OAuth2Client();
   }
 
   async generateNonce(walletAddress: string): Promise<string> {
@@ -145,6 +157,137 @@ export class AuthService {
         role: user.role,
       },
     };
+  }
+
+  async googleLogin(
+    idToken: string,
+    platform?: string,
+  ): Promise<AuthResponseDto> {
+    // 1. Verify the Google ID token
+    const payload = await this.verifyGoogleToken(idToken, platform);
+
+    if (!payload || !payload.email) {
+      throw new UnauthorizedException("Invalid Google token");
+    }
+
+    const { email, sub: googleId, name, picture } = payload;
+
+    // 2. Check if user exists by Google socialId
+    let user = await this.prisma.user.findFirst({
+      where: {
+        authProvider: AuthProvider.GOOGLE,
+        socialId: googleId,
+      },
+    });
+
+    // 3. If no user found by socialId, check by email
+    if (!user) {
+      const existingUserByEmail = await this.prisma.user.findUnique({
+        where: { email: email.toLowerCase() },
+      });
+
+      if (existingUserByEmail) {
+        // Email exists with different auth provider - for now, throw conflict
+        if (existingUserByEmail.authProvider !== AuthProvider.GOOGLE) {
+          throw new BadRequestException(
+            "An account with this email already exists. Please sign in using your original method.",
+          );
+        }
+        // Update socialId if it was somehow missing
+        user = await this.prisma.user.update({
+          where: { id: existingUserByEmail.id },
+          data: { socialId: googleId },
+        });
+      } else {
+        // 4. Create new user
+        user = await this.prisma.user.create({
+          data: {
+            email: email.toLowerCase(),
+            name: name || null,
+            profileImage: picture || null,
+            authProvider: AuthProvider.GOOGLE,
+            socialId: googleId,
+            status: UserStatus.ACTIVE,
+          },
+        });
+      }
+    }
+
+    // 5. Check user status
+    if (user.status !== UserStatus.ACTIVE) {
+      throw new UnauthorizedException("User account is not active");
+    }
+
+    // 6. Update last login
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() },
+    });
+
+    // 7. Generate JWT tokens (same format as SIWE auth)
+    const tokenPayload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+    };
+
+    const jwtExpirationTime = this.configService.get<string>(
+      "JWT_EXPIRATION_TIME",
+      "1h",
+    );
+    const refreshTokenExpirationTime = this.configService.get<string>(
+      "REFRESH_TOKEN_EXPIRATION_TIME",
+      "7d",
+    );
+
+    return {
+      access_token: this.jwtService.sign(tokenPayload, {
+        expiresIn: jwtExpirationTime,
+      }),
+      refresh_token: this.jwtService.sign(
+        { sub: user.id, type: "refresh" },
+        { expiresIn: refreshTokenExpirationTime },
+      ),
+      user: {
+        id: user.id,
+        email: user.email || undefined,
+        name: user.name || undefined,
+        role: user.role,
+      },
+    };
+  }
+
+  private async verifyGoogleToken(
+    idToken: string,
+    platform?: string,
+  ): Promise<TokenPayload | null> {
+    try {
+      // Determine which client ID to use based on platform
+      // Note: Android uses Web Client ID for token verification
+      let audience = this.googleClientIds;
+      if (platform === "ios") {
+        const iosClientId = this.configService.get<string>(
+          "GOOGLE_CLIENT_ID_IOS",
+        );
+        if (iosClientId) audience = [iosClientId];
+      } else if (platform === "android") {
+        // Android tokens are issued with Web Client ID as audience
+        const webClientId = this.configService.get<string>(
+          "GOOGLE_CLIENT_ID_WEB",
+        );
+        if (webClientId) audience = [webClientId];
+      }
+
+      const ticket = await this.googleClient.verifyIdToken({
+        idToken,
+        audience: audience.length > 0 ? audience : undefined,
+      });
+
+      return ticket.getPayload() || null;
+    } catch (error) {
+      this.logger.error(`Google token verification failed: ${error.message}`);
+      return null;
+    }
   }
 
   async adminLogin(
@@ -300,6 +443,7 @@ export class AuthService {
           id: true,
           walletAddress: true,
           username: true,
+          email: true,
           role: true,
         },
       });
@@ -308,15 +452,17 @@ export class AuthService {
         throw new UnauthorizedException("User not found");
       }
 
-      const tokenPayload = {
+      const tokenPayload: Record<string, unknown> = {
         sub: user.id,
         role: user.role,
       };
 
       if (user.walletAddress) {
-        tokenPayload["walletAddress"] = user.walletAddress;
+        tokenPayload.walletAddress = user.walletAddress;
+      } else if (user.email) {
+        tokenPayload.email = user.email;
       } else if (user.username) {
-        tokenPayload["username"] = user.username;
+        tokenPayload.username = user.username;
       }
 
       const jwtExpirationTime = this.configService.get<string>(

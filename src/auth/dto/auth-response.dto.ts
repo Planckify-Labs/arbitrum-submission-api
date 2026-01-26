@@ -26,6 +26,8 @@ export class AuthResponseDto {
     id: string;
     walletAddress?: string;
     username?: string;
+    email?: string;
+    name?: string;
     role: UserRole;
   };
 }
