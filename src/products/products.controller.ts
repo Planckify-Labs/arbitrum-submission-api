@@ -56,6 +56,8 @@ import {
   CreateProductInputFieldDto,
   UpdateProductInputFieldDto,
 } from "./dto/product-input-field.dto";
+import { PaymentFeaturedResponseDto } from "./dto/payment-featured.dto";
+import { ApiOperation, ApiResponse } from "@nestjs/swagger";
 
 @Controller("products")
 @ApiTags("products")
@@ -74,6 +76,22 @@ export class ProductsController {
     @Query() paginationDto: CursorPaginationDto = new CursorPaginationDto(),
   ) {
     return this.productsService.search(searchDto, paginationDto);
+  }
+
+  @Get("payment-featured")
+  @Public()
+  @ApiKey()
+  @ApiOperation({
+    summary: "Get payment featured config",
+    description:
+      "Returns featured payment categories and products for the home screen.",
+  })
+  @ApiResponse({
+    status: 200,
+    description: "Payment featured config retrieved successfully",
+  })
+  getPaymentFeatured(): Promise<PaymentFeaturedResponseDto> {
+    return this.productsService.getPaymentFeatured();
   }
 
   @Get()

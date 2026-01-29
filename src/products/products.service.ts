@@ -20,6 +20,15 @@ import {
   UpdateProductInputFieldDto,
 } from "./dto/product-input-field.dto";
 import { ProductCacheService } from "../valkey/services/product-cache.service";
+import { CacheManagerService } from "../valkey/services/cache-manager.service";
+import { PaymentFeaturedResponseDto } from "./dto/payment-featured.dto";
+
+// Known product codes for featured payment items
+const PULSA_DATA_PRODUCT_CODES = ["PSATL", "PSAIN", "XL"];
+const GAMING_PRODUCT_CODES = ["MLBB", "FF", "PUBGM", "CODM"];
+const PLN_PRODUCT_CODE = "PLN";
+const PAYMENT_FEATURED_CACHE_KEY = "payment-featured:config";
+const PAYMENT_FEATURED_CACHE_TTL = 3600; // 1 hour
 
 // Standard product include for consistency
 const productInclude = {
@@ -41,6 +50,7 @@ export class ProductsService {
     private readonly prisma: PrismaService,
     private readonly vcGamersService: VCGamersService,
     private readonly productCache: ProductCacheService,
+    private readonly cacheManager: CacheManagerService,
   ) {}
 
   async findAll(paginationDto: CursorPaginationDto) {
@@ -716,6 +726,88 @@ export class ProductsService {
 
     // Invalidate product cache after input field deletion
     await this.productCache.invalidateProduct(productId);
+
+    return result;
+  }
+
+  async getPaymentFeatured(): Promise<PaymentFeaturedResponseDto> {
+    return this.cacheManager.cacheAside(
+      PAYMENT_FEATURED_CACHE_KEY,
+      () => this.fetchPaymentFeatured(),
+      { ttl: PAYMENT_FEATURED_CACHE_TTL },
+    );
+  }
+
+  private async fetchPaymentFeatured(): Promise<PaymentFeaturedResponseDto> {
+    const [plnProduct, pulsaDataProduct, gamingProduct] = await Promise.all([
+      this.prisma.product.findFirst({
+        where: {
+          code: PLN_PRODUCT_CODE,
+          isActive: true,
+        },
+        select: {
+          id: true,
+          name: true,
+        },
+      }),
+      this.prisma.product.findFirst({
+        where: {
+          code: { in: PULSA_DATA_PRODUCT_CODES },
+          isActive: true,
+        },
+        select: {
+          category: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      }),
+      this.prisma.product.findFirst({
+        where: {
+          code: { in: GAMING_PRODUCT_CODES },
+          isActive: true,
+        },
+        select: {
+          category: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      }),
+    ]);
+
+    const result: PaymentFeaturedResponseDto = [];
+
+    if (pulsaDataProduct?.category) {
+      result.push({
+        pulsaData: {
+          id: pulsaDataProduct.category.id,
+          name: pulsaDataProduct.category.name,
+        },
+      });
+    }
+
+    if (gamingProduct?.category) {
+      result.push({
+        gaming: {
+          id: gamingProduct.category.id,
+          name: gamingProduct.category.name,
+        },
+      });
+    }
+
+    if (plnProduct) {
+      result.push({
+        pln: {
+          id: plnProduct.id,
+          name: plnProduct.name,
+        },
+      });
+    }
 
     return result;
   }
