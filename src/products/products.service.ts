@@ -747,7 +747,6 @@ export class ProductsService {
         },
         select: {
           id: true,
-          name: true,
         },
       }),
       this.prisma.product.findFirst({
@@ -759,7 +758,6 @@ export class ProductsService {
           category: {
             select: {
               id: true,
-              name: true,
             },
           },
         },
@@ -773,40 +771,24 @@ export class ProductsService {
           category: {
             select: {
               id: true,
-              name: true,
             },
           },
         },
       }),
     ]);
 
-    const result: PaymentFeaturedResponseDto = [];
+    const result: PaymentFeaturedResponseDto = {};
 
     if (pulsaDataProduct?.category) {
-      result.push({
-        pulsaData: {
-          id: pulsaDataProduct.category.id,
-          name: pulsaDataProduct.category.name,
-        },
-      });
+      result["Pulsa & Data Package"] = { id: pulsaDataProduct.category.id };
     }
 
     if (gamingProduct?.category) {
-      result.push({
-        gaming: {
-          id: gamingProduct.category.id,
-          name: gamingProduct.category.name,
-        },
-      });
+      result["Gaming"] = { id: gamingProduct.category.id };
     }
 
     if (plnProduct) {
-      result.push({
-        pln: {
-          id: plnProduct.id,
-          name: plnProduct.name,
-        },
-      });
+      result["Token PLN"] = { id: plnProduct.id };
     }
 
     return result;
