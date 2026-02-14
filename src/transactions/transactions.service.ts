@@ -220,6 +220,7 @@ export class TransactionsService {
                 name: true,
                 product: {
                   select: {
+                    id: true,
                     imageUrl: true,
                   },
                 },
@@ -332,6 +333,7 @@ export class TransactionsService {
                 name: true,
                 product: {
                   select: {
+                    id: true,
                     imageUrl: true,
                   },
                 },

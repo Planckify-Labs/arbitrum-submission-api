@@ -27,6 +27,9 @@ class TokenSummaryDto {
 }
 
 class ProductSummaryDto {
+  @ApiProperty({ example: "01H1G5V..." })
+  id: string;
+
   @ApiProperty({ example: "https://cdn.example.com/products/123.png", required: false })
   imageUrl?: string;
 }
