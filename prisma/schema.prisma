@@ -159,6 +159,7 @@ model Token {
   isStablecoin       Boolean                @default(false)
   isActive           Boolean                @default(true)
   isNativeCurrency   Boolean                @default(false)
+  peggedCurrency     String?
   transactions       TransactionHistory[]
   regionAvailability RegionAvailableToken[]
   pointTransactions  PointTransaction[]

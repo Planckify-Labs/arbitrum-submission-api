@@ -188,22 +188,26 @@ export class PointsService {
     }
 
     // 6. Server-side point calculation
+    // Use the token's peggedCurrency to find the matching PointPriceConfig.
+    // No exchange rate lookup needed — stablecoins are 1:1 with their pegged currency.
+    if (!token.peggedCurrency) {
+      throw new BadRequestException(
+        `Token ${token.symbol} has no pegged currency configured — cannot calculate points`,
+      );
+    }
+
     const priceConfig = await this.prisma.pointPriceConfig.findFirst({
-      where: { isActive: true },
+      where: { currency: token.peggedCurrency, isActive: true },
       orderBy: { createdAt: "desc" },
     });
 
-    let pointRate: Prisma.Decimal | null = null;
-    if (priceConfig) {
-      const exchangeRate = await this.exchangeRateService.findLatest({
-        fromCurrency: token.symbol,
-        toCurrency: priceConfig.currency,
-      });
-      if (exchangeRate) {
-        const tokenPrice = new Prisma.Decimal(exchangeRate.rate.toString());
-        pointRate = tokenPrice.div(priceConfig.baseRate).floor();
-      }
+    if (!priceConfig) {
+      throw new BadRequestException(
+        `No active point price config for currency ${token.peggedCurrency}`,
+      );
     }
+
+    const pointRate = new Prisma.Decimal(1).div(priceConfig.baseRate);
 
     // 7. Create PointTransaction record
     const pointTx = await this.prisma.pointTransaction.create({
