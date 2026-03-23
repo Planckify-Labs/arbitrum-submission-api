@@ -15,7 +15,6 @@ import { privateKeyToAccount } from "viem/accounts";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { TakumiWalletAbi } from "./abis/takumi-wallet.abi";
-import { PointDepositAbi } from "./abis/point-deposit.abi";
 import {
   TTakumiWalletTransaction,
   TTransactionVerificationResult,
@@ -475,8 +474,8 @@ export class BlockchainVerificationService {
       const walletClient = this.getWalletClient(chainId);
       const contractTx = await readContract(walletClient, {
         address: contractAddress as `0x${string}`,
-        abi: PointDepositAbi,
-        functionName: "getTransactionByRef",
+        abi: TakumiWalletAbi,
+        functionName: "getPointDepositByRef",
         args: [refId],
       });
 

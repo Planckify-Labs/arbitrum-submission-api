@@ -22,6 +22,7 @@ import { QueueModule } from "./queue/queue.module";
 import { DappsModule } from "./dapps/dapps.module";
 import { AddressBookModule } from "./address-book/address-book.module";
 import { PointsModule } from "./points/points.module";
+import { RedeemModule } from "./redeem/redeem.module";
 import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 import { JwtAuthGuard } from "./auth/guards/jwt-auth.guard";
 import { ApiKeyGuard } from "./auth/guards/api-key.guard";
@@ -53,6 +54,7 @@ import { InvalidateCacheInterceptor } from "./valkey/interceptors/invalidate-cac
     DappsModule,
     AddressBookModule,
     PointsModule,
+    RedeemModule,
   ],
   controllers: [AppController],
   providers: [
