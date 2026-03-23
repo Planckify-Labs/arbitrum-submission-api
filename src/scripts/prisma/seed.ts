@@ -1851,6 +1851,8 @@ async function main() {
 
   await seedAdminUsers();
 
+  await seedPointPriceConfigs();
+
   console.log("");
   console.log("🎉 Seed data created successfully!");
   console.log("");
@@ -1863,6 +1865,38 @@ async function main() {
   console.log(
     "💡 To force fresh API calls, uncomment the clearCache() line in the main function.",
   );
+}
+
+async function seedPointPriceConfigs() {
+  console.log("\n💎 Seeding point price configs...");
+
+  const configs = [
+    { currency: "IDR", baseRate: "15" },
+    { currency: "USD", baseRate: "0.001" },
+    { currency: "JPY", baseRate: "0.15" },
+  ];
+
+  for (const config of configs) {
+    // Deactivate any existing active config for currency
+    await prisma.pointPriceConfig.updateMany({
+      where: { currency: config.currency, isActive: true },
+      data: { isActive: false },
+    });
+
+    await prisma.pointPriceConfig.upsert({
+      where: {
+        currency_isActive: { currency: config.currency, isActive: true },
+      },
+      update: { baseRate: config.baseRate },
+      create: {
+        currency: config.currency,
+        baseRate: config.baseRate,
+        isActive: true,
+      },
+    });
+
+    console.log(`  ✅ ${config.currency}: 1 point = ${config.baseRate} ${config.currency}`);
+  }
 }
 
 main()

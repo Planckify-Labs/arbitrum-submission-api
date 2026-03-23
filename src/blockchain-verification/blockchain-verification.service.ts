@@ -15,6 +15,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { TakumiWalletAbi } from "./abis/takumi-wallet.abi";
+import { PointDepositAbi } from "./abis/point-deposit.abi";
 import {
   TTakumiWalletTransaction,
   TTransactionVerificationResult,
@@ -421,6 +422,103 @@ export class BlockchainVerificationService {
 
       throw new BadRequestException(
         `Failed to verify transaction in contract: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Verify a point deposit transaction on-chain.
+   * 1. Waits for the tx receipt with the required confirmations.
+   * 2. Reads the PointDeposit contract's getTransactionByRef(refId).
+   * 3. Validates the returned deposit data against expected values.
+   */
+  async verifyPointDeposit(params: {
+    txHash: string;
+    chainId: number;
+    contractAddress: string;
+    refId: string;
+    expectedWalletAddress: string;
+    expectedTokenAddress: string;
+    expectedAmount: bigint;
+    minConfirmations?: number;
+  }): Promise<{ walletAddress: string; tokenAddress: string; amount: bigint }> {
+    const {
+      txHash,
+      chainId,
+      contractAddress,
+      refId,
+      expectedWalletAddress,
+      expectedTokenAddress,
+      expectedAmount,
+      minConfirmations = 12,
+    } = params;
+
+    this.logger.log(
+      `Verifying point deposit tx ${txHash} on chain ${chainId} for refId ${refId}`,
+    );
+
+    try {
+      const client = this.getClient(chainId);
+
+      const receipt = await client.waitForTransactionReceipt({
+        hash: txHash as Hash,
+        confirmations: minConfirmations,
+        timeout: 60_000,
+      });
+
+      if (receipt.status !== "success") {
+        throw new BadRequestException(
+          `Point deposit transaction ${txHash} was reverted or failed`,
+        );
+      }
+
+      const walletClient = this.getWalletClient(chainId);
+      const contractTx = await readContract(walletClient, {
+        address: contractAddress as `0x${string}`,
+        abi: PointDepositAbi,
+        functionName: "getTransactionByRef",
+        args: [refId],
+      });
+
+      if (contractTx.walletAddress.toLowerCase() !== expectedWalletAddress.toLowerCase()) {
+        throw new BadRequestException(
+          `Point deposit wallet mismatch: expected ${expectedWalletAddress}, got ${contractTx.walletAddress}`,
+        );
+      }
+
+      if (contractTx.tokenAddress.toLowerCase() !== expectedTokenAddress.toLowerCase()) {
+        throw new BadRequestException(
+          `Point deposit token mismatch: expected ${expectedTokenAddress}, got ${contractTx.tokenAddress}`,
+        );
+      }
+
+      if (contractTx.amount !== expectedAmount) {
+        throw new BadRequestException(
+          `Point deposit amount mismatch: expected ${expectedAmount}, got ${contractTx.amount}`,
+        );
+      }
+
+      this.logger.log(
+        `Point deposit verified: refId=${refId}, wallet=${contractTx.walletAddress}, amount=${contractTx.amount}`,
+      );
+
+      return {
+        walletAddress: contractTx.walletAddress,
+        tokenAddress: contractTx.tokenAddress,
+        amount: contractTx.amount,
+      };
+    } catch (error) {
+      this.logger.error(
+        `Point deposit verification failed for refId ${refId}: ${error.message}`,
+        error.stack,
+      );
+
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+
+      throw new BadRequestException(
+        `Failed to verify point deposit: ${error.message}`,
       );
     }
   }

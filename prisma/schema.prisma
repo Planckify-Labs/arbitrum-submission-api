@@ -119,6 +119,8 @@ model User {
   auditLogs     AdminAuditLog[]
   dappFavorites UserDappFavorite[]
   addressBook   AddressBook[]
+  pointBalance      PointBalance?
+  pointTransactions PointTransaction[]
 
   @@unique([authProvider, socialId])
   @@index([role])
@@ -128,18 +130,19 @@ model User {
 }
 
 model Blockchain {
-  id            String          @id @default(ulid())
-  name          String          @unique
-  chainId       Int             @unique
-  rpcUrl        String
-  blockExplorer String
-  isEVM         Boolean         @default(true)
-  isActive      Boolean         @default(true)
-  tokens        Token[]
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  SmartContract SmartContract[]
-  isTestnet     Boolean         @default(false)
+  id                String             @id @default(ulid())
+  name              String             @unique
+  chainId           Int                @unique
+  rpcUrl            String
+  blockExplorer     String
+  isEVM             Boolean            @default(true)
+  isActive          Boolean            @default(true)
+  tokens            Token[]
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  SmartContract     SmartContract[]
+  isTestnet         Boolean            @default(false)
+  pointTransactions PointTransaction[]
 }
 
 model Token {
@@ -156,6 +159,7 @@ model Token {
   isNativeCurrency   Boolean                @default(false)
   transactions       TransactionHistory[]
   regionAvailability RegionAvailableToken[]
+  pointTransactions  PointTransaction[]
   createdAt          DateTime               @default(now())
   updatedAt          DateTime               @updatedAt
 
@@ -554,4 +558,79 @@ model AddressBook {
   @@unique([userId, address])
   @@index([userId])
   @@index([userId, label])
+}
+
+// ── Point System ────────────────────────────────────────────────────────────
+
+model PointBalance {
+  id        String   @id @default(ulid())
+  userId    String   @unique
+  balance   BigInt   @default(0)
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model PointTransaction {
+  id            String                 @id @default(ulid())
+  userId        String
+  type          PointTransactionType
+  amount        BigInt
+  balanceBefore BigInt
+  balanceAfter  BigInt
+
+  // Deposit fields (populated for DEPOSIT type)
+  refId           String?  @unique
+  txHash          String?  @unique
+  tokenId         String?
+  blockchainId    String?
+  contractAddress String?
+  tokenAmount     Decimal? @db.Decimal(36, 18)
+  pointRate       Decimal? @db.Decimal(18, 8)
+
+  // Redemption fields (populated for SPEND/REFUND type)
+  referenceType String?
+  referenceId   String?
+
+  status    PointTransactionStatus @default(PENDING)
+  metadata  Json?
+  createdAt DateTime               @default(now())
+
+  user       User        @relation(fields: [userId], references: [id])
+  token      Token?      @relation(fields: [tokenId], references: [id])
+  blockchain Blockchain? @relation(fields: [blockchainId], references: [id])
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status])
+  @@index([txHash])
+  @@index([refId])
+}
+
+model PointPriceConfig {
+  id        String   @id @default(ulid())
+  baseRate  Decimal  @db.Decimal(18, 8)
+  currency  String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  createdBy String?
+
+  @@unique([currency, isActive])
+  @@index([isActive, createdAt(sort: Desc)])
+}
+
+enum PointTransactionType {
+  DEPOSIT
+  SPEND
+  REFUND
+  BONUS
+}
+
+enum PointTransactionStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  FAILED
 }

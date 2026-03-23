@@ -19,6 +19,7 @@ import { CacheInterceptor } from "./interceptors/cache.interceptor";
 import { InvalidateCacheInterceptor } from "./interceptors/invalidate-cache.interceptor";
 import { CacheWarmingService } from "./services/cache-warming.service";
 import { AddressBookCacheService } from "./services/address-book-cache.service";
+import { PointsCacheService } from "./services/points-cache.service";
 
 @Module({
   imports: [ConfigModule, PrismaModule],
@@ -39,6 +40,7 @@ import { AddressBookCacheService } from "./services/address-book-cache.service";
     InvalidateCacheInterceptor,
     CacheWarmingService,
     AddressBookCacheService,
+    PointsCacheService,
   ],
   exports: [
     ValkeyService,
@@ -57,6 +59,7 @@ import { AddressBookCacheService } from "./services/address-book-cache.service";
     InvalidateCacheInterceptor,
     CacheWarmingService,
     AddressBookCacheService,
+    PointsCacheService,
   ],
 })
 export class ValkeyModule implements OnModuleInit {
