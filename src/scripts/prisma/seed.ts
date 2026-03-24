@@ -666,7 +666,7 @@ async function main() {
         id: "smart-contract-payment-lisk",
         name: "Payment Processor",
         blockchainId: blockchains[4].id, // Lisk
-        address: "0x64E3E218BC06b6D6F2979805Bc581af748F2DF2D",
+        address: "0x39EDabDd022C39B6cfeB3161Ac77c439F325D6a0",
         abiId: contractABIs[1].id,
         isActive: true,
       },
