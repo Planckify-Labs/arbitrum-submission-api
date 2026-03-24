@@ -84,28 +84,9 @@ export class RedeemService {
           | undefined,
       );
 
-    // 5. Get active PointPriceConfig for productPrice.currency
-    const priceConfig = await this.pointsCache.getPointConfig(
-      productPrice.currency,
-      () =>
-        this.prisma.pointPriceConfig.findFirst({
-          where: { currency: productPrice.currency, isActive: true },
-          orderBy: { createdAt: "desc" },
-        }),
-    );
-
-    if (!priceConfig) {
-      throw new BadRequestException(
-        `No active point price config for currency ${productPrice.currency}`,
-      );
-    }
-
-    // 6. Calculate pointsRequired
+    // 5. Calculate pointsRequired — 1 point = 1 currency unit (sellPrice is the direct cost in points)
     const pointsRequired = BigInt(
-      new DecimalLib(productPrice.sellPrice.toString())
-        .div(new DecimalLib(priceConfig.baseRate.toString()))
-        .ceil()
-        .toFixed(0),
+      new DecimalLib(productPrice.sellPrice.toString()).ceil().toFixed(0),
     );
 
     // 7. Check idempotency — no existing non-failed redemption for same product+user+price
