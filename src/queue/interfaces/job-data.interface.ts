@@ -31,6 +31,7 @@ export interface TVendorApiJobData {
   bookingId: string;
 }
 
+
 export interface TPurchaseStatusUpdate {
   refId: string;
   purchaseId?: string;

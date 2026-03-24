@@ -208,10 +208,16 @@ export class RedeemService {
       throw new NotFoundException("Redemption not found");
     }
 
-    const voucherCode =
-      redemption.status === RedemptionStatus.COMPLETED && redemption.vendorRefId
-        ? await this.fetchVoucherCode(redemption.vendorRefId)
-        : null;
+    const needsFreshStatus =
+      redemption.status === RedemptionStatus.COMPLETED &&
+      !!redemption.vendorRefId &&
+      this.shouldFetchFreshVendorStatus(redemption.vendorResponse);
+
+    const vendorResponse = needsFreshStatus
+      ? await this.fetchAndUpdateVendorStatus(redemptionId, redemption.vendorRefId!)
+      : redemption.vendorResponse;
+
+    const voucherCode = this.extractVoucherCode(vendorResponse);
 
     return {
       id: redemption.id,
@@ -257,16 +263,52 @@ export class RedeemService {
     };
   }
 
-  private async fetchVoucherCode(vendorRefId: string): Promise<string | null> {
+  // Returns true when vendorResponse is the initial createOrder response (no detail/voucher_code).
+  // Once getOrderStatus returns status=2 (final), that full response is cached and we skip live calls.
+  private shouldFetchFreshVendorStatus(vendorResponse: unknown): boolean {
+    const response = vendorResponse as { data?: { status?: number } } | null;
+    if (!response?.data) return true;
+    return response.data.status !== 2;
+  }
+
+  private async fetchAndUpdateVendorStatus(
+    redemptionId: string,
+    vendorRefId: string,
+  ): Promise<unknown> {
     try {
       const response = await this.vcGamersService.getOrderStatus(vendorRefId);
+
       if (response.success && response.data) {
-        return response.data.data?.detail?.voucher_code || null;
+        try {
+          await this.prisma.pointRedemption.update({
+            where: { id: redemptionId },
+            data: { vendorResponse: response.data as unknown as Prisma.InputJsonValue },
+          });
+        } catch (dbError) {
+          this.logger.error(
+            `Failed to cache vendorResponse for redemption ${redemptionId}`,
+            dbError,
+          );
+        }
+        return response.data;
       }
-    } catch {
-      this.logger.warn(`Failed to fetch voucher code for vendorRefId ${vendorRefId}`);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to fetch vendor status for redemption ${redemptionId}: ${error.message}`,
+      );
     }
     return null;
+  }
+
+  private extractVoucherCode(vendorResponse: unknown): string | null {
+    try {
+      const response = vendorResponse as {
+        data?: { detail?: { voucher_code?: string } };
+      };
+      return response?.data?.detail?.voucher_code || null;
+    } catch {
+      return null;
+    }
   }
 
   async getRedeemHistory(userId: string, query: RedeemHistoryQueryDto) {
