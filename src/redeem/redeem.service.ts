@@ -9,10 +9,12 @@ import { Queue } from "bullmq";
 import { PrismaService } from "../prisma/prisma.service";
 import { PointsCacheService } from "../valkey/services/points-cache.service";
 import { ProductInputValidatorService } from "../products/services/product-input-validator.service";
+import { VCGamersService } from "../providers/vendor-api/implementations/vcgamers/vcgamers.service";
 import {
   Prisma,
   PointTransactionType,
   PointTransactionStatus,
+  RedemptionStatus,
 } from "@generated/prisma";
 import { ExecuteRedeemDto } from "./dto/execute-redeem.dto";
 import { RedeemHistoryQueryDto } from "./dto/redeem-history-query.dto";
@@ -27,6 +29,7 @@ export class RedeemService {
     private readonly prisma: PrismaService,
     private readonly productInputValidator: ProductInputValidatorService,
     private readonly pointsCache: PointsCacheService,
+    private readonly vcGamersService: VCGamersService,
     @InjectQueue("redeem-processing") private readonly redeemQueue: Queue,
   ) {}
 
@@ -192,6 +195,50 @@ export class RedeemService {
     };
   }
 
+  async getRedeemById(userId: string, redemptionId: string) {
+    const redemption = await this.prisma.pointRedemption.findFirst({
+      where: { id: redemptionId, userId },
+      include: {
+        productVariant: { include: { product: true } },
+        productPrice: true,
+      },
+    });
+
+    if (!redemption) {
+      throw new NotFoundException("Redemption not found");
+    }
+
+    const voucherCode =
+      redemption.status === RedemptionStatus.COMPLETED && redemption.vendorRefId
+        ? await this.fetchVoucherCode(redemption.vendorRefId)
+        : null;
+
+    return {
+      id: redemption.id,
+      status: redemption.status,
+      pointsSpent: redemption.pointsSpent.toString(),
+      vendorRefId: redemption.vendorRefId,
+      voucherCode,
+      customerInfo: redemption.customerInfo,
+      product: {
+        id: redemption.productVariant.product.id,
+        name: redemption.productVariant.product.name,
+        imageUrl: redemption.productVariant.product.imageUrl,
+        isVoucher: redemption.productVariant.product.isVoucher,
+        variant: {
+          id: redemption.productVariant.id,
+          name: redemption.productVariant.name,
+        },
+        price: {
+          amount: Number(redemption.productPrice.sellPrice),
+          currency: redemption.productPrice.currency,
+        },
+      },
+      createdAt: redemption.createdAt.toISOString(),
+      updatedAt: redemption.updatedAt.toISOString(),
+    };
+  }
+
   async getRedeemStatus(userId: string, redemptionId: string) {
     const redemption = await this.prisma.pointRedemption.findFirst({
       where: { id: redemptionId, userId },
@@ -208,6 +255,18 @@ export class RedeemService {
       vendorRefId: redemption.vendorRefId,
       createdAt: redemption.createdAt.toISOString(),
     };
+  }
+
+  private async fetchVoucherCode(vendorRefId: string): Promise<string | null> {
+    try {
+      const response = await this.vcGamersService.getOrderStatus(vendorRefId);
+      if (response.success && response.data) {
+        return response.data.data?.detail?.voucher_code || null;
+      }
+    } catch {
+      this.logger.warn(`Failed to fetch voucher code for vendorRefId ${vendorRefId}`);
+    }
+    return null;
   }
 
   async getRedeemHistory(userId: string, query: RedeemHistoryQueryDto) {
@@ -245,9 +304,12 @@ export class RedeemService {
         status: r.status,
         pointsSpent: r.pointsSpent.toString(),
         vendorRefId: r.vendorRefId,
+        customerInfo: r.customerInfo,
         product: {
           id: r.productVariant.product.id,
           name: r.productVariant.product.name,
+          imageUrl: r.productVariant.product.imageUrl,
+          isVoucher: r.productVariant.product.isVoucher,
           variant: {
             id: r.productVariant.id,
             name: r.productVariant.name,

@@ -44,11 +44,20 @@ export class RedeemController {
     return this.redeemService.getRedeemHistory(req.user.id, query);
   }
 
+  @Get(":id")
+  @UseGuards(JwtAuthGuard)
+  @ApiKey()
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Get full detail of a specific redemption including voucher code" })
+  getRedeemById(@Request() req, @Param("id") id: string) {
+    return this.redeemService.getRedeemById(req.user.id, id);
+  }
+
   @Get(":id/status")
   @UseGuards(JwtAuthGuard)
   @ApiKey()
   @ApiBearerAuth()
-  @ApiOperation({ summary: "Get status of a specific redemption" })
+  @ApiOperation({ summary: "Poll the status of a specific redemption (lightweight)" })
   getRedeemStatus(@Request() req, @Param("id") id: string) {
     return this.redeemService.getRedeemStatus(req.user.id, id);
   }
