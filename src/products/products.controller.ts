@@ -10,6 +10,8 @@ import {
   HttpStatus,
   Query,
   NotFoundException,
+  Request,
+  UseGuards,
 } from "@nestjs/common";
 import { ProductsService } from "./products.service";
 import { ApiTags } from "@nestjs/swagger";
@@ -46,9 +48,11 @@ import {
   ApiGetProductPublic,
   ApiGetProductInputFieldPublic,
   ApiGetProductVariantPublic,
+  ApiGetProductRecommendationsPublic,
 } from "../decorators/swagger/product.decorators";
 import { Public } from "../decorators/public.decorator";
 import { ApiKey } from "../decorators/api-key.decorator";
+import { OptionalJwtAuthGuard } from "../auth/guards/optional-jwt-auth.guard";
 import { SearchProductDto } from "./dto/search-product.dto";
 import { SearchProductVariantDto } from "./dto/search-product-variant.dto";
 import { ProductInputValidatorService } from "./services/product-input-validator.service";
@@ -57,7 +61,7 @@ import {
   UpdateProductInputFieldDto,
 } from "./dto/product-input-field.dto";
 import { PaymentFeaturedResponseDto } from "./dto/payment-featured.dto";
-import { ApiOperation, ApiResponse } from "@nestjs/swagger";
+import { ApiOperation, ApiQuery, ApiResponse } from "@nestjs/swagger";
 
 @Controller("products")
 @ApiTags("products")
@@ -76,6 +80,58 @@ export class ProductsController {
     @Query() paginationDto: CursorPaginationDto = new CursorPaginationDto(),
   ) {
     return this.productsService.search(searchDto, paginationDto);
+  }
+
+  @Get("recommendations")
+  @Public()
+  @ApiKey()
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiGetProductRecommendationsPublic()
+  getRecommendations(
+    @Request() req: { user?: { id: string; walletAddress?: string } },
+    @Query("limit") limit?: string,
+  ) {
+    const take = Math.min(Math.max(parseInt(limit ?? "10", 10) || 10, 1), 20);
+    if (req.user?.id) {
+      return this.productsService.getPersonalizedRecommendations(
+        req.user.id,
+        req.user.walletAddress,
+        take,
+      );
+    }
+    return this.productsService.getRecommendations(take);
+  }
+
+  @Get("trending")
+  @Public()
+  @ApiKey()
+  @ApiOperation({ summary: "Get trending products", description: "Products with most purchases and redemptions in the last 24 hours." })
+  @ApiQuery({ name: "limit", required: false, type: "number", example: 10 })
+  @ApiResponse({ status: 200, description: "Trending products" })
+  getTrending(@Query("limit") limit?: string) {
+    const take = Math.min(Math.max(parseInt(limit ?? "10", 10) || 10, 1), 20);
+    return this.productsService.getTrending(take);
+  }
+
+  @Get("new-arrivals")
+  @Public()
+  @ApiKey()
+  @ApiOperation({ summary: "Get new arrivals", description: "Most recently added active products." })
+  @ApiQuery({ name: "limit", required: false, type: "number", example: 10 })
+  @ApiResponse({ status: 200, description: "New arrivals" })
+  getNewArrivals(@Query("limit") limit?: string) {
+    const take = Math.min(Math.max(parseInt(limit ?? "10", 10) || 10, 1), 20);
+    return this.productsService.getNewArrivals(take);
+  }
+
+  @Get("search/suggestions")
+  @Public()
+  @ApiKey()
+  @ApiOperation({ summary: "Search suggestions", description: "Fast prefix-match suggestions for the search bar." })
+  @ApiQuery({ name: "q", required: true, type: "string", example: "ml" })
+  @ApiResponse({ status: 200, description: "Search suggestions" })
+  getSearchSuggestions(@Query("q") q?: string) {
+    return this.productsService.getSearchSuggestions(q ?? "");
   }
 
   @Get("payment-featured")
@@ -152,6 +208,15 @@ export class ProductsController {
   @ApiGetProductPublic()
   findOne(@Param("id") id: string) {
     return this.productsService.findOne(id);
+  }
+
+  @Get(":id/stats")
+  @Public()
+  @ApiKey()
+  @ApiOperation({ summary: "Get product sales stats", description: "Total purchases + redemptions count for a product, including today's count." })
+  @ApiResponse({ status: 200, description: "Product stats" })
+  getProductStats(@Param("id") id: string) {
+    return this.productsService.getProductStats(id);
   }
 
   @Post()

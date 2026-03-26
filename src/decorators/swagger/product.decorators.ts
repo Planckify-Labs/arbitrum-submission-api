@@ -1464,6 +1464,72 @@ export function ApiGetProductInputFieldPublic() {
   );
 }
 
+export function ApiGetProductRecommendationsPublic() {
+  return applyDecorators(
+    ApiHeader({
+      name: "X-API-Key",
+      required: true,
+      description: "API Key for public access",
+      example: "your-api-key-here",
+    }),
+    ApiOperation({
+      summary: "Get product recommendations",
+      description:
+        "Returns product recommendations for the home screen. " +
+        "If a valid JWT is provided, returns products personalized to the user's purchase and redemption history (category affinity), excluding already-interacted products, with remaining slots filled by global popular products. " +
+        "If no JWT is provided (unauthenticated or new user), returns globally popular products ranked by completed purchase count.",
+    }),
+    ApiQuery({
+      name: "limit",
+      required: false,
+      description: "Number of recommendations to return (1-20, default 10)",
+      type: "number",
+      example: 10,
+    }),
+    ApiResponse({
+      status: 200,
+      description: "Returns recommended products",
+      schema: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string", example: "01JWNA8X..." },
+            name: { type: "string", example: "Mobile Legends" },
+            imageUrl: {
+              type: "string",
+              nullable: true,
+              example: "https://cdn.example.com/mlbb.jpg",
+            },
+            code: { type: "string", example: "MLBB" },
+            categoryId: { type: "string", example: "01JWNA8Y..." },
+            isVoucher: { type: "boolean", example: false },
+            category: {
+              type: "object",
+              properties: {
+                id: { type: "string", example: "01JWNA8Y..." },
+                name: { type: "string", example: "Gaming" },
+              },
+            },
+            startingPrice: {
+              type: "object",
+              nullable: true,
+              properties: {
+                amount: { type: "string", example: "15000.00" },
+                currency: { type: "string", example: "IDR" },
+              },
+            },
+          },
+        },
+      },
+    }),
+    ApiResponse({
+      status: 401,
+      description: "Invalid or missing API key",
+    }),
+  );
+}
+
 export function ApiGetProductVariantPublic() {
   return applyDecorators(
     ApiHeader({

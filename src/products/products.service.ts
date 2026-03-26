@@ -10,7 +10,7 @@ import {
   UpdateProductPriceDto,
 } from "./dto/product-price.dto";
 import { CreateCategoryDto, UpdateCategoryDto } from "./dto/category.dto";
-import { Prisma } from "@generated/prisma";
+import { BookingStatus, Prisma, PurchaseStatus, RedemptionStatus } from "@generated/prisma";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import { SearchProductVariantDto } from "./dto/search-product-variant.dto";
 import { VCGamersService } from "../providers/vendor-api/implementations/vcgamers/vcgamers.service";
@@ -29,6 +29,13 @@ const GAMING_PRODUCT_CODES = ["MLBB", "FF", "PUBGM", "CODM"];
 const PLN_PRODUCT_CODE = "PLN";
 const PAYMENT_FEATURED_CACHE_KEY = "payment-featured:config";
 const PAYMENT_FEATURED_CACHE_TTL = 3600; // 1 hour
+const RECOMMENDATIONS_CACHE_KEY = "products:recommendations";
+const RECOMMENDATIONS_CACHE_TTL = 1800; // 30 minutes
+const PERSONALIZED_RECOMMENDATIONS_CACHE_TTL = 900; // 15 minutes
+const TRENDING_CACHE_KEY = "products:trending";
+const TRENDING_CACHE_TTL = 300; // 5 minutes
+const NEW_ARRIVALS_CACHE_KEY = "products:new-arrivals";
+const NEW_ARRIVALS_CACHE_TTL = 3600; // 1 hour
 
 // Standard product include for consistency
 const productInclude = {
@@ -43,6 +50,56 @@ const productInclude = {
     },
   },
 } as const;
+
+// Lean select for recommendation cards — only what the home screen needs
+const recommendationSelect = {
+  id: true,
+  name: true,
+  imageUrl: true,
+  code: true,
+  categoryId: true,
+  isVoucher: true,
+  category: {
+    select: { id: true, name: true },
+  },
+  variants: {
+    where: { isActive: true },
+    select: {
+      ProductPrice: {
+        where: { isActive: true },
+        select: { sellPrice: true, currency: true },
+        orderBy: { sellPrice: "asc" as const },
+        take: 1,
+      },
+    },
+  },
+} as const;
+
+type RecommendationRaw = Prisma.ProductGetPayload<{
+  select: typeof recommendationSelect;
+}>;
+
+function toRecommendationDto(product: RecommendationRaw) {
+  const lowestPrice = product.variants
+    .flatMap((v) => v.ProductPrice)
+    .sort((a, b) => Number(a.sellPrice) - Number(b.sellPrice))[0];
+
+  return {
+    id: product.id,
+    name: product.name,
+    imageUrl: product.imageUrl,
+    code: product.code,
+    categoryId: product.categoryId,
+    isVoucher: product.isVoucher,
+    category: product.category,
+    startingPrice: lowestPrice
+      ? {
+          amount: lowestPrice.sellPrice.toString(),
+          currency: lowestPrice.currency,
+        }
+      : null,
+  };
+}
 
 @Injectable()
 export class ProductsService {
@@ -728,6 +785,411 @@ export class ProductsService {
     await this.productCache.invalidateProduct(productId);
 
     return result;
+  }
+
+  async getRecommendations(limit = 10) {
+    return this.cacheManager.cacheAside(
+      `${RECOMMENDATIONS_CACHE_KEY}:${limit}`,
+      () => this.fetchRecommendations(limit),
+      { ttl: RECOMMENDATIONS_CACHE_TTL },
+    );
+  }
+
+  private async fetchRecommendations(limit: number) {
+    // Get product variant IDs ranked by completed purchase count
+    const purchaseCounts = await this.prisma.purchase.groupBy({
+      by: ["productVariantId"],
+      _count: { productVariantId: true },
+      where: { status: PurchaseStatus.COMPLETED },
+      orderBy: { _count: { productVariantId: "desc" } },
+      take: limit * 3, // fetch extra variants to account for deduplication
+    });
+
+    let rankedProductIds: string[] = [];
+
+    if (purchaseCounts.length > 0) {
+      const variantIds = purchaseCounts.map((p) => p.productVariantId);
+      const variants = await this.prisma.productVariant.findMany({
+        where: { id: { in: variantIds }, isActive: true },
+        select: { id: true, productId: true },
+      });
+
+      const variantToProduct = new Map(
+        variants.map((v) => [v.id, v.productId]),
+      );
+      const seen = new Set<string>();
+
+      for (const { productVariantId } of purchaseCounts) {
+        const productId = variantToProduct.get(productVariantId);
+        if (productId && !seen.has(productId)) {
+          seen.add(productId);
+          rankedProductIds.push(productId);
+          if (rankedProductIds.length >= limit) break;
+        }
+      }
+    }
+
+    const rankedProducts =
+      rankedProductIds.length > 0
+        ? await this.prisma.product.findMany({
+            where: { id: { in: rankedProductIds }, isActive: true },
+            select: recommendationSelect,
+          })
+        : [];
+
+    if (rankedProducts.length >= limit) {
+      return rankedProductIds
+        .map((id) => rankedProducts.find((p) => p.id === id))
+        .filter(Boolean)
+        .slice(0, limit)
+        .map(toRecommendationDto);
+    }
+
+    // Pad with most recently active products to fill up to limit
+    const fallbackProducts = await this.prisma.product.findMany({
+      where: {
+        isActive: true,
+        ...(rankedProductIds.length > 0 && {
+          id: { notIn: rankedProductIds },
+        }),
+      },
+      select: recommendationSelect,
+      orderBy: { createdAt: "desc" },
+      take: limit - rankedProducts.length,
+    });
+
+    const sortedRanked = rankedProductIds
+      .map((id) => rankedProducts.find((p) => p.id === id))
+      .filter(Boolean);
+
+    return [...sortedRanked, ...fallbackProducts].map(toRecommendationDto);
+  }
+
+  async getPersonalizedRecommendations(
+    userId: string,
+    walletAddress: string | undefined,
+    limit: number,
+  ) {
+    const cacheKey = `recommendations:personalized:${userId}:${limit}`;
+    return this.cacheManager.cacheAside(
+      cacheKey,
+      () =>
+        this.fetchPersonalizedRecommendations(userId, walletAddress, limit),
+      { ttl: PERSONALIZED_RECOMMENDATIONS_CACHE_TTL },
+    );
+  }
+
+  private async fetchPersonalizedRecommendations(
+    userId: string,
+    walletAddress: string | undefined,
+    limit: number,
+  ) {
+    // Parallel fetch: recent bookings (purchase intent) + redemptions (confirmed spend)
+    const [recentBookings, recentRedemptions] = await Promise.all([
+      walletAddress
+        ? this.prisma.bookingOrder.findMany({
+            where: {
+              walletAddress: { equals: walletAddress, mode: "insensitive" },
+              status: {
+                in: [BookingStatus.EXECUTED, BookingStatus.PENDING],
+              },
+            },
+            select: {
+              productVariant: {
+                select: {
+                  productId: true,
+                  product: { select: { categoryId: true } },
+                },
+              },
+            },
+            orderBy: { createdAt: "desc" },
+            take: 20,
+          })
+        : Promise.resolve([]),
+      this.prisma.pointRedemption.findMany({
+        where: { userId },
+        select: {
+          productVariant: {
+            select: {
+              productId: true,
+              product: { select: { categoryId: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 10,
+      }),
+    ]);
+
+    // Build category affinity map + set of already-purchased product IDs
+    const categoryCount = new Map<string, number>();
+    const interactedProductIds = new Set<string>();
+
+    for (const booking of recentBookings) {
+      const { productId, product } = booking.productVariant;
+      interactedProductIds.add(productId);
+      categoryCount.set(
+        product.categoryId,
+        (categoryCount.get(product.categoryId) ?? 0) + 1,
+      );
+    }
+
+    for (const redemption of recentRedemptions) {
+      const { productId, product } = redemption.productVariant;
+      interactedProductIds.add(productId);
+      // Weight redemptions slightly higher (confirmed spend = stronger signal)
+      categoryCount.set(
+        product.categoryId,
+        (categoryCount.get(product.categoryId) ?? 0) + 2,
+      );
+    }
+
+    // Cold start: new user with no activity → fall back to global popular
+    if (categoryCount.size === 0) {
+      return this.getRecommendations(limit);
+    }
+
+    // Sort categories by affinity score, take top 3
+    const topCategories = [...categoryCount.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([categoryId]) => categoryId);
+
+    // Single query: fetch active products from affinity categories, excluding interacted ones
+    const raw = await this.prisma.product.findMany({
+      where: {
+        isActive: true,
+        categoryId: { in: topCategories },
+        ...(interactedProductIds.size > 0 && {
+          id: { notIn: [...interactedProductIds] },
+        }),
+      },
+      select: recommendationSelect,
+      orderBy: { createdAt: "desc" },
+      take: limit,
+    });
+
+    // Re-sort to respect category affinity order, then map to lean DTO
+    const categoryOrder = new Map(topCategories.map((id, i) => [id, i]));
+    const personalizedProducts = raw
+      .sort(
+        (a, b) =>
+          (categoryOrder.get(a.categoryId) ?? 999) -
+          (categoryOrder.get(b.categoryId) ?? 999),
+      )
+      .map(toRecommendationDto);
+
+    if (personalizedProducts.length >= limit) {
+      return personalizedProducts.slice(0, limit);
+    }
+
+    // Fill remaining slots from global popular (already cached, no extra DB hit)
+    const globalRecs = await this.getRecommendations(limit);
+    const personalizedIds = new Set(personalizedProducts.map((p) => p.id));
+    const globalFill = globalRecs
+      .filter((p) => !personalizedIds.has(p.id))
+      .slice(0, limit - personalizedProducts.length);
+
+    return [...personalizedProducts, ...globalFill];
+  }
+
+  async getTrending(limit = 10) {
+    return this.cacheManager.cacheAside(
+      `${TRENDING_CACHE_KEY}:${limit}`,
+      async () => {
+        const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+        const [purchaseCounts, redemptionCounts] = await Promise.all([
+          this.prisma.purchase.groupBy({
+            by: ["productVariantId"],
+            _count: { productVariantId: true },
+            where: {
+              status: PurchaseStatus.COMPLETED,
+              createdAt: { gte: since },
+            },
+            orderBy: { _count: { productVariantId: "desc" } },
+            take: limit * 3,
+          }),
+          this.prisma.pointRedemption.groupBy({
+            by: ["productVariantId"],
+            _count: { productVariantId: true },
+            where: {
+              status: RedemptionStatus.COMPLETED,
+              createdAt: { gte: since },
+            },
+            orderBy: { _count: { productVariantId: "desc" } },
+            take: limit * 3,
+          }),
+        ]);
+
+        // Merge counts by variantId
+        const countMap = new Map<string, number>();
+        for (const p of purchaseCounts) {
+          countMap.set(
+            p.productVariantId,
+            (countMap.get(p.productVariantId) ?? 0) + p._count.productVariantId,
+          );
+        }
+        for (const r of redemptionCounts) {
+          countMap.set(
+            r.productVariantId,
+            (countMap.get(r.productVariantId) ?? 0) + r._count.productVariantId,
+          );
+        }
+
+        // Sort by total count descending, take top limit*3 variantIds
+        const rankedVariantIds = [...countMap.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, limit * 3)
+          .map(([variantId]) => variantId);
+
+        if (rankedVariantIds.length === 0) {
+          return [];
+        }
+
+        // Get productIds from variants (dedup logic same as fetchRecommendations)
+        const variants = await this.prisma.productVariant.findMany({
+          where: { id: { in: rankedVariantIds }, isActive: true },
+          select: { id: true, productId: true },
+        });
+
+        const variantToProduct = new Map(
+          variants.map((v) => [v.id, v.productId]),
+        );
+        const seen = new Set<string>();
+        const rankedProductIds: string[] = [];
+
+        for (const variantId of rankedVariantIds) {
+          const productId = variantToProduct.get(variantId);
+          if (productId && !seen.has(productId)) {
+            seen.add(productId);
+            rankedProductIds.push(productId);
+            if (rankedProductIds.length >= limit * 3) break;
+          }
+        }
+
+        const products = await this.prisma.product.findMany({
+          where: { id: { in: rankedProductIds }, isActive: true },
+          select: recommendationSelect,
+        });
+
+        return rankedProductIds
+          .map((id) => products.find((p) => p.id === id))
+          .filter(Boolean)
+          .slice(0, limit)
+          .map(toRecommendationDto);
+      },
+      { ttl: TRENDING_CACHE_TTL },
+    );
+  }
+
+  async getNewArrivals(limit = 10) {
+    return this.cacheManager.cacheAside(
+      `${NEW_ARRIVALS_CACHE_KEY}:${limit}`,
+      async () => {
+        const products = await this.prisma.product.findMany({
+          where: { isActive: true },
+          select: recommendationSelect,
+          orderBy: { createdAt: "desc" },
+          take: limit,
+        });
+        return products.map(toRecommendationDto);
+      },
+      { ttl: NEW_ARRIVALS_CACHE_TTL },
+    );
+  }
+
+  async getSearchSuggestions(query: string) {
+    if (!query.trim()) {
+      return [];
+    }
+
+    return this.prisma.product.findMany({
+      where: {
+        isActive: true,
+        OR: [
+          { name: { startsWith: query, mode: "insensitive" } },
+          { code: { startsWith: query, mode: "insensitive" } },
+        ],
+      },
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        imageUrl: true,
+        category: { select: { id: true, name: true } },
+      },
+      take: 8,
+      orderBy: { name: "asc" },
+    });
+  }
+
+  async getProductStats(productId: string) {
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+      select: { id: true },
+    });
+
+    if (!product) {
+      throw new NotFoundException(`Product with ID ${productId} not found`);
+    }
+
+    const variantIds = await this.prisma.productVariant
+      .findMany({
+        where: { productId, isActive: true },
+        select: { id: true },
+      })
+      .then((v) => v.map((x) => x.id));
+
+    if (variantIds.length === 0) {
+      return {
+        productId,
+        totalSales: 0,
+        totalPurchases: 0,
+        totalRedemptions: 0,
+        salesToday: 0,
+      };
+    }
+
+    const todayStart = new Date(new Date().setHours(0, 0, 0, 0));
+
+    const [purchaseCount, redemptionCount, purchasesToday, redemptionsToday] =
+      await Promise.all([
+        this.prisma.purchase.count({
+          where: {
+            productVariantId: { in: variantIds },
+            status: PurchaseStatus.COMPLETED,
+          },
+        }),
+        this.prisma.pointRedemption.count({
+          where: {
+            productVariantId: { in: variantIds },
+            status: RedemptionStatus.COMPLETED,
+          },
+        }),
+        this.prisma.purchase.count({
+          where: {
+            productVariantId: { in: variantIds },
+            status: PurchaseStatus.COMPLETED,
+            createdAt: { gte: todayStart },
+          },
+        }),
+        this.prisma.pointRedemption.count({
+          where: {
+            productVariantId: { in: variantIds },
+            status: RedemptionStatus.COMPLETED,
+            createdAt: { gte: todayStart },
+          },
+        }),
+      ]);
+
+    return {
+      productId,
+      totalSales: purchaseCount + redemptionCount,
+      totalPurchases: purchaseCount,
+      totalRedemptions: redemptionCount,
+      salesToday: purchasesToday + redemptionsToday,
+    };
   }
 
   async getPaymentFeatured(): Promise<PaymentFeaturedResponseDto> {

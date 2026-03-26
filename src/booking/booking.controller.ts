@@ -22,6 +22,7 @@ import {
   ApiExecuteBooking,
   ApiCancelBooking,
 } from "../decorators/swagger/booking.decorators";
+import { ApiOperation, ApiResponse } from "@nestjs/swagger";
 import { BookingRateLimitGuard } from "./guards/booking-rate-limit.guard";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 
@@ -75,6 +76,20 @@ export class BookingController {
       throw new ForbiddenException("You can only access your own wallet data");
     }
     return this.bookingService.getBookingStats(walletAddress);
+  }
+
+  @Get("wallet/:walletAddress/abandoned")
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: "Get abandoned bookings", description: "Expired bookings without a completed purchase - use to show recovery nudges." })
+  @ApiResponse({ status: 200, description: "Abandoned bookings list" })
+  async getAbandonedBookings(
+    @Param("walletAddress") walletAddress: string,
+    @Request() req,
+  ) {
+    if (req.user.walletAddress?.toLowerCase() !== walletAddress.toLowerCase()) {
+      throw new ForbiddenException("You can only access your own wallet data");
+    }
+    return this.bookingService.getAbandonedBookings(walletAddress);
   }
 
   @Put(":id/execute")

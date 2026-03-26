@@ -310,6 +310,52 @@ export class PointsService {
     };
   }
 
+  // ── GET /points/summary ────────────────────────────────────────────────────
+
+  async getPointsSummary(userId: string) {
+    const [balance, totalEarned, totalSpent, recentTransactions] =
+      await Promise.all([
+        this.prisma.pointBalance.findUnique({
+          where: { userId },
+          select: { balance: true },
+        }),
+        this.prisma.pointTransaction.aggregate({
+          where: {
+            userId,
+            type: PointTransactionType.DEPOSIT,
+            status: PointTransactionStatus.COMPLETED,
+          },
+          _sum: { amount: true },
+        }),
+        this.prisma.pointTransaction.aggregate({
+          where: {
+            userId,
+            type: PointTransactionType.SPEND,
+          },
+          _sum: { amount: true },
+        }),
+        this.prisma.pointTransaction.findMany({
+          where: { userId },
+          select: {
+            id: true,
+            type: true,
+            amount: true,
+            status: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: "desc" },
+          take: 5,
+        }),
+      ]);
+
+    return {
+      balance: balance?.balance?.toString() ?? "0",
+      totalEarned: totalEarned._sum.amount?.toString() ?? "0",
+      totalSpent: totalSpent._sum.amount?.toString() ?? "0",
+      recentTransactions,
+    };
+  }
+
   // ── Internal: deductPoints ─────────────────────────────────────────────────
 
   async deductPoints(dto: {

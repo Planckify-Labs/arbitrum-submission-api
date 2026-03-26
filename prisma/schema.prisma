@@ -80,6 +80,7 @@ model ProductVariant {
   Purchase        Purchase[]
   BookingOrder    BookingOrder[]
   pointRedemptions PointRedemption[]
+  flashSales      FlashSale[]
   subCategory     Category?      @relation(fields: [subCategoryId], references: [id])
   subCategoryId   String?
 
@@ -123,7 +124,6 @@ model User {
   pointBalance      PointBalance?
   pointTransactions PointTransaction[]
   pointRedemptions  PointRedemption[]
-
   @@unique([authProvider, socialId])
   @@index([role])
   @@index([status])
@@ -183,6 +183,7 @@ model ProductPrice {
   updatedAt        DateTime       @updatedAt
   BookingOrder     BookingOrder[]
   pointRedemptions PointRedemption[]
+  flashSales       FlashSale[]
   currency         String
 }
 
@@ -672,3 +673,25 @@ enum RedemptionStatus {
   FAILED
   REFUNDED
 }
+
+model FlashSale {
+  id                 String         @id @default(ulid())
+  productVariantId   String
+  productPriceId     String
+  discountedPrice    Decimal        @db.Decimal(18, 2)
+  currency           String
+  startsAt           DateTime
+  endsAt             DateTime
+  maxRedemptions     Int?
+  currentRedemptions Int            @default(0)
+  isActive           Boolean        @default(true)
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  productVariant     ProductVariant @relation(fields: [productVariantId], references: [id])
+  productPrice       ProductPrice   @relation(fields: [productPriceId], references: [id])
+
+  @@index([isActive, startsAt, endsAt])
+  @@index([productVariantId])
+}
+

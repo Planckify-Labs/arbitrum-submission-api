@@ -444,6 +444,31 @@ export class BookingService {
     };
   }
 
+  async getAbandonedBookings(walletAddress: string) {
+    return this.prisma.bookingOrder.findMany({
+      where: {
+        walletAddress: { equals: walletAddress, mode: "insensitive" },
+        status: BookingStatus.EXPIRED as BookingStatus,
+        purchase: null,
+      },
+      include: {
+        productVariant: {
+          include: {
+            product: { select: { id: true, name: true, imageUrl: true, code: true } },
+            ProductPrice: {
+              where: { isActive: true },
+              select: { sellPrice: true, currency: true },
+              orderBy: { sellPrice: "asc" },
+              take: 1,
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+    });
+  }
+
   private async formatBookingResponse(booking: DbBooking) {
     const payment = booking.payment as unknown as BookingPayment;
     const exchangeRateInfo =
