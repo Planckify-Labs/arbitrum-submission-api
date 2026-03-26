@@ -124,6 +124,7 @@ model User {
   pointBalance      PointBalance?
   pointTransactions PointTransaction[]
   pointRedemptions  PointRedemption[]
+  nftAssets         NftAsset[]
   @@unique([authProvider, socialId])
   @@index([role])
   @@index([status])
@@ -693,5 +694,37 @@ model FlashSale {
 
   @@index([isActive, startsAt, endsAt])
   @@index([productVariantId])
+}
+
+// ── NFT Asset Management ────────────────────────────────────────────────────
+
+enum NftTokenType {
+  ERC721
+  ERC1155
+}
+
+model NftAsset {
+  id              String       @id @default(ulid())
+  userId          String
+  walletAddress   String
+  contractAddress String
+  tokenId         String
+  chainId         Int
+  tokenType       NftTokenType @default(ERC721)
+  name            String?
+  description     String?
+  imageUrl        String?
+  tokenUri        String?
+  attributes      Json?
+  isOwned         Boolean      @default(true)
+  lastVerifiedAt  DateTime     @default(now())
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([walletAddress, contractAddress, tokenId, chainId])
+  @@index([userId, isOwned])
+  @@index([contractAddress])
 }
 

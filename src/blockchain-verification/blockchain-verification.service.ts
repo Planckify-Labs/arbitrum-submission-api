@@ -128,6 +128,10 @@ export class BlockchainVerificationService {
     return client;
   }
 
+  getPublicClient(chainId: number): PublicClient {
+    return this.getClient(chainId);
+  }
+
   private getWalletClient(chainId: number): WalletClient {
     const client = this.walletClients.get(chainId);
     if (!client) {
