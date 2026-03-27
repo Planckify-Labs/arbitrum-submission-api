@@ -186,6 +186,10 @@ model ProductPrice {
   pointRedemptions PointRedemption[]
   flashSales       FlashSale[]
   currency         String
+
+  @@index([productVariantId])
+  @@index([vendorId])
+  @@index([productVariantId, vendorId, isActive])
 }
 
 // TimescaleDB Hypertable - optimized for millions of transactions
@@ -431,7 +435,8 @@ model BookingOrder {
   updatedAt        DateTime       @updatedAt
 
   @@index([walletAddress])
-  @@index([status])
+  @@index([walletAddress, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
 }
 
 enum ApiKeyType {
@@ -611,7 +616,7 @@ model PointTransaction {
   pointRedemption PointRedemption?
 
   @@index([userId, createdAt(sort: Desc)])
-  @@index([status])
+  @@index([status, createdAt(sort: Desc)])
   @@index([txHash])
   @@index([refId])
 }

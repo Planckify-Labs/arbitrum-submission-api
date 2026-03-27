@@ -1,5 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ValkeyService } from '../valkey.service';
+import { NatsService } from '../../nats/nats.service';
 import type {
   TCacheConfig,
   TCachedData,
@@ -15,7 +16,10 @@ export class CacheManagerService implements TCacheKeyBuilder {
   private readonly logger = new Logger(CacheManagerService.name);
   private readonly defaultTTL = 3600; // 1 hour default
 
-  constructor(private readonly valkeyService: ValkeyService) {}
+  constructor(
+    private readonly valkeyService: ValkeyService,
+    @Optional() private readonly natsService?: NatsService,
+  ) {}
 
   /**
    * Build cache key from parts
@@ -218,8 +222,11 @@ export class CacheManagerService implements TCacheKeyBuilder {
         return 0;
       }
 
-      // Delete in batches
-      await Promise.all(keys.map((key) => this.valkeyService.del(key)));
+      // Non-blocking batch unlink (async server-side eviction, faster than DEL)
+      await this.valkeyService.unlinkBatch(keys);
+
+      // Broadcast to sibling pods so they can evict their L1 in-memory caches
+      this.natsService?.publishCacheInvalidation({ patterns: [pattern], keys });
 
       this.logger.debug(`Cache INVALIDATE PATTERN: ${pattern} (${keys.length} keys)`);
       return keys.length;
@@ -271,7 +278,7 @@ export class CacheManagerService implements TCacheKeyBuilder {
    */
   async invalidateKeys(keys: string[]): Promise<void> {
     try {
-      await Promise.all(keys.map((key) => this.valkeyService.del(key)));
+      await this.valkeyService.unlinkBatch(keys);
       this.logger.debug(`Cache INVALIDATE: ${keys.length} keys`);
     } catch (error) {
       this.logger.error(`Failed to invalidate keys: ${error.message}`);

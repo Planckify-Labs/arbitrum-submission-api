@@ -4,12 +4,16 @@ import { setupSwagger } from "./config/swagger.config";
 import { ValidationPipe } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import helmet from "helmet";
+import compression from "compression";
 import { getAppConfig } from "./config/app.config";
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
   const appConfig = getAppConfig(configService);
+
+  // Gzip compression — reduces response payload by ~70% for JSON
+  app.use(compression());
 
   app.use(
     helmet({

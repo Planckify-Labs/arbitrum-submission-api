@@ -1,11 +1,17 @@
-import { Injectable, Logger } from "@nestjs/common";
-import { ValkeyService } from "../valkey.service";
+import { Injectable, Logger } from '@nestjs/common';
+import { ValkeyService } from '../valkey.service';
 
-interface RateLimitInfo {
-  count: number;
-  resetAt: number;
-}
-
+/**
+ * Rate limiting via atomic Redis INCR — no JSON serialization, no race conditions.
+ *
+ * Algorithm:
+ *  1. INCR rate-limit:{key}            → atomic counter increment
+ *  2. If count === 1 (new window): EXPIRE sets the window TTL
+ *  3. TTL on the key tells us when the window resets
+ *
+ * Two commands per request (INCR + TTL), one extra EXPIRE on first request.
+ * Previous implementation used GET + JSON parse + SET per request.
+ */
 @Injectable()
 export class RateLimitCacheService {
   private readonly logger = new Logger(RateLimitCacheService.name);
@@ -17,84 +23,46 @@ export class RateLimitCacheService {
     maxRequests: number,
     windowMs: number,
   ): Promise<{ allowed: boolean; remaining: number; resetAt: number }> {
-    const rateLimitKey = `rate-limit:${key}`;
-    const data = await this.valkeyService.get<RateLimitInfo>(rateLimitKey);
-
-    const now = Date.now();
-    let rateLimitInfo: RateLimitInfo;
-
-    if (!data) {
-      rateLimitInfo = {
-        count: 1,
-        resetAt: now + windowMs,
-      };
-      await this.valkeyService.set(
-        rateLimitKey,
-        JSON.stringify(rateLimitInfo),
-        { ttl: Math.ceil(windowMs / 1000) },
-      );
-
-      return {
-        allowed: true,
-        remaining: maxRequests - 1,
-        resetAt: rateLimitInfo.resetAt,
-      };
-    }
+    const countKey = `rate-limit:${key}`;
+    const windowSeconds = Math.ceil(windowMs / 1000);
 
     try {
-      rateLimitInfo = data;
+      // Atomic increment — safe under concurrent requests across pods
+      const count = await this.valkeyService.incr(countKey);
 
-      if (rateLimitInfo.resetAt < now) {
-        rateLimitInfo = {
-          count: 1,
-          resetAt: now + windowMs,
-        };
-        await this.valkeyService.set(
-          rateLimitKey,
-          JSON.stringify(rateLimitInfo),
-          { ttl: Math.ceil(windowMs / 1000) },
+      if (count === 1) {
+        // First request in this window — set expiry (fire-and-forget, non-critical)
+        this.valkeyService.expire(countKey, windowSeconds).catch((err) =>
+          this.logger.warn(`Failed to set rate-limit TTL for ${key}: ${err.message}`),
         );
-
-        return {
-          allowed: true,
-          remaining: maxRequests - 1,
-          resetAt: rateLimitInfo.resetAt,
-        };
       }
 
-      if (rateLimitInfo.count >= maxRequests) {
-        return {
-          allowed: false,
-          remaining: 0,
-          resetAt: rateLimitInfo.resetAt,
-        };
-      }
-
-      rateLimitInfo.count += 1;
-      await this.valkeyService.set(
-        rateLimitKey,
-        JSON.stringify(rateLimitInfo),
-        { ttl: Math.ceil((rateLimitInfo.resetAt - now) / 1000) },
-      );
+      // Get remaining TTL to compute resetAt
+      const ttlSeconds = await this.valkeyService.ttl(countKey);
+      const resetAt =
+        ttlSeconds > 0
+          ? Date.now() + ttlSeconds * 1000
+          : Date.now() + windowMs;
 
       return {
-        allowed: true,
-        remaining: maxRequests - rateLimitInfo.count,
-        resetAt: rateLimitInfo.resetAt,
+        allowed: count <= maxRequests,
+        remaining: Math.max(0, maxRequests - count),
+        resetAt,
       };
     } catch (error) {
-      this.logger.error(`Failed to parse rate limit data for ${key}:`, error);
+      this.logger.error(`Rate limit check failed for ${key}:`, error);
+      // Fail open — allow the request on cache errors
       return {
         allowed: true,
         remaining: maxRequests - 1,
-        resetAt: now + windowMs,
+        resetAt: Date.now() + windowMs,
       };
     }
   }
 
   async resetRateLimit(key: string): Promise<void> {
-    const rateLimitKey = `rate-limit:${key}`;
-    await this.valkeyService.del(rateLimitKey);
+    const countKey = `rate-limit:${key}`;
+    await this.valkeyService.del(countKey);
     this.logger.debug(`Rate limit reset for key ${key}`);
   }
 }

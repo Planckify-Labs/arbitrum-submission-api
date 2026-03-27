@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { GlideClient, GlideString } from '@valkey/valkey-glide';
+import { GlideClient, GlideString, TimeUnit } from '@valkey/valkey-glide';
 import type { ValkeyConfig, CacheOptions, GlideClientConfig } from './interfaces/valkey-config.interface';
 
 @Injectable()
@@ -110,10 +110,10 @@ export class ValkeyService implements OnModuleInit, OnModuleDestroy {
       const serializedValue = typeof value === 'object' ? JSON.stringify(value) : String(value);
 
       if (options?.ttl) {
-        const result = await this.client.set(key, serializedValue);
-        if (result === 'OK') {
-          await this.client.expire(key, options.ttl);
-        }
+        // Single atomic command: SET key value EX seconds
+        const result = await this.client.set(key, serializedValue, {
+          expiry: { type: TimeUnit.Seconds, count: options.ttl },
+        });
         return result === 'OK';
       }
 
@@ -267,6 +267,26 @@ export class ValkeyService implements OnModuleInit, OnModuleDestroy {
       return result === 'OK';
     } catch (error) {
       this.logger.error(`Failed to set multiple keys`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Non-blocking batch delete using UNLINK (async server-side eviction).
+   * Prefer this over multiple del() calls for bulk pattern invalidation.
+   */
+  async unlinkBatch(keys: string[]): Promise<number> {
+    if (!this.client) {
+      this.logger.error('Valkey client is not initialized');
+      throw new Error('Valkey client is not initialized');
+    }
+
+    if (keys.length === 0) return 0;
+
+    try {
+      return await this.client.unlink(keys);
+    } catch (error) {
+      this.logger.error(`Failed to unlink ${keys.length} keys`, error);
       throw error;
     }
   }

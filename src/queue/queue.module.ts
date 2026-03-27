@@ -26,8 +26,10 @@ import { ValkeyModule } from "../valkey/valkey.module";
             lazyConnect: true,
           },
           defaultJobOptions: {
-            removeOnComplete: 100,
-            removeOnFail: 50,
+            // Keep completed jobs for 1 hour (audit trail + debugging)
+            removeOnComplete: { age: 3600, count: 1000 },
+            // Keep failed jobs for 24 hours (post-mortem analysis)
+            removeOnFail: { age: 86400, count: 500 },
             attempts: 3,
             backoff: {
               type: "exponential",
@@ -42,37 +44,28 @@ import { ValkeyModule } from "../valkey/valkey.module";
       {
         name: "purchase-processing",
         defaultJobOptions: {
-          removeOnComplete: 100,
-          removeOnFail: 50,
+          removeOnComplete: { age: 3600, count: 1000 },
+          removeOnFail: { age: 86400, count: 500 },
           attempts: 3,
-          backoff: {
-            type: "exponential",
-            delay: 2000,
-          },
+          backoff: { type: "exponential", delay: 2000 },
         },
       },
       {
         name: "blockchain-verification",
         defaultJobOptions: {
-          removeOnComplete: 100,
-          removeOnFail: 50,
+          removeOnComplete: { age: 3600, count: 1000 },
+          removeOnFail: { age: 86400, count: 500 },
           attempts: 5,
-          backoff: {
-            type: "exponential",
-            delay: 5000,
-          },
+          backoff: { type: "exponential", delay: 5000 },
         },
       },
       {
         name: "vendor-api-calls",
         defaultJobOptions: {
-          removeOnComplete: 100,
-          removeOnFail: 50,
+          removeOnComplete: { age: 3600, count: 1000 },
+          removeOnFail: { age: 86400, count: 500 },
           attempts: 3,
-          backoff: {
-            type: "exponential",
-            delay: 3000,
-          },
+          backoff: { type: "exponential", delay: 3000 },
         },
       },
     ),
