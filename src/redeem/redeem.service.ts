@@ -136,6 +136,7 @@ export class RedeemService {
         data: {
           userId,
           pointTransactionId: pointTx.id,
+          pointTransactionCreatedAt: pointTx.createdAt,
           productVariantId: dto.productVariantId,
           productPriceId: dto.productPriceId,
           customerInfo: validatedCustomerInfo as unknown as Prisma.InputJsonValue,
@@ -146,7 +147,7 @@ export class RedeemService {
 
       // Link PointTransaction back to redemption
       await tx.pointTransaction.update({
-        where: { id: pointTx.id },
+        where: { id_createdAt: { id: pointTx.id, createdAt: pointTx.createdAt } },
         data: { referenceId: redemption.id },
       });
 

@@ -10,7 +10,8 @@ import { Queue } from "bullmq";
 import { PrismaService } from "../prisma/prisma.service";
 import { ExchangeRateService } from "../exchange-rate/exchange-rate.service";
 import { PointsCacheService } from "../valkey/services/points-cache.service";
-import { Prisma, PointTransactionStatus, PointTransactionType } from "@generated/prisma";
+import { ReferenceIdService } from "../reference-id/reference-id.service";
+import { Prisma, PointTransactionStatus, PointTransactionType, ReferenceIdStatus } from "@generated/prisma";
 import { GetPointPriceQueryDto } from "./dto/get-point-price-query.dto";
 import { CreatePointDepositDto } from "./dto/create-point-deposit.dto";
 import { PointHistoryQueryDto } from "./dto/point-history-query.dto";
@@ -26,6 +27,7 @@ export class PointsService {
     private readonly prisma: PrismaService,
     private readonly exchangeRateService: ExchangeRateService,
     private readonly pointsCache: PointsCacheService,
+    private readonly referenceIdService: ReferenceIdService,
     @InjectQueue("point-deposit") private readonly pointDepositQueue: Queue,
   ) {}
 
@@ -126,36 +128,51 @@ export class PointsService {
       );
     }
 
-    // 2. Check refId idempotency
-    const existing = await this.prisma.pointTransaction.findUnique({
-      where: { refId: dto.refId },
-    });
-
-    if (existing) {
+    // 2. Atomically claim the refId via the ReferenceId table.
+    //    The ReferenceId table has a DB-level @unique on refId, so a plain
+    //    CREATE is race-safe — only one concurrent request wins; the other
+    //    gets P2002 and we return the in-progress deposit instead.
+    try {
+      await this.prisma.referenceId.create({
+        data: { refId: dto.refId, status: ReferenceIdStatus.PROCESSING },
+      });
+    } catch (error) {
       if (
-        existing.status === PointTransactionStatus.COMPLETED ||
-        existing.status === PointTransactionStatus.PENDING ||
-        existing.status === PointTransactionStatus.CONFIRMED
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
       ) {
-        return {
-          id: existing.id,
-          status: existing.status,
-          refId: existing.refId,
-          message: "Deposit already submitted.",
-        };
+        // refId already claimed — look up the existing PointTransaction
+        const existing = await this.prisma.pointTransaction.findFirst({
+          where: { refId: dto.refId },
+          orderBy: { createdAt: "desc" },
+        });
+
+        if (existing?.status !== PointTransactionStatus.FAILED) {
+          return {
+            id: existing?.id ?? "",
+            status: existing?.status ?? PointTransactionStatus.PENDING,
+            refId: dto.refId,
+            message: "Deposit already submitted.",
+          };
+        }
+
+        // Previous attempt FAILED — reset ReferenceId and allow retry
+        await this.prisma.referenceId.update({
+          where: { refId: dto.refId },
+          data: { status: ReferenceIdStatus.PROCESSING },
+        });
+      } else {
+        throw error;
       }
-      // FAILED → allow retry (fall through to create new record)
     }
 
     // Check txHash uniqueness
     if (dto.txHash) {
-      const existingByHash = await this.prisma.pointTransaction.findUnique({
+      const existingByHash = await this.prisma.pointTransaction.findFirst({
         where: { txHash: dto.txHash },
       });
       if (existingByHash && existingByHash.status !== PointTransactionStatus.FAILED) {
-        throw new ConflictException(
-          "Transaction hash already submitted",
-        );
+        throw new ConflictException("Transaction hash already submitted");
       }
     }
 
@@ -231,7 +248,7 @@ export class PointsService {
     // 8. Enqueue verification job
     await this.pointDepositQueue.add(
       "verify-deposit",
-      { pointTransactionId: pointTx.id },
+      { pointTransactionId: pointTx.id, pointTransactionCreatedAt: pointTx.createdAt },
       {
         attempts: 5,
         backoff: { type: "exponential", delay: 3000 },

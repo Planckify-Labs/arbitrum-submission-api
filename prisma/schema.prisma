@@ -585,8 +585,10 @@ model PointBalance {
   @@index([userId])
 }
 
+// TimescaleDB Hypertable - optimized for high-volume point ledger
+// Composite PK required for hypertable partitioning on createdAt
 model PointTransaction {
-  id            String                 @id @default(ulid())
+  id            String                 @default(ulid())
   userId        String
   type          PointTransactionType
   amount        BigInt
@@ -594,8 +596,10 @@ model PointTransaction {
   balanceAfter  BigInt
 
   // Deposit fields (populated for DEPOSIT type)
-  refId           String?  @unique
-  txHash          String?  @unique
+  // Note: refId/txHash are not @unique — TimescaleDB hypertables disallow unique
+  // indexes without the partitioning column. Uniqueness enforced at app level.
+  refId           String?
+  txHash          String?
   tokenId         String?
   blockchainId    String?
   contractAddress String?
@@ -615,6 +619,8 @@ model PointTransaction {
   blockchain Blockchain? @relation(fields: [blockchainId], references: [id])
   pointRedemption PointRedemption?
 
+  @@id([id, createdAt])
+  @@unique([id, createdAt])
   @@index([userId, createdAt(sort: Desc)])
   @@index([status, createdAt(sort: Desc)])
   @@index([txHash])
@@ -648,25 +654,27 @@ enum PointTransactionStatus {
 }
 
 model PointRedemption {
-  id                 String           @id @default(ulid())
-  userId             String
-  pointTransactionId String           @unique
-  productVariantId   String
-  productPriceId     String
-  customerInfo       Json?
-  status             RedemptionStatus @default(PENDING)
-  pointsSpent        BigInt
-  vendorResponse     Json?
-  vendorRefId        String?
-  metadata           Json?
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
+  id                        String           @id @default(ulid())
+  userId                    String
+  pointTransactionId        String
+  pointTransactionCreatedAt DateTime
+  productVariantId          String
+  productPriceId            String
+  customerInfo              Json?
+  status                    RedemptionStatus @default(PENDING)
+  pointsSpent               BigInt
+  vendorResponse            Json?
+  vendorRefId               String?
+  metadata                  Json?
+  createdAt                 DateTime         @default(now())
+  updatedAt                 DateTime         @updatedAt
 
   user             User             @relation(fields: [userId], references: [id])
-  pointTransaction PointTransaction @relation(fields: [pointTransactionId], references: [id])
+  pointTransaction PointTransaction @relation(fields: [pointTransactionId, pointTransactionCreatedAt], references: [id, createdAt])
   productVariant   ProductVariant   @relation(fields: [productVariantId], references: [id])
   productPrice     ProductPrice     @relation(fields: [productPriceId], references: [id])
 
+  @@unique([pointTransactionId, pointTransactionCreatedAt])
   @@index([userId])
   @@index([status])
   @@index([createdAt(sort: Desc)])

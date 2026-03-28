@@ -8,6 +8,7 @@ import { PointTransactionStatus, Prisma } from "@generated/prisma";
 
 interface PointDepositJobData {
   pointTransactionId: string;
+  pointTransactionCreatedAt: Date;
 }
 
 @Processor("point-deposit", { concurrency: 5 })
@@ -23,13 +24,14 @@ export class PointDepositProcessor extends WorkerHost {
   }
 
   async process(job: Job<PointDepositJobData>): Promise<void> {
-    const { pointTransactionId } = job.data;
+    const { pointTransactionId, pointTransactionCreatedAt } = job.data;
+    const txKey = { id: pointTransactionId, createdAt: new Date(pointTransactionCreatedAt) };
 
     this.logger.log(`Processing point deposit job ${job.id} for tx ${pointTransactionId}`);
 
     // 2. Fetch PointTransaction with relations
     const pointTx = await this.prisma.pointTransaction.findUnique({
-      where: { id: pointTransactionId },
+      where: { id_createdAt: txKey },
       include: {
         user: { select: { id: true, walletAddress: true } },
         token: true,
@@ -75,7 +77,7 @@ export class PointDepositProcessor extends WorkerHost {
 
       // 5. Mark CONFIRMED
       await this.prisma.pointTransaction.update({
-        where: { id: pointTransactionId },
+        where: { id_createdAt: txKey },
         data: { status: PointTransactionStatus.CONFIRMED },
       });
 
@@ -108,7 +110,7 @@ export class PointDepositProcessor extends WorkerHost {
         }
 
         await tx.pointTransaction.update({
-          where: { id: pointTransactionId },
+          where: { id_createdAt: txKey },
           data: {
             status: PointTransactionStatus.COMPLETED,
             amount: points,
@@ -132,7 +134,7 @@ export class PointDepositProcessor extends WorkerHost {
       );
 
       await this.prisma.pointTransaction.update({
-        where: { id: pointTransactionId },
+        where: { id_createdAt: txKey },
         data: {
           status: PointTransactionStatus.FAILED,
           metadata: { error: errorMessage, failedAt: new Date().toISOString() },
