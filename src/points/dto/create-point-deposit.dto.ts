@@ -1,5 +1,5 @@
-import { IsString, IsNotEmpty } from "class-validator";
-import { ApiProperty } from "@nestjs/swagger";
+import { IsString, IsNotEmpty, IsOptional } from "class-validator";
+import { ApiPropertyOptional, ApiProperty } from "@nestjs/swagger";
 
 export class CreatePointDepositDto {
   @ApiProperty({ description: "Reference ID used in smart contract createTransaction()" })
@@ -41,4 +41,9 @@ export class CreatePointDepositDto {
   @IsString()
   @IsNotEmpty()
   expectedPoints: string;
+
+  @ApiPropertyOptional({ description: 'Fiat currency for point rate calculation (default: "IDR")' })
+  @IsOptional()
+  @IsString()
+  currency?: string;
 }

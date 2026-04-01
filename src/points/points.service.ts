@@ -49,17 +49,6 @@ export class PointsService {
         throw new BadRequestException(`Token ${token.symbol} is not a stablecoin`);
       }
 
-      const exchangeRate = await this.exchangeRateService.findLatest({
-        fromCurrency: token.symbol,
-        toCurrency: query.currency,
-      });
-
-      if (!exchangeRate) {
-        throw new BadRequestException(
-          `No exchange rate found for ${token.symbol} → ${query.currency}`,
-        );
-      }
-
       const priceConfig = await this.pointsCache.getPointConfig(
         query.currency,
         () =>
@@ -75,7 +64,25 @@ export class PointsService {
         );
       }
 
-      const tokenPriceInCurrency = new Prisma.Decimal(exchangeRate.rate.toString());
+      // If the token is already pegged to the requested currency, it's 1:1 — no exchange rate needed.
+      // Otherwise look up the live rate (e.g. USDT → IDR).
+      let tokenPriceInCurrency: Prisma.Decimal;
+      if (token.peggedCurrency === query.currency) {
+        tokenPriceInCurrency = new Prisma.Decimal(1);
+      } else {
+        const exchangeRate = await this.exchangeRateService.findLatest({
+          fromCurrency: token.symbol,
+          toCurrency: query.currency,
+        });
+
+        if (!exchangeRate) {
+          throw new BadRequestException(
+            `No exchange rate found for ${token.symbol} → ${query.currency}`,
+          );
+        }
+
+        tokenPriceInCurrency = new Prisma.Decimal(exchangeRate.rate.toString());
+      }
       const baseRate = new Prisma.Decimal(priceConfig.baseRate.toString());
 
       const pointsPerToken = tokenPriceInCurrency.div(baseRate).floor();
@@ -205,26 +212,46 @@ export class PointsService {
     }
 
     // 6. Server-side point calculation
-    // Use the token's peggedCurrency to find the matching PointPriceConfig.
-    // No exchange rate lookup needed — stablecoins are 1:1 with their pegged currency.
-    if (!token.peggedCurrency) {
-      throw new BadRequestException(
-        `Token ${token.symbol} has no pegged currency configured — cannot calculate points`,
-      );
-    }
+    // Use the same formula as getPointPrice: fetch exchange rate (token → currency),
+    // then pointRate = exchangeRate / baseRate. This ensures the deposited token amount
+    // and credited points are always consistent regardless of which stablecoin is used.
+    const currency = dto.currency ?? "IDR";
 
     const priceConfig = await this.prisma.pointPriceConfig.findFirst({
-      where: { currency: token.peggedCurrency, isActive: true },
+      where: { currency, isActive: true },
       orderBy: { createdAt: "desc" },
     });
 
     if (!priceConfig) {
       throw new BadRequestException(
-        `No active point price config for currency ${token.peggedCurrency}`,
+        `No active point price config for currency ${currency}`,
       );
     }
 
-    const pointRate = new Prisma.Decimal(1).div(priceConfig.baseRate);
+    // If the token is already pegged to the target currency, it's 1:1 — no exchange rate needed.
+    // Otherwise look up the live rate (e.g. USDT → IDR).
+    let tokenRateInCurrency: Prisma.Decimal;
+    if (token.peggedCurrency === currency) {
+      tokenRateInCurrency = new Prisma.Decimal(1);
+    } else {
+      const exchangeRate = await this.exchangeRateService.findLatest({
+        fromCurrency: token.symbol,
+        toCurrency: currency,
+      });
+
+      if (!exchangeRate) {
+        throw new BadRequestException(
+          `No exchange rate found for ${token.symbol} → ${currency}`,
+        );
+      }
+
+      tokenRateInCurrency = new Prisma.Decimal(exchangeRate.rate.toString());
+    }
+
+    // pointRate = how many points per 1 token unit
+    // e.g. IDRX→IDR = 1:1, IDR baseRate = 1 → 1/1 = 1 pt/IDRX
+    // e.g. USDT→IDR = 16,000, IDR baseRate = 1 → 16000/1 = 16000 pts/USDT
+    const pointRate = tokenRateInCurrency.div(priceConfig.baseRate);
 
     // 7. Create PointTransaction record
     const pointTx = await this.prisma.pointTransaction.create({
