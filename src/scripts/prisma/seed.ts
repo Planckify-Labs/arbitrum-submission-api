@@ -702,6 +702,7 @@ async function main() {
           "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
         isStablecoin: true,
         isActive: true,
+        peggedCurrency: "USD",
       },
     }),
     // USDT on Ethereum
@@ -718,6 +719,7 @@ async function main() {
           "https://assets.coingecko.com/coins/images/325/small/Tether.png",
         isStablecoin: true,
         isActive: true,
+        peggedCurrency: "USD",
       },
     }),
     // USDT on Ethereum Sepolia
@@ -733,6 +735,7 @@ async function main() {
         logoUrl: "https://tether.to/images/logoCircle.svg",
         isStablecoin: true,
         isActive: true,
+        peggedCurrency: "USD",
       },
     }),
     // IDRX on Lisk
@@ -749,6 +752,7 @@ async function main() {
           "https://pbs.twimg.com/profile_images/1951205358447501313/7OQgISvo_400x400.jpg",
         isStablecoin: true,
         isActive: true,
+        peggedCurrency: "IDR",
       },
     }),
     // IDRX on Base
@@ -765,6 +769,7 @@ async function main() {
           "https://pbs.twimg.com/profile_images/1951205358447501313/7OQgISvo_400x400.jpg",
         isStablecoin: true,
         isActive: true,
+        peggedCurrency: "IDR",
       },
     }),
   ]);
