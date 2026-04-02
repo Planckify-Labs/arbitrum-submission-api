@@ -1,19 +1,19 @@
+import { randomBytes } from "crypto";
+import { AuthProvider, UserRole, UserStatus } from "@generated/prisma";
 import {
+  BadRequestException,
   Injectable,
   Logger,
   UnauthorizedException,
-  BadRequestException,
 } from "@nestjs/common";
-import { JwtService } from "@nestjs/jwt";
-import { PrismaService } from "../prisma/prisma.service";
-import { SiweMessage } from "siwe";
-import { randomBytes } from "crypto";
-import { AuthResponseDto } from "./dto/auth-response.dto";
 import { ConfigService } from "@nestjs/config";
+import { JwtService } from "@nestjs/jwt";
 import * as argon2 from "argon2";
-import { UserRole, UserStatus, AuthProvider } from "@generated/prisma";
-import { NonceCacheService } from "../valkey/services/nonce-cache.service";
 import { OAuth2Client, TokenPayload } from "google-auth-library";
+import { SiweMessage } from "siwe";
+import { PrismaService } from "../prisma/prisma.service";
+import { NonceCacheService } from "../valkey/services/nonce-cache.service";
+import { AuthResponseDto } from "./dto/auth-response.dto";
 
 @Injectable()
 export class AuthService {
@@ -433,7 +433,7 @@ export class AuthService {
     // Only wrap JWT verification in try-catch — DB and other errors should
     // propagate as 500 so clients can distinguish "bad token" (401) from
     // "server unavailable" (5xx) and not incorrectly clear valid tokens.
-    let payload: Record<string, any>;
+    let payload: Record<string, unknown>;
     try {
       payload = this.jwtService.verify(refreshToken);
     } catch (error) {
