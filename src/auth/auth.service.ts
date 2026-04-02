@@ -433,9 +433,14 @@ export class AuthService {
     // Only wrap JWT verification in try-catch — DB and other errors should
     // propagate as 500 so clients can distinguish "bad token" (401) from
     // "server unavailable" (5xx) and not incorrectly clear valid tokens.
-    let payload: Record<string, unknown>;
+    interface RefreshTokenPayload {
+      sub: string;
+      type: string;
+    }
+
+    let payload: RefreshTokenPayload;
     try {
-      payload = this.jwtService.verify(refreshToken);
+      payload = this.jwtService.verify(refreshToken) as RefreshTokenPayload;
     } catch (error) {
       this.logger.error(`Refresh token verification failed: ${error.message}`);
       throw new UnauthorizedException("Invalid refresh token");
