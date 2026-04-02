@@ -48,7 +48,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
 
     if (!user) {
-      throw new UnauthorizedException("User not found");
+      // The JWT is cryptographically valid but the user row no longer exists
+      // (e.g. after a DB reset). Use a specific code so clients can distinguish
+      // this from an invalid/expired token and avoid unnecessarily clearing tokens.
+      throw new UnauthorizedException({
+        message: "User not found",
+        code: "USER_NOT_FOUND",
+      });
     }
 
     // Identity validation based on auth type
@@ -66,11 +72,17 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       normalizedPayloadEmail && normalizedUserEmail !== normalizedPayloadEmail;
 
     if (walletMismatch || usernameMismatch || emailMismatch) {
-      throw new UnauthorizedException("User identity mismatch");
+      throw new UnauthorizedException({
+        message: "User identity mismatch",
+        code: "IDENTITY_MISMATCH",
+      });
     }
 
     if (user.status !== "ACTIVE") {
-      throw new UnauthorizedException("User account is not active");
+      throw new UnauthorizedException({
+        message: "User account is not active",
+        code: "USER_INACTIVE",
+      });
     }
 
     return {

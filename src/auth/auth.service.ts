@@ -430,54 +430,64 @@ export class AuthService {
   }
 
   async refresh(refreshToken: string): Promise<{ access_token: string }> {
+    // Only wrap JWT verification in try-catch — DB and other errors should
+    // propagate as 500 so clients can distinguish "bad token" (401) from
+    // "server unavailable" (5xx) and not incorrectly clear valid tokens.
+    let payload: Record<string, any>;
     try {
-      const payload = this.jwtService.verify(refreshToken);
-
-      if (payload.type !== "refresh") {
-        throw new UnauthorizedException("Invalid token type");
-      }
-
-      const user = await this.prisma.user.findUnique({
-        where: { id: payload.sub },
-        select: {
-          id: true,
-          walletAddress: true,
-          username: true,
-          email: true,
-          role: true,
-        },
-      });
-
-      if (!user) {
-        throw new UnauthorizedException("User not found");
-      }
-
-      const tokenPayload: Record<string, unknown> = {
-        sub: user.id,
-        role: user.role,
-      };
-
-      if (user.walletAddress) {
-        tokenPayload.walletAddress = user.walletAddress;
-      } else if (user.email) {
-        tokenPayload.email = user.email;
-      } else if (user.username) {
-        tokenPayload.username = user.username;
-      }
-
-      const jwtExpirationTime = this.configService.get<string>(
-        "JWT_EXPIRATION_TIME",
-        "1h",
-      );
-
-      return {
-        access_token: this.jwtService.sign(tokenPayload, {
-          expiresIn: jwtExpirationTime,
-        }),
-      };
+      payload = this.jwtService.verify(refreshToken);
     } catch (error) {
       this.logger.error(`Refresh token verification failed: ${error.message}`);
       throw new UnauthorizedException("Invalid refresh token");
     }
+
+    if (payload.type !== "refresh") {
+      throw new UnauthorizedException("Invalid token type");
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: {
+        id: true,
+        walletAddress: true,
+        username: true,
+        email: true,
+        role: true,
+      },
+    });
+
+    if (!user) {
+      // User row was deleted (e.g. DB reset). The refresh token is
+      // cryptographically valid but the account no longer exists.
+      // Use a specific code so clients can distinguish this from a bad token.
+      throw new UnauthorizedException({
+        message: "User not found",
+        code: "USER_NOT_FOUND",
+      });
+    }
+
+    const tokenPayload: Record<string, unknown> = {
+      sub: user.id,
+      role: user.role,
+    };
+
+    if (user.walletAddress) {
+      tokenPayload.walletAddress = user.walletAddress;
+    } else if (user.email) {
+      tokenPayload.email = user.email;
+    } else if (user.username) {
+      tokenPayload.username = user.username;
+    }
+
+    const jwtExpirationTime = this.configService.get<string>(
+      "JWT_EXPIRATION_TIME",
+      "1h",
+    );
+
+    return {
+      access_token: this.jwtService.sign(tokenPayload, {
+        expiresIn: jwtExpirationTime,
+      }),
+    };
   }
 }

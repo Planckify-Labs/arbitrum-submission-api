@@ -194,6 +194,8 @@ model ProductPrice {
 
 // TimescaleDB Hypertable - optimized for millions of transactions
 // Composite PK required for hypertable partitioning on createdAt
+// Note: No FK relation to Purchase — TimescaleDB hypertables cannot be FK targets.
+// Referential integrity is enforced at the application level.
 model TransactionHistory {
   id               String            @default(ulid())
   user             User              @relation(fields: [userId], references: [id])
@@ -208,7 +210,6 @@ model TransactionHistory {
   txHash           String?
   senderAddress    String?
   recipientAddress String?
-  purchase         Purchase?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 
@@ -219,22 +220,24 @@ model TransactionHistory {
   @@index([txHash])
 }
 
+// Note: transactionId/transactionCreatedAt reference the TransactionHistory
+// hypertable but have no DB-level FK — TimescaleDB hypertables cannot be FK targets.
+// Referential integrity is enforced at the application level.
 model Purchase {
-  id                   String             @id @default(ulid())
-  transaction          TransactionHistory @relation(fields: [transactionId, transactionCreatedAt], references: [id, createdAt])
+  id                   String         @id @default(ulid())
   transactionId        String
   transactionCreatedAt DateTime
-  productVariant       ProductVariant     @relation(fields: [productVariantId], references: [id])
+  productVariant       ProductVariant @relation(fields: [productVariantId], references: [id])
   productVariantId     String
-  bookingOrder         BookingOrder       @relation(fields: [bookingOrderId], references: [id])
-  bookingOrderId       String             @unique
-  status               PurchaseStatus     @default(PENDING)
+  bookingOrder         BookingOrder   @relation(fields: [bookingOrderId], references: [id])
+  bookingOrderId       String         @unique
+  status               PurchaseStatus @default(PENDING)
   vendorResponse       Json?
   vendorStatusResponse Json?
   vendorRefId          String?
   refId                String?
-  createdAt            DateTime           @default(now())
-  updatedAt            DateTime           @updatedAt
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
 
   @@unique([transactionId, transactionCreatedAt])
   @@index([refId])
@@ -587,6 +590,9 @@ model PointBalance {
 
 // TimescaleDB Hypertable - optimized for high-volume point ledger
 // Composite PK required for hypertable partitioning on createdAt
+// Note: No FK relation to PointRedemption — TimescaleDB hypertables cannot be
+// the target of FK constraints (chunks live in _timescaledb_internal).
+// Referential integrity is enforced at the application level.
 model PointTransaction {
   id            String                 @default(ulid())
   userId        String
@@ -617,7 +623,6 @@ model PointTransaction {
   user       User        @relation(fields: [userId], references: [id])
   token      Token?      @relation(fields: [tokenId], references: [id])
   blockchain Blockchain? @relation(fields: [blockchainId], references: [id])
-  pointRedemption PointRedemption?
 
   @@id([id, createdAt])
   @@unique([id, createdAt])
@@ -653,6 +658,9 @@ enum PointTransactionStatus {
   FAILED
 }
 
+// Note: pointTransactionId/pointTransactionCreatedAt reference the PointTransaction
+// hypertable but have no DB-level FK — TimescaleDB hypertables cannot be FK targets.
+// Referential integrity is enforced at the application level.
 model PointRedemption {
   id                        String           @id @default(ulid())
   userId                    String
@@ -669,10 +677,9 @@ model PointRedemption {
   createdAt                 DateTime         @default(now())
   updatedAt                 DateTime         @updatedAt
 
-  user             User             @relation(fields: [userId], references: [id])
-  pointTransaction PointTransaction @relation(fields: [pointTransactionId, pointTransactionCreatedAt], references: [id, createdAt])
-  productVariant   ProductVariant   @relation(fields: [productVariantId], references: [id])
-  productPrice     ProductPrice     @relation(fields: [productPriceId], references: [id])
+  user           User           @relation(fields: [userId], references: [id])
+  productVariant ProductVariant @relation(fields: [productVariantId], references: [id])
+  productPrice   ProductPrice   @relation(fields: [productPriceId], references: [id])
 
   @@unique([pointTransactionId, pointTransactionCreatedAt])
   @@index([userId])
