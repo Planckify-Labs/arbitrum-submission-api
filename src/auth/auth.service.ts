@@ -296,9 +296,26 @@ export class AuthService {
     ipAddress: string = "N/A",
     userAgent: string = "N/A",
   ): Promise<AuthResponseDto> {
-    const user = await this.prisma.user.findUnique({
-      where: { username },
-    });
+    let user;
+    if (username.includes("@")) {
+      user = await this.prisma.user.findUnique({
+        where: { email: username },
+      });
+      if (!user) {
+        user = await this.prisma.user.findUnique({
+          where: { username },
+        });
+      }
+    } else {
+      user = await this.prisma.user.findUnique({
+        where: { username },
+      });
+      if (!user) {
+        user = await this.prisma.user.findUnique({
+          where: { email: username },
+        });
+      }
+    }
 
     if (!user) {
       throw new UnauthorizedException("Invalid credentials");
