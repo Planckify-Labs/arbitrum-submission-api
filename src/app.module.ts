@@ -26,6 +26,7 @@ import { RedeemModule } from "./redeem/redeem.module";
 import { FlashSalesModule } from "./flash-sales/flash-sales.module";
 import { NftModule } from "./nft/nft.module";
 import { NatsModule } from "./nats/nats.module";
+import { StatsModule } from "./stats/stats.module";
 import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 import { JwtAuthGuard } from "./auth/guards/jwt-auth.guard";
 import { ApiKeyGuard } from "./auth/guards/api-key.guard";
@@ -61,6 +62,7 @@ import { InvalidateCacheInterceptor } from "./valkey/interceptors/invalidate-cac
     FlashSalesModule,
     NftModule,
     NatsModule,
+    StatsModule,
   ],
   controllers: [AppController],
   providers: [
