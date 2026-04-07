@@ -26,7 +26,6 @@ export class TransactionsService {
       },
       include: {
         token: true,
-        purchase: true,
       },
     });
   }
@@ -49,7 +48,6 @@ export class TransactionsService {
       where: cursorDate ? { createdAt: { lt: cursorDate } } : undefined,
       include: {
         token: true,
-        purchase: true,
       },
       orderBy: {
         createdAt: "desc",
@@ -67,7 +65,6 @@ export class TransactionsService {
             blockchain: true,
           },
         },
-        purchase: true,
       },
     });
 
@@ -91,7 +88,6 @@ export class TransactionsService {
       data: updateTransactionDto,
       include: {
         token: true,
-        purchase: true,
       },
     });
   }
@@ -109,7 +105,6 @@ export class TransactionsService {
       where: { userId },
       include: {
         token: true,
-        purchase: true,
       },
     });
   }
@@ -133,7 +128,6 @@ export class TransactionsService {
       },
       include: {
         token: true,
-        purchase: true,
       },
       orderBy: {
         createdAt: "desc",
@@ -154,7 +148,6 @@ export class TransactionsService {
       where: { tokenId },
       include: {
         token: true,
-        purchase: true,
       },
       orderBy: {
         createdAt: "desc",
@@ -188,7 +181,7 @@ export class TransactionsService {
       }
     }
 
-    return await this.prisma.transactionHistory.findMany({
+    const transactions = await this.prisma.transactionHistory.findMany({
       take,
       where,
       include: {
@@ -213,26 +206,37 @@ export class TransactionsService {
             logoUrl: true,
           },
         },
-        purchase: {
-          include: {
-            productVariant: {
-              select: {
-                name: true,
-                product: {
-                  select: {
-                    id: true,
-                    imageUrl: true,
-                  },
-                },
-              },
-            },
-          },
-        },
       },
       orderBy: {
         createdAt: "desc",
       },
     });
+
+    // Purchase has no Prisma relation to TransactionHistory (hypertable).
+    // Post-fetch associated purchases and attach them manually.
+    const txIds = transactions.map((t) => t.id);
+    const purchases = await this.prisma.purchase.findMany({
+      where: { transactionId: { in: txIds } },
+      include: {
+        productVariant: {
+          select: {
+            name: true,
+            product: {
+              select: {
+                id: true,
+                imageUrl: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    const purchaseByTxId = new Map(purchases.map((p) => [p.transactionId, p]));
+
+    return transactions.map((t) => ({
+      ...t,
+      purchase: purchaseByTxId.get(t.id) ?? null,
+    }));
   }
 
   async search(
@@ -307,7 +311,7 @@ export class TransactionsService {
       }
     }
 
-    return await this.prisma.transactionHistory.findMany({
+    const transactions = await this.prisma.transactionHistory.findMany({
       take,
       where,
       include: {
@@ -326,25 +330,36 @@ export class TransactionsService {
             logoUrl: true,
           },
         },
-        purchase: {
-          include: {
-            productVariant: {
-              select: {
-                name: true,
-                product: {
-                  select: {
-                    id: true,
-                    imageUrl: true,
-                  },
-                },
-              },
-            },
-          },
-        },
       },
       orderBy: {
         createdAt: "desc",
       },
     });
+
+    // Purchase has no Prisma relation to TransactionHistory (hypertable).
+    // Post-fetch associated purchases and attach them manually.
+    const txIds = transactions.map((t) => t.id);
+    const purchases = await this.prisma.purchase.findMany({
+      where: { transactionId: { in: txIds } },
+      include: {
+        productVariant: {
+          select: {
+            name: true,
+            product: {
+              select: {
+                id: true,
+                imageUrl: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    const purchaseByTxId = new Map(purchases.map((p) => [p.transactionId, p]));
+
+    return transactions.map((t) => ({
+      ...t,
+      purchase: purchaseByTxId.get(t.id) ?? null,
+    }));
   }
 }

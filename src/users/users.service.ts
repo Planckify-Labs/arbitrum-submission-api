@@ -53,7 +53,6 @@ export class UsersService {
       where: { userId: id },
       include: {
         token: true,
-        purchase: true,
       },
     });
   }

@@ -320,7 +320,6 @@ export class PurchasesService {
       skip: cursor ? 1 : 0,
       cursor: cursor ? { id: cursor } : undefined,
       include: {
-        transaction: true,
         productVariant: {
           include: {
             product: true,
@@ -337,15 +336,6 @@ export class PurchasesService {
     const purchase = await this.prisma.purchase.findUnique({
       where: { id },
       include: {
-        transaction: {
-          include: {
-            token: {
-              include: {
-                blockchain: true,
-              },
-            },
-          },
-        },
         productVariant: {
           include: {
             product: true,
@@ -365,6 +355,22 @@ export class PurchasesService {
       throw new NotFoundException(`Purchase with ID ${id} not found`);
     }
 
+    // TransactionHistory is a TimescaleDB hypertable — no Prisma relation exists.
+    // Fetch the linked transaction manually using the stored FK columns.
+    const transaction = await this.prisma.transactionHistory.findFirst({
+      where: {
+        id: purchase.transactionId,
+        createdAt: purchase.transactionCreatedAt,
+      },
+      include: {
+        token: {
+          include: {
+            blockchain: true,
+          },
+        },
+      },
+    });
+
     const needsFreshStatus = this.shouldFetchFreshVendorStatus(purchase);
 
     const vendorStatusResponse =
@@ -382,6 +388,7 @@ export class PurchasesService {
     if (options?.vendorResponse) {
       return {
         ...purchase,
+        transaction,
         vendorName,
         voucherCode,
         lastChecked: purchase.updatedAt,
@@ -397,7 +404,7 @@ export class PurchasesService {
         refId: purchase.refId,
         createdAt: purchase.createdAt,
         updatedAt: purchase.updatedAt,
-        transaction: purchase.transaction,
+        transaction,
         productVariant: purchase.productVariant,
         voucherCode,
         booking: purchase.bookingOrder,
@@ -421,7 +428,6 @@ export class PurchasesService {
       where: { id },
       data: updateData,
       include: {
-        transaction: true,
         productVariant: {
           include: {
             product: true,
@@ -446,34 +452,38 @@ export class PurchasesService {
       status,
     } = searchParams;
 
+    // Purchase has no Prisma relation to TransactionHistory (hypertable).
+    // Pre-fetch matching transaction IDs to filter by transaction properties.
+    let filteredTransactionIds: string[] | undefined;
+    if (userId || tokenId || blockchainId) {
+      const txWhere: Prisma.TransactionHistoryWhereInput = {};
+      if (userId) txWhere.userId = userId;
+      if (tokenId) txWhere.tokenId = tokenId;
+      if (blockchainId) txWhere.token = { blockchainId };
+
+      const matchingTxs = await this.prisma.transactionHistory.findMany({
+        where: txWhere,
+        select: { id: true },
+      });
+      filteredTransactionIds = matchingTxs.map((t) => t.id);
+
+      if (filteredTransactionIds.length === 0) return [];
+    }
+
     return await this.prisma.purchase.findMany({
       take,
       skip: cursor ? 1 : 0,
       cursor: cursor ? { id: cursor } : undefined,
       where: {
         ...(transactionId && { transactionId }),
+        ...(filteredTransactionIds && {
+          transactionId: { in: filteredTransactionIds },
+        }),
         ...(status && { status }),
         ...(productId && {
           productVariant: {
             product: {
               id: productId,
-            },
-          },
-        }),
-        ...(userId && {
-          transaction: {
-            userId,
-          },
-        }),
-        ...(tokenId && {
-          transaction: {
-            tokenId,
-          },
-        }),
-        ...(blockchainId && {
-          transaction: {
-            token: {
-              blockchainId,
             },
           },
         }),
@@ -490,11 +500,6 @@ export class PurchasesService {
         }),
       },
       include: {
-        transaction: {
-          include: {
-            token: true,
-          },
-        },
         productVariant: {
           include: {
             product: true,
@@ -523,21 +528,24 @@ export class PurchasesService {
       throw new NotFoundException(`User with ID ${userId} not found`);
     }
 
+    // No Prisma relation from Purchase → TransactionHistory (hypertable).
+    // Pre-fetch transaction IDs owned by this user.
+    const userTxs = await this.prisma.transactionHistory.findMany({
+      where: { userId },
+      select: { id: true },
+    });
+    const transactionIds = userTxs.map((t) => t.id);
+
+    if (transactionIds.length === 0) return [];
+
     return this.prisma.purchase.findMany({
       take,
       skip: cursor ? 1 : 0,
       cursor: cursor ? { id: cursor } : undefined,
       where: {
-        transaction: {
-          userId,
-        },
+        transactionId: { in: transactionIds },
       },
       include: {
-        transaction: {
-          include: {
-            token: true,
-          },
-        },
         productVariant: {
           include: {
             product: true,
@@ -566,21 +574,24 @@ export class PurchasesService {
       throw new NotFoundException(`Token with ID ${tokenId} not found`);
     }
 
+    // No Prisma relation from Purchase → TransactionHistory (hypertable).
+    // Pre-fetch transaction IDs for this token.
+    const tokenTxs = await this.prisma.transactionHistory.findMany({
+      where: { tokenId },
+      select: { id: true },
+    });
+    const transactionIds = tokenTxs.map((t) => t.id);
+
+    if (transactionIds.length === 0) return [];
+
     return this.prisma.purchase.findMany({
       take,
       skip: cursor ? 1 : 0,
       cursor: cursor ? { id: cursor } : undefined,
       where: {
-        transaction: {
-          tokenId,
-        },
+        transactionId: { in: transactionIds },
       },
       include: {
-        transaction: {
-          include: {
-            token: true,
-          },
-        },
         productVariant: {
           include: {
             product: true,
@@ -617,23 +628,24 @@ export class PurchasesService {
       );
     }
 
+    // No Prisma relation from Purchase → TransactionHistory (hypertable).
+    // Pre-fetch transaction IDs for this blockchain.
+    const blockchainTxs = await this.prisma.transactionHistory.findMany({
+      where: { token: { blockchainId } },
+      select: { id: true },
+    });
+    const transactionIds = blockchainTxs.map((t) => t.id);
+
+    if (transactionIds.length === 0) return [];
+
     return this.prisma.purchase.findMany({
       take,
       skip: cursor ? 1 : 0,
       cursor: cursor ? { id: cursor } : undefined,
       where: {
-        transaction: {
-          token: {
-            blockchainId,
-          },
-        },
+        transactionId: { in: transactionIds },
       },
       include: {
-        transaction: {
-          include: {
-            token: true,
-          },
-        },
         productVariant: {
           include: {
             product: true,

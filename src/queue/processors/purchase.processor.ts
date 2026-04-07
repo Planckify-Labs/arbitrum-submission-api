@@ -57,9 +57,6 @@ export class PurchaseProcessor extends WorkerHost {
     try {
       const existingPurchase = await this.prisma.purchase.findUnique({
         where: { id: purchaseId },
-        include: {
-          transaction: true,
-        },
       });
 
       if (!existingPurchase) {
