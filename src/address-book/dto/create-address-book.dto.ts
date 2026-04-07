@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsBoolean } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsBoolean, ValidateIf } from 'class-validator';
+import { IsEthereumAddress } from '../../utils/validators/ethereum-address.validator';
 
 export class CreateAddressBookDto {
   @ApiProperty({ description: 'Label for the address (e.g. "My Wallet")' })
@@ -8,6 +9,8 @@ export class CreateAddressBookDto {
   label: string;
 
   @ApiProperty({ description: 'Wallet address' })
+  @ValidateIf((o) => o.isEvm !== false)
+  @IsEthereumAddress()
   @IsString()
   @IsNotEmpty()
   address: string;
