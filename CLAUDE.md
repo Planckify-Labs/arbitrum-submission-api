@@ -70,6 +70,25 @@ New vendor integrations extend `BaseVendorService` in `src/providers/vendor-api/
 
 PostgreSQL with Prisma ORM. Schema at `prisma/schema.prisma`. Uses ULID for IDs. TimescaleDB extension for `ExchangeRate` time-series data.
 
+#### TimescaleDB Hypertables — FK Rule
+
+The following tables are TimescaleDB hypertables:
+
+| Table | Partitioned by |
+|---|---|
+| `TransactionHistory` | `createdAt` |
+| `PointTransaction` | `createdAt` |
+| `AdminAuditLog` | `createdAt` |
+| `ExchangeRate` | `createdAt` |
+
+**NEVER add a `FOREIGN KEY ... REFERENCES <hypertable>` constraint in migration SQL.**
+TimescaleDB stores hypertable data in chunks under the `_timescaledb_internal` schema. Any FK targeting a hypertable causes a Prisma P4002 introspection error (`cross schema references are only allowed when the target schema is listed in the schemas property`).
+
+Rules:
+- Hypertable rows use composite PKs `(id, createdAt)` — store both columns in referencing tables.
+- Enforce referential integrity at the **application level** (lookup before insert, idempotency checks).
+- Run `bash scripts/lint-migrations.sh` after writing a migration to catch violations before applying.
+
 ## Environment Variables
 
 Key variables (see `.env.example`):
