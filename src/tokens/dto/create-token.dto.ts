@@ -52,6 +52,12 @@ export class CreateTokenDto {
   @Type(() => Boolean)
   isStablecoin?: boolean;
 
+  @ApiProperty({ example: false })
+  @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  isNativeCurrency?: boolean;
+
   @ApiProperty({ example: true })
   @IsOptional()
   @IsBoolean()
