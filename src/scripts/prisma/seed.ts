@@ -1000,15 +1000,60 @@ async function main() {
           contractAddress: "0x0000000000000000000000000000000000000004",
         },
       },
-      update: {},
+      update: {
+        logoUrl: "https://cryptologos.cc/logos/arbitrum-arb-logo.png?v=040",
+      },
       create: {
         name: "Arbitrum",
         symbol: "ETH",
         decimals: 18,
         blockchainId: blockchains[5].id, // Arbitrum
         contractAddress: "0x0000000000000000000000000000000000000004",
+        logoUrl: "https://cryptologos.cc/logos/arbitrum-arb-logo.png?v=040",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
+      },
+    }),
+    // SOL on Solana mainnet — identified by the canonical Wrapped SOL mint
+    prisma.token.upsert({
+      where: {
+        blockchainId_contractAddress: {
+          blockchainId: blockchains[6].id,
+          contractAddress: "So11111111111111111111111111111111111111112",
+        },
+      },
+      update: {},
+      create: {
+        name: "Solana",
+        symbol: "SOL",
+        decimals: 9,
+        blockchainId: blockchains[6].id, // Solana mainnet
+        contractAddress: "So11111111111111111111111111111111111111112",
         logoUrl:
-          "https://assets.coingecko.com/coins/images/279/small/ethereum.png",
+          "https://assets.coingecko.com/coins/images/4128/small/solana.png",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
+      },
+    }),
+    // SOL on Solana Devnet — same canonical Wrapped SOL mint across clusters
+    prisma.token.upsert({
+      where: {
+        blockchainId_contractAddress: {
+          blockchainId: blockchains[7].id,
+          contractAddress: "So11111111111111111111111111111111111111112",
+        },
+      },
+      update: {},
+      create: {
+        name: "Solana Devnet",
+        symbol: "SOL",
+        decimals: 9,
+        blockchainId: blockchains[7].id, // Solana Devnet
+        contractAddress: "So11111111111111111111111111111111111111112",
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/4128/small/solana.png",
         isStablecoin: false,
         isNativeCurrency: true,
         isActive: true,
@@ -1093,6 +1138,26 @@ async function main() {
         maxAmount: 10000,
         processingFee: 0.5,
         networkFeeEstimate: 0.1,
+        isDefault: false,
+      },
+    }),
+    // SOL on Solana mainnet — Indonesia region
+    prisma.regionAvailableToken.upsert({
+      where: {
+        regionId_tokenId: {
+          regionId: regions[0].id,
+          tokenId: nativeTokens[6].id,
+        },
+      },
+      update: {},
+      create: {
+        regionId: regions[0].id,
+        tokenId: nativeTokens[6].id,
+        isActive: true,
+        minAmount: 0.05,
+        maxAmount: 100,
+        processingFee: 0.005,
+        networkFeeEstimate: 0.000005,
         isDefault: false,
       },
     }),
