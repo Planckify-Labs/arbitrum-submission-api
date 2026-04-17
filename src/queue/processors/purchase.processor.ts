@@ -99,6 +99,11 @@ export class PurchaseProcessor extends WorkerHost {
           "Contract address is required for transaction verification",
         );
       }
+      if (!booking.blockchain.isEVM || booking.blockchain.chainId == null) {
+        throw new Error(
+          `Purchases only supported on EVM chains (blockchain: ${booking.blockchain.name})`,
+        );
+      }
 
       await this.verifyBlockchainTransaction(
         transactionHash,

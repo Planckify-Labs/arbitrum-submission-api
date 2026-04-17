@@ -67,22 +67,22 @@ model ProductInputField {
 }
 
 model ProductVariant {
-  id            String         @id @default(ulid())
-  name          String
-  description   String?
-  variantCode   String         @unique
-  product       Product        @relation(fields: [productId], references: [id])
-  productId     String
-  isActive      Boolean        @default(true)
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  ProductPrice    ProductPrice[]
-  Purchase        Purchase[]
-  BookingOrder    BookingOrder[]
+  id               String            @id @default(ulid())
+  name             String
+  description      String?
+  variantCode      String            @unique
+  product          Product           @relation(fields: [productId], references: [id])
+  productId        String
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  ProductPrice     ProductPrice[]
+  Purchase         Purchase[]
+  BookingOrder     BookingOrder[]
   pointRedemptions PointRedemption[]
-  flashSales      FlashSale[]
-  subCategory     Category?      @relation(fields: [subCategoryId], references: [id])
-  subCategoryId   String?
+  flashSales       FlashSale[]
+  subCategory      Category?         @relation(fields: [subCategoryId], references: [id])
+  subCategoryId    String?
 
   @@index([variantCode])
 }
@@ -97,34 +97,35 @@ model Vendor {
 }
 
 model User {
-  id            String               @id @default(ulid())
-  walletAddress String?              @unique
-  email         String?              @unique
-  username      String?              @unique
-  password      String?
-  name          String?
-  profileImage  String?
-  authProvider  AuthProvider
-  socialId      String?
-  role          UserRole             @default(USER)
-  status        UserStatus           @default(ACTIVE)
-  permissions   Json?
-  lastLoginAt   DateTime?
-  loginAttempts Int                  @default(0)
-  lockedUntil   DateTime?
-  transactions  TransactionHistory[]
-  createdAt     DateTime             @default(now())
-  updatedAt     DateTime             @updatedAt
-  Region        Region?              @relation(fields: [regionId], references: [id])
-  regionId      String?
-  ApiKey        ApiKey[]
-  auditLogs     AdminAuditLog[]
-  dappFavorites UserDappFavorite[]
-  addressBook   AddressBook[]
+  id                String               @id @default(ulid())
+  walletAddress     String?              @unique
+  email             String?              @unique
+  username          String?              @unique
+  password          String?
+  name              String?
+  profileImage      String?
+  authProvider      AuthProvider
+  socialId          String?
+  role              UserRole             @default(USER)
+  status            UserStatus           @default(ACTIVE)
+  permissions       Json?
+  lastLoginAt       DateTime?
+  loginAttempts     Int                  @default(0)
+  lockedUntil       DateTime?
+  transactions      TransactionHistory[]
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  Region            Region?              @relation(fields: [regionId], references: [id])
+  regionId          String?
+  ApiKey            ApiKey[]
+  auditLogs         AdminAuditLog[]
+  dappFavorites     UserDappFavorite[]
+  addressBook       AddressBook[]
   pointBalance      PointBalance?
   pointTransactions PointTransaction[]
   pointRedemptions  PointRedemption[]
   nftAssets         NftAsset[]
+
   @@unique([authProvider, socialId])
   @@index([role])
   @@index([status])
@@ -135,7 +136,8 @@ model User {
 model Blockchain {
   id                String             @id @default(ulid())
   name              String             @unique
-  chainId           Int                @unique
+  chainId           Int?               @unique
+  chainSlug         String?            @unique
   rpcUrl            String
   blockExplorer     String
   isEVM             Boolean            @default(true)
@@ -146,6 +148,7 @@ model Blockchain {
   SmartContract     SmartContract[]
   isTestnet         Boolean            @default(false)
   pointTransactions PointTransaction[]
+  nftAssets         NftAsset[]
 }
 
 model Token {
@@ -155,7 +158,7 @@ model Token {
   decimals           Int
   blockchain         Blockchain             @relation(fields: [blockchainId], references: [id])
   blockchainId       String
-  contractAddress    String?                @unique
+  contractAddress    String?
   logoUrl            String?
   isStablecoin       Boolean                @default(false)
   isActive           Boolean                @default(true)
@@ -171,17 +174,17 @@ model Token {
 }
 
 model ProductPrice {
-  id               String         @id @default(ulid())
-  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id])
+  id               String            @id @default(ulid())
+  productVariant   ProductVariant    @relation(fields: [productVariantId], references: [id])
   productVariantId String
-  vendor           Vendor         @relation(fields: [vendorId], references: [id])
+  vendor           Vendor            @relation(fields: [vendorId], references: [id])
   vendorId         String
   realValue        Decimal
   priceFromVendor  Decimal
   sellPrice        Decimal
-  isActive         Boolean        @default(true)
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
   BookingOrder     BookingOrder[]
   pointRedemptions PointRedemption[]
   flashSales       FlashSale[]
@@ -594,7 +597,7 @@ model PointBalance {
 // the target of FK constraints (chunks live in _timescaledb_internal).
 // Referential integrity is enforced at the application level.
 model PointTransaction {
-  id            String                 @default(ulid())
+  id            String               @default(ulid())
   userId        String
   type          PointTransactionType
   amount        BigInt
@@ -696,21 +699,21 @@ enum RedemptionStatus {
 }
 
 model FlashSale {
-  id                 String         @id @default(ulid())
+  id                 String   @id @default(ulid())
   productVariantId   String
   productPriceId     String
-  discountedPrice    Decimal        @db.Decimal(18, 2)
+  discountedPrice    Decimal  @db.Decimal(18, 2)
   currency           String
   startsAt           DateTime
   endsAt             DateTime
   maxRedemptions     Int?
-  currentRedemptions Int            @default(0)
-  isActive           Boolean        @default(true)
-  createdAt          DateTime       @default(now())
-  updatedAt          DateTime       @updatedAt
+  currentRedemptions Int      @default(0)
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
-  productVariant     ProductVariant @relation(fields: [productVariantId], references: [id])
-  productPrice       ProductPrice   @relation(fields: [productPriceId], references: [id])
+  productVariant ProductVariant @relation(fields: [productVariantId], references: [id])
+  productPrice   ProductPrice   @relation(fields: [productPriceId], references: [id])
 
   @@index([isActive, startsAt, endsAt])
   @@index([productVariantId])
@@ -729,7 +732,7 @@ model NftAsset {
   walletAddress   String
   contractAddress String
   tokenId         String
-  chainId         Int
+  blockchainId    String
   tokenType       NftTokenType @default(ERC721)
   name            String?
   description     String?
@@ -741,10 +744,11 @@ model NftAsset {
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
-  user User @relation(fields: [userId], references: [id])
+  user       User       @relation(fields: [userId], references: [id])
+  blockchain Blockchain @relation(fields: [blockchainId], references: [id])
 
-  @@unique([walletAddress, contractAddress, tokenId, chainId])
+  @@unique([walletAddress, contractAddress, tokenId, blockchainId])
   @@index([userId, isOwned])
   @@index([contractAddress])
+  @@index([blockchainId])
 }
-

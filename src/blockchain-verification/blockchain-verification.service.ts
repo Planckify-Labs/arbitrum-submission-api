@@ -59,6 +59,13 @@ export class BlockchainVerificationService {
 
       for (const blockchain of blockchains) {
         try {
+          if (!blockchain.isEVM || blockchain.chainId == null) {
+            this.logger.log(
+              `Skipping non-EVM blockchain ${blockchain.name} — viem client not applicable`,
+            );
+            continue;
+          }
+
           const nativeToken = blockchain.tokens.find(
             (token) => token.isNativeCurrency,
           );

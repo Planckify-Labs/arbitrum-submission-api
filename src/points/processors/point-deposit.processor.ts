@@ -63,6 +63,11 @@ export class PointDepositProcessor extends WorkerHost {
       if (!token.contractAddress) {
         throw new Error(`Token ${token.symbol} has no contract address`);
       }
+      if (!blockchain.isEVM || blockchain.chainId == null) {
+        throw new Error(
+          `Point deposits only supported on EVM chains (blockchain: ${blockchain.name})`,
+        );
+      }
 
       await this.blockchainVerification.verifyPointDeposit({
         txHash: pointTx.txHash!,

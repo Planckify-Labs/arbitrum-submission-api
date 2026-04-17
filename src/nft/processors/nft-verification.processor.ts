@@ -51,13 +51,22 @@ export class NftVerificationProcessor extends WorkerHost {
 
     const assets = await this.prisma.nftAsset.findMany({
       where: { userId, isOwned: true },
+      include: { blockchain: true },
     });
 
     if (assets.length === 0) return;
 
     for (const asset of assets) {
       try {
-        const client = this.blockchainVerification.getPublicClient(asset.chainId);
+        if (!asset.blockchain.isEVM || asset.blockchain.chainId == null) {
+          this.logger.debug(
+            `Skipping non-EVM NFT ${asset.contractAddress}#${asset.tokenId} on ${asset.blockchain.name}`,
+          );
+          continue;
+        }
+        const client = this.blockchainVerification.getPublicClient(
+          asset.blockchain.chainId,
+        );
         const contractAddress = asset.contractAddress as `0x${string}`;
         const tokenId = BigInt(asset.tokenId);
 

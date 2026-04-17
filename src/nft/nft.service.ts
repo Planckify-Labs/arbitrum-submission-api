@@ -83,7 +83,19 @@ export class NftService {
   ) {}
 
   async addNftAsset(userId: string, walletAddress: string, dto: AddNftDto) {
-    const client = this.blockchainVerification.getPublicClient(dto.chainId);
+    const blockchain = await this.prisma.blockchain.findUnique({
+      where: { id: dto.blockchainId },
+    });
+    if (!blockchain) {
+      throw new BadRequestException(`Unknown blockchainId: ${dto.blockchainId}`);
+    }
+    if (!blockchain.isEVM || blockchain.chainId == null) {
+      throw new BadRequestException(
+        `NFT verification currently supports EVM chains only (blockchain: ${blockchain.name})`,
+      );
+    }
+
+    const client = this.blockchainVerification.getPublicClient(blockchain.chainId);
     const contractAddress = dto.contractAddress.toLowerCase() as `0x${string}`;
     const walletAddr = walletAddress.toLowerCase() as `0x${string}`;
     const tokenId = BigInt(dto.tokenId);
@@ -199,11 +211,11 @@ export class NftService {
 
     return this.prisma.nftAsset.upsert({
       where: {
-        walletAddress_contractAddress_tokenId_chainId: {
+        walletAddress_contractAddress_tokenId_blockchainId: {
           walletAddress: walletAddr,
           contractAddress,
           tokenId: dto.tokenId,
-          chainId: dto.chainId,
+          blockchainId: dto.blockchainId,
         },
       },
       create: {
@@ -211,7 +223,7 @@ export class NftService {
         walletAddress: walletAddr,
         contractAddress,
         tokenId: dto.tokenId,
-        chainId: dto.chainId,
+        blockchainId: dto.blockchainId,
         tokenType,
         name,
         description,
@@ -268,7 +280,7 @@ export class NftService {
     return this.addNftAsset(userId, asset.walletAddress, {
       contractAddress: asset.contractAddress,
       tokenId: asset.tokenId,
-      chainId: asset.chainId,
+      blockchainId: asset.blockchainId,
     });
   }
 
