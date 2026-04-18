@@ -3,10 +3,12 @@ import { ConfigService } from "@nestjs/config";
 import { PassportStrategy } from "@nestjs/passport";
 import { ExtractJwt, Strategy } from "passport-jwt";
 import { PrismaService } from "../../prisma/prisma.service";
+import type { AddressNamespace } from "../auth.service";
 
-interface JwtPayload {
+export interface JwtPayload {
   sub: string;
   walletAddress?: string;
+  addressNamespace?: AddressNamespace;
   username?: string;
   email?: string;
   iat: number;
@@ -39,6 +41,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       select: {
         id: true,
         walletAddress: true,
+        walletAddressLower: true,
         username: true,
         email: true,
         role: true,
@@ -57,15 +60,29 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       });
     }
 
-    // Identity validation based on auth type
-    const normalizedPayloadWallet = payload.walletAddress?.toLowerCase();
-    const normalizedUserWallet = user.walletAddress?.toLowerCase();
+    const namespace: AddressNamespace | undefined =
+      payload.addressNamespace ??
+      (payload.walletAddress
+        ? /^0x[a-fA-F0-9]{40}$/.test(payload.walletAddress)
+          ? "eip155"
+          : "solana"
+        : undefined);
+
+    // Solana addresses are case-sensitive. Compare verbatim for Solana,
+    // case-insensitively for EVM (keeps existing EVM token compatibility).
+    let walletMismatch = false;
+    if (payload.walletAddress) {
+      if (namespace === "solana") {
+        walletMismatch = user.walletAddress !== payload.walletAddress;
+      } else {
+        walletMismatch =
+          user.walletAddress?.toLowerCase() !==
+          payload.walletAddress.toLowerCase();
+      }
+    }
+
     const normalizedPayloadEmail = payload.email?.toLowerCase();
     const normalizedUserEmail = user.email?.toLowerCase();
-
-    const walletMismatch =
-      normalizedPayloadWallet &&
-      normalizedUserWallet !== normalizedPayloadWallet;
     const usernameMismatch =
       payload.username && user.username !== payload.username;
     const emailMismatch =
@@ -88,6 +105,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     return {
       id: user.id,
       walletAddress: user.walletAddress || undefined,
+      addressNamespace: namespace,
       username: user.username || undefined,
       email: user.email || undefined,
       role: user.role,

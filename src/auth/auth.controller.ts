@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -40,7 +41,45 @@ export class AuthController {
     @Param("walletAddress") walletAddress: string,
     @Query() nonceDto: NonceDto,
   ) {
-    const nonce = await this.authService.generateNonce(walletAddress);
+    // Explicit chainSlug wins — caller told us exactly which SIWS cluster.
+    if (nonceDto.chainSlug) {
+      if (!nonceDto.chainSlug.startsWith("solana-")) {
+        throw new BadRequestException(
+          `Unsupported chainSlug: ${nonceDto.chainSlug}`,
+        );
+      }
+      const nonce = await this.authService.generateNonce(
+        walletAddress,
+        "solana",
+      );
+      const message = this.authService.createSiwsMessage(
+        walletAddress,
+        nonce,
+        nonceDto.chainSlug,
+      );
+      return { nonce, message };
+    }
+
+    // Defense-in-depth: auto-detect namespace from address format when
+    // the caller didn't specify one. A Solana base58 address hitting the
+    // SIWE-only path gets 400 "Invalid Ethereum wallet address format",
+    // which is confusing and brittle. Route it to SIWS (mainnet default)
+    // instead — devnet callers still need to pass `chainSlug` explicitly.
+    const isEvmAddress = /^0x[a-fA-F0-9]{40}$/.test(walletAddress);
+    if (!isEvmAddress) {
+      const nonce = await this.authService.generateNonce(
+        walletAddress,
+        "solana",
+      );
+      const message = this.authService.createSiwsMessage(
+        walletAddress,
+        nonce,
+        "solana-mainnet",
+      );
+      return { nonce, message };
+    }
+
+    const nonce = await this.authService.generateNonce(walletAddress, "eip155");
     const message = this.authService.createSiweMessage(
       walletAddress,
       nonce,
@@ -59,21 +98,13 @@ export class AuthController {
   @Post("verify")
   async verify(@Body() verifyDto: VerifyDto): Promise<AuthResponseDto> {
     const { message, signature } = verifyDto;
-    const isValid = await this.authService.verifySignature(message, signature);
+    const result = await this.authService.verifySignature(message, signature);
 
-    if (!isValid) {
+    if (!result.success) {
       throw new UnauthorizedException("Invalid signature");
     }
 
-    const addressMatch = message.match(/0x[a-fA-F0-9]{40}/i);
-    if (!addressMatch) {
-      throw new UnauthorizedException(
-        "Could not extract wallet address from message",
-      );
-    }
-    const walletAddress = addressMatch[0];
-
-    return this.authService.login(walletAddress);
+    return this.authService.login(result.address, result.namespace);
   }
 
   @ApiOperation({ summary: "Refresh access token" })

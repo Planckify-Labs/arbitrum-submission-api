@@ -14,6 +14,7 @@ import { readContract } from "viem/actions";
 import { privateKeyToAccount } from "viem/accounts";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
+import { addressesEqual } from "../auth/address-compare";
 import { TakumiWalletAbi } from "./abis/takumi-wallet.abi";
 import {
   TTakumiWalletTransaction,
@@ -356,9 +357,12 @@ export class BlockchainVerificationService {
         );
       }
 
+      // EVM-only: both addresses come from viem (0x hex).
       if (
-        transaction.walletAddress.toLowerCase() !==
-        trxData.expectedWalletAddress.toLowerCase()
+        !addressesEqual(
+          transaction.walletAddress,
+          trxData.expectedWalletAddress,
+        )
       ) {
         throw new BadRequestException(
           `Contract wallet address mismatch: expected ${trxData.expectedWalletAddress}, got ${transaction.walletAddress}`,
@@ -490,7 +494,8 @@ export class BlockchainVerificationService {
         args: [refId],
       });
 
-      if (contractTx.walletAddress.toLowerCase() !== expectedWalletAddress.toLowerCase()) {
+      // EVM-only: viem contract read returns 0x hex addresses.
+      if (!addressesEqual(contractTx.walletAddress, expectedWalletAddress)) {
         throw new BadRequestException(
           `Point deposit wallet mismatch: expected ${expectedWalletAddress}, got ${contractTx.walletAddress}`,
         );

@@ -25,6 +25,7 @@ import {
 import { ApiOperation, ApiResponse } from "@nestjs/swagger";
 import { BookingRateLimitGuard } from "./guards/booking-rate-limit.guard";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { addressesEqual } from "../auth/address-compare";
 
 @Controller("bookings")
 @ApiTags("bookings")
@@ -46,7 +47,13 @@ export class BookingController {
     @Query() query: BookingQueryDto,
     @Request() req,
   ) {
-    if (req.user.walletAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+    if (
+      !addressesEqual(
+        req.user.walletAddress,
+        walletAddress,
+        req.user.addressNamespace,
+      )
+    ) {
       throw new ForbiddenException("You can only access your own wallet data");
     }
     return this.bookingService.getBookings(walletAddress, query);
@@ -59,7 +66,13 @@ export class BookingController {
     @Param("walletAddress") walletAddress: string,
     @Request() req,
   ) {
-    if (req.user.walletAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+    if (
+      !addressesEqual(
+        req.user.walletAddress,
+        walletAddress,
+        req.user.addressNamespace,
+      )
+    ) {
       throw new ForbiddenException("You can only access your own wallet data");
     }
     return this.bookingService.getLatestBooking(walletAddress);
@@ -72,7 +85,13 @@ export class BookingController {
     @Param("walletAddress") walletAddress: string,
     @Request() req,
   ) {
-    if (req.user.walletAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+    if (
+      !addressesEqual(
+        req.user.walletAddress,
+        walletAddress,
+        req.user.addressNamespace,
+      )
+    ) {
       throw new ForbiddenException("You can only access your own wallet data");
     }
     return this.bookingService.getBookingStats(walletAddress);
@@ -86,7 +105,13 @@ export class BookingController {
     @Param("walletAddress") walletAddress: string,
     @Request() req,
   ) {
-    if (req.user.walletAddress?.toLowerCase() !== walletAddress.toLowerCase()) {
+    if (
+      !addressesEqual(
+        req.user.walletAddress,
+        walletAddress,
+        req.user.addressNamespace,
+      )
+    ) {
       throw new ForbiddenException("You can only access your own wallet data");
     }
     return this.bookingService.getAbandonedBookings(walletAddress);

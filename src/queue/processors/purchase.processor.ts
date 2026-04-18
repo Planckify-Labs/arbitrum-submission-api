@@ -8,6 +8,7 @@ import { ReferenceIdService } from "../../reference-id/reference-id.service";
 import { BlockchainCacheService } from "../../valkey/services/blockchain-cache.service";
 import { SmartContractCacheService } from "../../valkey/services/smart-contract-cache.service";
 import { TokenCacheService } from "../../valkey/services/token-cache.service";
+import { addressesEqual } from "../../auth/address-compare";
 import {
   TPurchaseJobData,
   TPurchaseStatusUpdate,
@@ -245,7 +246,7 @@ export class PurchaseProcessor extends WorkerHost {
       throw new Error(`Booking with ID ${bookingId} not found`);
     }
 
-    if (booking.walletAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+    if (!addressesEqual(booking.walletAddress, walletAddress)) {
       throw new Error(
         `Wallet address mismatch: booking belongs to ${booking.walletAddress}`,
       );
@@ -302,16 +303,20 @@ export class PurchaseProcessor extends WorkerHost {
   }
 
   private async createOrGetUser(walletAddress: string) {
+    // Purchase flow is EVM-only (smart-contract transactions via viem).
+    // If we ever support Solana purchases, this must switch to
+    // walletAddressLower with namespace-aware normalization.
     const normalizedWalletAddress = walletAddress.toLowerCase();
 
     let user = await this.prisma.user.findUnique({
-      where: { walletAddress: normalizedWalletAddress },
+      where: { walletAddressLower: normalizedWalletAddress },
     });
 
     if (!user) {
       user = await this.prisma.user.create({
         data: {
           walletAddress: normalizedWalletAddress,
+          walletAddressLower: normalizedWalletAddress,
           authProvider: "WALLET",
         },
       });

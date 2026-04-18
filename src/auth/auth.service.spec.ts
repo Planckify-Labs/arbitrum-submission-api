@@ -1,0 +1,75 @@
+import { ConfigService } from "@nestjs/config";
+import { JwtService } from "@nestjs/jwt";
+import { AuthService } from "./auth.service";
+import { NonceCacheService } from "../valkey/services/nonce-cache.service";
+import { SiwsService } from "./siws/siws.service";
+import { PrismaService } from "../prisma/prisma.service";
+
+describe("AuthService.verifySignature dispatcher", () => {
+  const nonceCache = {
+    getNonce: jest.fn(),
+    deleteNonce: jest.fn(),
+  } as unknown as NonceCacheService;
+
+  const prisma = {} as PrismaService;
+  const jwt = {} as JwtService;
+  const config = {
+    get: (key: string) =>
+      key === "SIWE_DOMAIN" ? "com.cstralpt.takumipay" : undefined,
+  } as ConfigService;
+
+  const siws = {
+    verify: jest.fn(),
+    buildMessage: jest.fn(),
+  } as unknown as SiwsService;
+
+  let service: AuthService;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new AuthService(prisma, jwt, config, nonceCache, siws);
+  });
+
+  it("routes SIWS messages to SiwsService.verify", async () => {
+    (siws.verify as jest.Mock).mockResolvedValue({
+      success: true,
+      address: "ABCsolana",
+      domain: "com.cstralpt.takumipay",
+      nonce: "n",
+      chainId: "devnet",
+    });
+
+    const message =
+      "com.cstralpt.takumipay wants you to sign in with your Solana account:\nABCsolana";
+    const res = await service.verifySignature(message, "some-sig");
+
+    expect(siws.verify).toHaveBeenCalledWith(message, "some-sig");
+    expect(res).toEqual({
+      success: true,
+      address: "ABCsolana",
+      namespace: "solana",
+    });
+  });
+
+  it("returns failure for garbage messages without invoking either verifier", async () => {
+    const res = await service.verifySignature("not a real siwe/siws", "sig");
+    expect(siws.verify).not.toHaveBeenCalled();
+    expect(res.success).toBe(false);
+  });
+
+  it("returns failure when SiwsService returns failure", async () => {
+    (siws.verify as jest.Mock).mockResolvedValue({
+      success: false,
+      address: "",
+      domain: "",
+      nonce: "",
+      chainId: "",
+    });
+
+    const message =
+      "com.cstralpt.takumipay wants you to sign in with your Solana account:\nABCsolana";
+    const res = await service.verifySignature(message, "bad-sig");
+    expect(res.success).toBe(false);
+    expect(res.namespace).toBe("eip155");
+  });
+});

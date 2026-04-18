@@ -99,6 +99,7 @@ model Vendor {
 model User {
   id                String               @id @default(ulid())
   walletAddress     String?              @unique
+  walletAddressLower String?             @unique
   email             String?              @unique
   username          String?              @unique
   password          String?

@@ -96,6 +96,8 @@ export class NftService {
     }
 
     const client = this.blockchainVerification.getPublicClient(blockchain.chainId);
+    // EVM-only module: NFT flows use viem's 0x hex types. The `as` cast asserts
+    // the input was produced by an EVM path (ERC-721/1155 contracts).
     const contractAddress = dto.contractAddress.toLowerCase() as `0x${string}`;
     const walletAddr = walletAddress.toLowerCase() as `0x${string}`;
     const tokenId = BigInt(dto.tokenId);

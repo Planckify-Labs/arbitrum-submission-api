@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { BlockchainVerificationService } from '../../blockchain-verification/blockchain-verification.service';
 import { NftTokenType } from '@generated/prisma';
 import { readContract } from 'viem/actions';
+import { addressesEqual } from '../../auth/address-compare';
 
 interface NftVerificationJobData {
   userId: string;
@@ -79,7 +80,8 @@ export class NftVerificationProcessor extends WorkerHost {
             functionName: 'ownerOf',
             args: [tokenId],
           });
-          isOwned = owner.toLowerCase() === asset.walletAddress.toLowerCase();
+          // EVM-only: viem ownerOf() returns 0x hex. NFT assets are ERC-721/1155.
+          isOwned = addressesEqual(owner, asset.walletAddress);
         } else {
           const balance = await readContract(client, {
             address: contractAddress,

@@ -10,6 +10,11 @@ import { CacheManagerService } from './cache-manager.service';
  * - booking:ref:{refId} - Booking by reference ID
  * - user:{walletAddress}:bookings:latest - Latest booking for user
  * - user:{walletAddress}:bookings:pending - Pending bookings for user
+ *
+ * Namespace note: bookings are EVM-only today. Address parts in cache keys
+ * are lowercased — safe for EVM (case-insensitive on-chain). If Solana
+ * bookings ship, these key builders must become namespace-aware (see
+ * NonceCacheService.buildKey for the pattern).
  */
 @Injectable()
 export class BookingCacheService {

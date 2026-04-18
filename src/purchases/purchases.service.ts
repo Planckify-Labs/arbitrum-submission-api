@@ -8,6 +8,7 @@ import { mapVendorErrorToException } from "./exceptions/vendor-api.exceptions";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreatePurchaseDto, UpdatePurchaseDto } from "./dto/purchase.dto";
 import { SearchPurchaseDto } from "./dto/search-purchase.dto";
+import { addressesEqual } from "../auth/address-compare";
 import { Prisma, PurchaseStatus, ReferenceIdStatus } from "@generated/prisma";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import { ReferenceIdService } from "../reference-id/reference-id.service";
@@ -115,8 +116,7 @@ export class PurchasesService {
     }
 
     if (
-      bookingForMetadata.walletAddress.toLowerCase() !==
-      walletAddress.toLowerCase()
+      !addressesEqual(bookingForMetadata.walletAddress, walletAddress)
     ) {
       throw new BadRequestException(
         `Wallet address mismatch: booking belongs to ${bookingForMetadata.walletAddress}`,
@@ -178,16 +178,19 @@ export class PurchasesService {
       );
     }
 
+    // Purchase flow is EVM-only (smart-contract transactions via viem).
+    // Solana purchases would require namespace-aware User upsert.
     const normalizedWalletAddress = walletAddress.toLowerCase();
 
     let user = await this.prisma.user.findUnique({
-      where: { walletAddress: normalizedWalletAddress },
+      where: { walletAddressLower: normalizedWalletAddress },
     });
 
     if (!user) {
       user = await this.prisma.user.create({
         data: {
           walletAddress: normalizedWalletAddress,
+          walletAddressLower: normalizedWalletAddress,
           authProvider: "WALLET",
         },
       });

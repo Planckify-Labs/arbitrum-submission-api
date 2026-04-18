@@ -9,6 +9,7 @@ import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 import { PrismaService } from "../prisma/prisma.service";
 import { ExchangeRateService } from "../exchange-rate/exchange-rate.service";
+import { addressesEqual } from "../auth/address-compare";
 import { PointsCacheService } from "../valkey/services/points-cache.service";
 import { ReferenceIdService } from "../reference-id/reference-id.service";
 import { Prisma, PointTransactionStatus, PointTransactionType, ReferenceIdStatus } from "@generated/prisma";
@@ -128,7 +129,7 @@ export class PointsService {
 
     if (
       !user.walletAddress ||
-      user.walletAddress.toLowerCase() !== dto.walletAddress.toLowerCase()
+      !addressesEqual(user.walletAddress, dto.walletAddress)
     ) {
       throw new BadRequestException(
         "Wallet address does not belong to the authenticated user",

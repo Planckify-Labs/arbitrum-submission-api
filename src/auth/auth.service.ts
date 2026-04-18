@@ -14,11 +14,22 @@ import { SiweMessage } from "siwe";
 import { PrismaService } from "../prisma/prisma.service";
 import { NonceCacheService } from "../valkey/services/nonce-cache.service";
 import { AuthResponseDto } from "./dto/auth-response.dto";
+import { SiwsService } from "./siws/siws.service";
+import { chainSlugToCluster, SiwsCluster } from "./siws/siws-message";
+
+export type AddressNamespace = "eip155" | "solana";
+
+export interface VerifyDispatchResult {
+  success: boolean;
+  address: string;
+  namespace: AddressNamespace;
+}
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private readonly defaultChainId: number;
+  private readonly nonceExpireMinutes: number;
   private readonly googleClient: OAuth2Client;
   private readonly googleClientIds: string[];
 
@@ -27,10 +38,14 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly nonceCacheService: NonceCacheService,
+    private readonly siwsService: SiwsService,
   ) {
     this.defaultChainId = this.configService.get<number>("CHAIN_ID", 1);
+    this.nonceExpireMinutes = parseInt(
+      this.configService.get<string>("NONCE_EXPIRE_TIME_MINUTES", "5"),
+      10,
+    );
 
-    // Initialize Google OAuth client
     this.googleClientIds = [
       this.configService.get<string>("GOOGLE_CLIENT_ID_IOS"),
       this.configService.get<string>("GOOGLE_CLIENT_ID_ANDROID"),
@@ -40,9 +55,12 @@ export class AuthService {
     this.googleClient = new OAuth2Client();
   }
 
-  async generateNonce(walletAddress: string): Promise<string> {
+  async generateNonce(
+    walletAddress: string,
+    namespace: AddressNamespace = "eip155",
+  ): Promise<string> {
     const nonce = randomBytes(32).toString("hex");
-    await this.nonceCacheService.setNonce(walletAddress, nonce);
+    await this.nonceCacheService.setNonce(namespace, walletAddress, nonce);
     return nonce;
   }
 
@@ -81,44 +99,115 @@ export class AuthService {
     }
   }
 
-  async verifySignature(message: string, signature: string): Promise<boolean> {
+  createSiwsMessage(
+    walletAddress: string,
+    nonce: string,
+    chainSlug: string,
+  ): string {
+    const cluster: SiwsCluster = chainSlugToCluster(chainSlug);
+    const domain = this.configService.get<string>("SIWE_DOMAIN");
+    const uri = this.configService.get<string>("SIWE_URI");
+    const statement = this.configService.get<string>("SIWE_STATEMENT");
+    const issuedAt = new Date();
+    const expiration = new Date(
+      issuedAt.getTime() + this.nonceExpireMinutes * 60 * 1000,
+    );
+
+    if (!domain || !uri) {
+      throw new BadRequestException(
+        "SIWS environment (SIWE_DOMAIN/SIWE_URI) is not configured",
+      );
+    }
+
+    return this.siwsService.buildMessage({
+      domain,
+      address: walletAddress,
+      statement,
+      uri,
+      version: "1",
+      chainId: cluster,
+      nonce,
+      issuedAt: issuedAt.toISOString(),
+      expirationTime: expiration.toISOString(),
+    });
+  }
+
+  async verifySignature(
+    message: string,
+    signature: string,
+  ): Promise<VerifyDispatchResult> {
+    const empty: VerifyDispatchResult = {
+      success: false,
+      address: "",
+      namespace: "eip155",
+    };
+
     try {
-      const siweMessage = new SiweMessage(message);
-      const { success, data: fields } = await siweMessage.verify({ signature });
-
-      if (!success) {
-        return false;
+      if (message.includes("wants you to sign in with your Solana account:")) {
+        const result = await this.siwsService.verify(message, signature);
+        if (!result.success) return empty;
+        return {
+          success: true,
+          address: result.address,
+          namespace: "solana",
+        };
       }
 
-      if (fields.domain !== this.configService.get<string>("SIWE_DOMAIN")) {
-        this.logger.error(`Domain mismatch: ${fields.domain}`);
-        return false;
+      if (
+        message.includes("wants you to sign in with your Ethereum account:")
+      ) {
+        const siweMessage = new SiweMessage(message);
+        const { success, data: fields } = await siweMessage.verify({
+          signature,
+        });
+
+        if (!success) return empty;
+
+        if (
+          fields.domain !== this.configService.get<string>("SIWE_DOMAIN")
+        ) {
+          this.logger.error(`Domain mismatch: ${fields.domain}`);
+          return empty;
+        }
+
+        const address = fields.address;
+        const cachedData = await this.nonceCacheService.getNonce(
+          "eip155",
+          address,
+        );
+        if (!cachedData || cachedData.nonce !== fields.nonce) return empty;
+
+        await this.nonceCacheService.deleteNonce("eip155", address);
+        return {
+          success: true,
+          address,
+          namespace: "eip155",
+        };
       }
 
-      const walletAddress = fields.address.toLowerCase();
-      const cachedData = await this.nonceCacheService.getNonce(walletAddress);
-
-      if (!cachedData || cachedData.nonce !== fields.nonce) {
-        return false;
-      }
-
-      await this.nonceCacheService.deleteNonce(walletAddress);
-      return true;
+      return empty;
     } catch (error) {
       this.logger.error(`Signature verification failed: ${error.message}`);
-      return false;
+      return empty;
     }
   }
 
-  async login(walletAddress: string): Promise<AuthResponseDto> {
+  async login(
+    address: string,
+    namespace: AddressNamespace,
+  ): Promise<AuthResponseDto> {
+    const inputLower =
+      namespace === "eip155" ? address.toLowerCase() : address;
+
     let user = await this.prisma.user.findUnique({
-      where: { walletAddress: walletAddress.toLowerCase() },
+      where: { walletAddressLower: inputLower },
     });
 
     if (!user) {
       user = await this.prisma.user.create({
         data: {
-          walletAddress: walletAddress.toLowerCase(),
+          walletAddress: address,
+          walletAddressLower: inputLower,
           authProvider: AuthProvider.WALLET,
         },
       });
@@ -130,7 +219,8 @@ export class AuthService {
 
     const payload = {
       sub: user.id,
-      walletAddress: walletAddress.toLowerCase(),
+      walletAddress: user.walletAddress ?? address,
+      addressNamespace: namespace,
       role: user.role,
     };
 
@@ -472,6 +562,7 @@ export class AuthService {
       select: {
         id: true,
         walletAddress: true,
+        walletAddressLower: true,
         username: true,
         email: true,
         role: true,
@@ -495,6 +586,12 @@ export class AuthService {
 
     if (user.walletAddress) {
       tokenPayload.walletAddress = user.walletAddress;
+      // Infer namespace: EVM is 0x-prefixed hex; anything else is Solana base58.
+      tokenPayload.addressNamespace = /^0x[a-fA-F0-9]{40}$/.test(
+        user.walletAddress,
+      )
+        ? "eip155"
+        : "solana";
     } else if (user.email) {
       tokenPayload.email = user.email;
     } else if (user.username) {

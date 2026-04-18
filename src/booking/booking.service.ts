@@ -22,6 +22,7 @@ import {
   ProductInputValidatorService,
 } from "../products/services/product-input-validator.service";
 import { BookingCacheService } from "../valkey/services/booking-cache.service";
+import { addressesEqual } from "../auth/address-compare";
 
 @Injectable()
 export class BookingService {
@@ -269,7 +270,7 @@ export class BookingService {
 
     if (
       user.walletAddress &&
-      booking.walletAddress.toLowerCase() !== user.walletAddress.toLowerCase()
+      !addressesEqual(booking.walletAddress, user.walletAddress)
     ) {
       if (user.role !== "ADMIN" && user.role !== "SUPER_ADMIN") {
         throw new ForbiddenException("You can only execute your own bookings");
@@ -313,7 +314,7 @@ export class BookingService {
 
     if (
       user.walletAddress &&
-      booking.walletAddress.toLowerCase() !== user.walletAddress.toLowerCase()
+      !addressesEqual(booking.walletAddress, user.walletAddress)
     ) {
       if (user.role !== "ADMIN" && user.role !== "SUPER_ADMIN") {
         throw new ForbiddenException("You can only cancel your own bookings");
