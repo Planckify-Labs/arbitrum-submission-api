@@ -881,7 +881,7 @@ async function main() {
   ]);
 
   // Native currency tokens
-  const nativeTokens = await Promise.all([
+  await Promise.all([
     // ETH on Ethereum
     prisma.token.upsert({
       where: {
@@ -1061,108 +1061,6 @@ async function main() {
     }),
   ]);
 
-  await Promise.all([
-    prisma.regionAvailableToken.upsert({
-      where: {
-        regionId_tokenId: {
-          regionId: regions[0].id,
-          tokenId: tokens[0].id,
-        },
-      },
-      update: {},
-      create: {
-        regionId: regions[0].id,
-        tokenId: tokens[0].id,
-        isActive: true,
-        minAmount: 10,
-        maxAmount: 1000,
-        processingFee: 1.5,
-        networkFeeEstimate: 5,
-        isDefault: true,
-      },
-    }),
-    prisma.regionAvailableToken.upsert({
-      where: {
-        regionId_tokenId: {
-          regionId: regions[1].id,
-          tokenId: tokens[1].id,
-        },
-      },
-      update: {},
-      create: {
-        regionId: regions[1].id,
-        tokenId: tokens[1].id,
-        isActive: true,
-        minAmount: 10,
-        maxAmount: 2000,
-        processingFee: 1,
-        networkFeeEstimate: 5,
-        isDefault: true,
-      },
-    }),
-  ]);
-
-  await Promise.all([
-    prisma.regionAvailableToken.upsert({
-      where: {
-        regionId_tokenId: {
-          regionId: regions[0].id,
-          tokenId: nativeTokens[0].id,
-        },
-      },
-      update: {},
-      create: {
-        regionId: regions[0].id,
-        tokenId: nativeTokens[0].id,
-        isActive: true,
-        minAmount: 0.01,
-        maxAmount: 10,
-        processingFee: 0.001,
-        networkFeeEstimate: 0.002,
-        isDefault: false,
-      },
-    }),
-    prisma.regionAvailableToken.upsert({
-      where: {
-        regionId_tokenId: {
-          regionId: regions[0].id,
-          tokenId: nativeTokens[1].id,
-        },
-      },
-      update: {},
-      create: {
-        regionId: regions[0].id,
-        tokenId: nativeTokens[1].id,
-        isActive: true,
-        minAmount: 10,
-        maxAmount: 10000,
-        processingFee: 0.5,
-        networkFeeEstimate: 0.1,
-        isDefault: false,
-      },
-    }),
-    // SOL on Solana mainnet — Indonesia region
-    prisma.regionAvailableToken.upsert({
-      where: {
-        regionId_tokenId: {
-          regionId: regions[0].id,
-          tokenId: nativeTokens[6].id,
-        },
-      },
-      update: {},
-      create: {
-        regionId: regions[0].id,
-        tokenId: nativeTokens[6].id,
-        isActive: true,
-        minAmount: 0.05,
-        maxAmount: 100,
-        processingFee: 0.005,
-        networkFeeEstimate: 0.000005,
-        isDefault: false,
-      },
-    }),
-  ]);
-
   const exchangeSource = await prisma.exchangeSource.upsert({
     where: { name: "CoinGecko" },
     update: {},
@@ -1177,41 +1075,43 @@ async function main() {
     },
   });
 
-  await Promise.all([
-    prisma.exchangeRate.create({
-      data: {
-        fromCurrency: "USDT",
-        toCurrency: "IDR",
-        rate: 15700,
-        sourceProviderId: exchangeSource.id,
-        region: "ID",
-        markup: 1.5,
-        isActive: true,
-      },
+  const seedExchangeRates: Array<{
+    fromCurrency: string;
+    toCurrency: string;
+    rate: number;
+    region: string;
+    markup: number;
+  }> = [
+    { fromCurrency: "USDT", toCurrency: "IDR", rate: 15700, region: "ID", markup: 1.5 },
+    { fromCurrency: "USDC", toCurrency: "SGD", rate: 1.35, region: "SG", markup: 1 },
+    { fromCurrency: "IDRX", toCurrency: "IDR", rate: 1, region: "ID", markup: 0 },
+  ];
+
+  await Promise.all(
+    seedExchangeRates.map(async (r) => {
+      const existing = await prisma.exchangeRate.findFirst({
+        where: {
+          fromCurrency: r.fromCurrency,
+          toCurrency: r.toCurrency,
+          region: r.region,
+          sourceProviderId: exchangeSource.id,
+          isActive: true,
+        },
+      });
+      if (existing) return;
+      await prisma.exchangeRate.create({
+        data: {
+          fromCurrency: r.fromCurrency,
+          toCurrency: r.toCurrency,
+          rate: r.rate,
+          sourceProviderId: exchangeSource.id,
+          region: r.region,
+          markup: r.markup,
+          isActive: true,
+        },
+      });
     }),
-    prisma.exchangeRate.create({
-      data: {
-        fromCurrency: "USDC",
-        toCurrency: "SGD",
-        rate: 1.35,
-        sourceProviderId: exchangeSource.id,
-        region: "SG",
-        markup: 1,
-        isActive: true,
-      },
-    }),
-    prisma.exchangeRate.create({
-      data: {
-        fromCurrency: "IDRX",
-        toCurrency: "IDR",
-        rate: 1,
-        sourceProviderId: exchangeSource.id,
-        region: "ID",
-        markup: 0,
-        isActive: true,
-      },
-    }),
-  ]);
+  );
 
   const users = await Promise.all([
     prisma.user.upsert({
@@ -1654,69 +1554,76 @@ async function main() {
     }),
   ]);
 
-  const transaction = await prisma.transactionHistory.create({
-    data: {
-      userId: users[0].id,
-      tokenId: tokens[0].id,
-      type: "PAYMENT",
-      status: "COMPLETED",
-      amount: 10,
-      amountInFiat: 157000,
-      fiatCurrency: "IDR",
-      txHash:
-        "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-      senderAddress: users[0].walletAddress,
-      recipientAddress: "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199",
-    },
+  const seedTxHash =
+    "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+  const existingSeedTransaction = await prisma.transactionHistory.findFirst({
+    where: { txHash: seedTxHash },
   });
 
-  const productPrice = await prisma.productPrice.findFirst({
-    where: { productVariantId: productVariants[0].id },
-  });
-
-  if (!productPrice) {
-    throw new Error(
-      "Product price not found for variant: " + productVariants[0].id,
-    );
-  }
-
-  const bookingOrder = await prisma.bookingOrder.create({
-    data: {
-      walletAddress: users[0].walletAddress!,
-      productVariantId: productVariants[0].id,
-      productPriceId: productPrice.id,
-      customerInfo: {
-        userId: "12345",
-        server: "Asia",
-      },
-      payment: {
+  if (!existingSeedTransaction) {
+    const transaction = await prisma.transactionHistory.create({
+      data: {
+        userId: users[0].id,
+        tokenId: tokens[0].id,
+        type: "PAYMENT",
+        status: "COMPLETED",
         amount: 10,
-        tokenAddress: tokens[0].contractAddress,
-        chainId: 1,
+        amountInFiat: 157000,
+        fiatCurrency: "IDR",
+        txHash: seedTxHash,
+        senderAddress: users[0].walletAddress,
+        recipientAddress: "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199",
       },
-      exchangeRate: {
-        rate: 15700,
-        fromCurrency: "ETH",
-        toCurrency: "IDR",
-      },
-      status: "EXECUTED",
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-    },
-  });
+    });
 
-  await prisma.purchase.create({
-    data: {
-      transactionId: transaction.id,
-      transactionCreatedAt: transaction.createdAt,
-      productVariantId: productVariants[0].id,
-      bookingOrderId: bookingOrder.id,
-      status: "COMPLETED",
-      vendorResponse: JSON.parse(
-        '{"success": true, "message": "Top up successful", "transactionId": "VC123456789"}',
-      ),
-      vendorRefId: "VC123456789",
-    },
-  });
+    const productPrice = await prisma.productPrice.findFirst({
+      where: { productVariantId: productVariants[0].id },
+    });
+
+    if (!productPrice) {
+      throw new Error(
+        "Product price not found for variant: " + productVariants[0].id,
+      );
+    }
+
+    const bookingOrder = await prisma.bookingOrder.create({
+      data: {
+        walletAddress: users[0].walletAddress!,
+        productVariantId: productVariants[0].id,
+        productPriceId: productPrice.id,
+        customerInfo: {
+          userId: "12345",
+          server: "Asia",
+        },
+        payment: {
+          amount: 10,
+          tokenAddress: tokens[0].contractAddress,
+          chainId: 1,
+        },
+        exchangeRate: {
+          rate: 15700,
+          fromCurrency: "ETH",
+          toCurrency: "IDR",
+        },
+        status: "EXECUTED",
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      },
+    });
+
+    await prisma.purchase.create({
+      data: {
+        transactionId: transaction.id,
+        transactionCreatedAt: transaction.createdAt,
+        productVariantId: productVariants[0].id,
+        bookingOrderId: bookingOrder.id,
+        status: "COMPLETED",
+        vendorResponse: JSON.parse(
+          '{"success": true, "message": "Top up successful", "transactionId": "VC123456789"}',
+        ),
+        vendorRefId: "VC123456789",
+      },
+    });
+  }
 
   console.log("🌱 Seeding Dapp categories...");
   const dappCategories = await Promise.all([
