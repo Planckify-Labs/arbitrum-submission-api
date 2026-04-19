@@ -44,7 +44,7 @@ export class TokensService {
 
     const { contractAddress, ...rest } = createTokenDto;
 
-    return this.prisma.token.create({
+    const result = await this.prisma.token.create({
       data: {
         ...rest,
         ...(typeof contractAddress !== "undefined"
@@ -56,6 +56,8 @@ export class TokensService {
         regionAvailability: true,
       },
     });
+    await this.tokenCache.invalidateToken();
+    return result;
   }
 
   async findAll(paginationDto: CursorPaginationDto) {
