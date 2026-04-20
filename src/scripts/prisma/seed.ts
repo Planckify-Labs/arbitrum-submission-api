@@ -646,6 +646,30 @@ async function main() {
         isTestnet: true,
       },
     }),
+    // Arc Testnet — UMKM USDC payout settlement chain (spec §7 / task 26).
+    // Appended at the end of the array so existing `blockchains[N]`
+    // references don't shift. `isTestnet` stays true for the life of
+    // this row; when Arc mainnet launches (§12 Q1), add a SEPARATE
+    // seed entry with the mainnet chainId / rpcUrl / blockExplorer
+    // and `isTestnet: false`, plus a paired Token entry at the mainnet
+    // USDC contract. To retire this testnet row from user-facing
+    // lists, flip `isActive = false` (never `isTestnet`). No schema
+    // changes required for the mainnet cut-over.
+    prisma.blockchain.upsert({
+      where: { chainId: 5042002 },
+      update: {
+        rpcUrl: "https://rpc.testnet.arc.network",
+      },
+      create: {
+        name: "Arc Testnet",
+        chainId: 5042002,
+        rpcUrl: "https://rpc.testnet.arc.network",
+        blockExplorer: "https://testnet.arcscan.app",
+        isEVM: true,
+        isActive: true,
+        isTestnet: true,
+      },
+    }),
   ]);
 
   const contractABIs = await Promise.all([
@@ -1057,6 +1081,36 @@ async function main() {
         isStablecoin: false,
         isNativeCurrency: true,
         isActive: true,
+      },
+    }),
+    // USDC on Arc Testnet — spec §7, task 26.
+    // decimals = 6 is the ERC-20 interface view. Every read path
+    // (balanceOf, transfer, transferWithAuthorization) and every
+    // mobile-side amount calc stays on 6 decimals. The 18-decimal
+    // "native gas view" only matters on estimateGas paths that
+    // Nanopayments avoids. Both isStablecoin AND isNativeCurrency
+    // are true — Arc is the first chain in this project where that
+    // combo applies.
+    prisma.token.upsert({
+      where: {
+        blockchainId_contractAddress: {
+          blockchainId: blockchains[8].id, // Arc Testnet
+          contractAddress: "0x3600000000000000000000000000000000000000",
+        },
+      },
+      update: {},
+      create: {
+        name: "USD Coin",
+        symbol: "USDC",
+        decimals: 6,
+        blockchainId: blockchains[8].id, // Arc Testnet
+        contractAddress: "0x3600000000000000000000000000000000000000",
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
+        isStablecoin: true,
+        isNativeCurrency: true,
+        isActive: true,
+        peggedCurrency: "USD",
       },
     }),
   ]);
