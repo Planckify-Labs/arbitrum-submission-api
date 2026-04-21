@@ -2159,12 +2159,6 @@ async function seedPointPriceConfigs() {
   ];
 
   for (const config of configs) {
-    // Deactivate any existing active config for currency
-    await prisma.pointPriceConfig.updateMany({
-      where: { currency: config.currency, isActive: true },
-      data: { isActive: false },
-    });
-
     await prisma.pointPriceConfig.upsert({
       where: {
         currency_isActive: { currency: config.currency, isActive: true },
