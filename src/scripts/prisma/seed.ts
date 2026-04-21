@@ -1206,6 +1206,14 @@ async function main() {
   // (not namespace-keyed) so future MY/TH/VN expansion is data-only.
   // xenditFeeIdr + xenditMin/MaxAmountIdr are ops-tunable placeholders;
   // TODO: reconcile against Xendit's published fee card per channel.
+  // `iconUrl` values below point at a takumipay-hosted CDN path per
+  // channel. The path convention is `assets.takumipay.com/channels/
+  // <lowercase-channel-code>.png` — ops uploads the actual PNGs to
+  // that bucket out-of-band; we control the URL shape here so the
+  // mobile picker can display icons as soon as the bucket is populated
+  // without a schema or seed change. Leave any row's `iconUrl` NULL to
+  // skip an icon for that channel (mobile renders the kind-based
+  // fallback Wallet/Building2 glyph in that case).
   const seedChannels: Array<{
     channelCode: string;
     country: string;
@@ -1213,18 +1221,19 @@ async function main() {
     kind: ChannelKind;
     accountFormat: string;
     priority: number;
+    iconUrl: string | null;
     xenditMinAmountIdr: number;
     xenditMaxAmountIdr: number;
     xenditFeeIdr: number;
   }> = [
-    { channelCode: "GOPAY",     country: "ID", label: "GoPay",     kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 10, xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 20_000_000, xenditFeeIdr: 2500 },
-    { channelCode: "OVO",       country: "ID", label: "OVO",       kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 11, xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 10_000_000, xenditFeeIdr: 2500 },
-    { channelCode: "DANA",      country: "ID", label: "DANA",      kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 12, xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 10_000_000, xenditFeeIdr: 2500 },
-    { channelCode: "SHOPEEPAY", country: "ID", label: "ShopeePay", kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 13, xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 10_000_000, xenditFeeIdr: 2500 },
-    { channelCode: "BCA",       country: "ID", label: "BCA",       kind: ChannelKind.bank,    accountFormat: "digits:10", priority: 20, xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 50_000_000, xenditFeeIdr: 5000 },
-    { channelCode: "MANDIRI",   country: "ID", label: "Mandiri",   kind: ChannelKind.bank,    accountFormat: "digits:13", priority: 21, xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 50_000_000, xenditFeeIdr: 5000 },
-    { channelCode: "BNI",       country: "ID", label: "BNI",       kind: ChannelKind.bank,    accountFormat: "digits:10", priority: 22, xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 50_000_000, xenditFeeIdr: 5000 },
-    { channelCode: "BRI",       country: "ID", label: "BRI",       kind: ChannelKind.bank,    accountFormat: "digits:15", priority: 23, xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 50_000_000, xenditFeeIdr: 5000 },
+    { channelCode: "GOPAY",     country: "ID", label: "GoPay",     kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 10, iconUrl: "https://assets.takumipay.com/channels/gopay.png",     xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 20_000_000, xenditFeeIdr: 2500 },
+    { channelCode: "OVO",       country: "ID", label: "OVO",       kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 11, iconUrl: "https://assets.takumipay.com/channels/ovo.png",       xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 10_000_000, xenditFeeIdr: 2500 },
+    { channelCode: "DANA",      country: "ID", label: "DANA",      kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 12, iconUrl: "https://assets.takumipay.com/channels/dana.png",      xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 10_000_000, xenditFeeIdr: 2500 },
+    { channelCode: "SHOPEEPAY", country: "ID", label: "ShopeePay", kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 13, iconUrl: "https://assets.takumipay.com/channels/shopeepay.png", xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 10_000_000, xenditFeeIdr: 2500 },
+    { channelCode: "BCA",       country: "ID", label: "BCA",       kind: ChannelKind.bank,    accountFormat: "digits:10", priority: 20, iconUrl: "https://assets.takumipay.com/channels/bca.png",       xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 50_000_000, xenditFeeIdr: 5000 },
+    { channelCode: "MANDIRI",   country: "ID", label: "Mandiri",   kind: ChannelKind.bank,    accountFormat: "digits:13", priority: 21, iconUrl: "https://assets.takumipay.com/channels/mandiri.png",   xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 50_000_000, xenditFeeIdr: 5000 },
+    { channelCode: "BNI",       country: "ID", label: "BNI",       kind: ChannelKind.bank,    accountFormat: "digits:10", priority: 22, iconUrl: "https://assets.takumipay.com/channels/bni.png",       xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 50_000_000, xenditFeeIdr: 5000 },
+    { channelCode: "BRI",       country: "ID", label: "BRI",       kind: ChannelKind.bank,    accountFormat: "digits:15", priority: 23, iconUrl: "https://assets.takumipay.com/channels/bri.png",       xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 50_000_000, xenditFeeIdr: 5000 },
     // … verify each against Xendit Test Mode by dry-running POST /v2/payouts;
     //   the API returns 400 on unknown channel_code, which is the right-sized
     //   integration test for this seed.
@@ -1240,6 +1249,7 @@ async function main() {
         kind: ch.kind,
         accountFormat: ch.accountFormat,
         priority: ch.priority,
+        iconUrl: ch.iconUrl,
         xenditMinAmountIdr: ch.xenditMinAmountIdr,
         xenditMaxAmountIdr: ch.xenditMaxAmountIdr,
         xenditFeeIdr: ch.xenditFeeIdr,
@@ -1252,6 +1262,7 @@ async function main() {
         kind: ch.kind,
         accountFormat: ch.accountFormat,
         priority: ch.priority,
+        iconUrl: ch.iconUrl,
         xenditMinAmountIdr: ch.xenditMinAmountIdr,
         xenditMaxAmountIdr: ch.xenditMaxAmountIdr,
         xenditFeeIdr: ch.xenditFeeIdr,

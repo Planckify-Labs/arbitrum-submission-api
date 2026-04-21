@@ -969,6 +969,7 @@ model Channel {
   accountFormat      String
   priority           Int
   isActive           Boolean     @default(true)
+  iconUrl            String?
   xenditMinAmountIdr Int?
   xenditMaxAmountIdr Int?
   xenditFeeIdr       Int

@@ -575,6 +575,10 @@ describe("MerchantsService", () => {
         minAmountIdr: 10_000,
         maxAmountIdr: 20_000_000,
         feeIdr: 2500,
+        // Mock fixtures don't set iconUrl, so the DTO surfaces it as
+        // null — the DB schema allows null and the service passes
+        // through with `?? null`. Real seeded rows have real URLs.
+        iconUrl: null,
       });
 
       // Cache MISS on first call → DB read → cache write with 1 h TTL.

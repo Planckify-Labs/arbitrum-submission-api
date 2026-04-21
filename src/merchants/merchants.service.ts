@@ -364,6 +364,7 @@ export class MerchantsService {
       minAmountIdr: row.xenditMinAmountIdr ?? null,
       maxAmountIdr: row.xenditMaxAmountIdr ?? null,
       feeIdr: row.xenditFeeIdr,
+      iconUrl: row.iconUrl ?? null,
     }));
 
     // Fire-and-forget cache write. Empty-array responses are still
