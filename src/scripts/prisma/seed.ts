@@ -4,6 +4,7 @@ import {
   ApiKeyStatus,
   UserRole,
   AuthProvider,
+  ChannelKind,
 } from "@generated/prisma";
 import { PrismaPg } from "@prisma/adapter-pg";
 import * as crypto from "crypto";
@@ -659,6 +660,22 @@ async function main() {
       where: { chainId: 5042002 },
       update: {
         rpcUrl: "https://rpc.testnet.arc.network",
+        blockExplorer: "https://testnet.arcscan.app",
+        // Keep Gateway / x402 coordinates in sync on re-seed so drift
+        // between envs always converges to the values below (§7.1).
+        gatewayWalletContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+        gatewayMinterContract: "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B",
+        paymasterAddress: null, // Arc: USDC=gas natively, no Paymaster.
+        x402DomainName: "GatewayWalletBatched",
+        x402DomainVersion: "1",
+        x402VerifyingContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+        x402FacilitatorUrl: null, // Filled in once Arc facilitator deploys (M5).
+        // Bundler URL is server-only; Arc doesn't need one (USDC=gas → no
+        // UserOps, no bundler). Explicit `null` converges drift on re-seed
+        // so an ops-set URL on Arc (which would be a mistake) gets cleared.
+        // Other chains intentionally don't appear in this seed's update
+        // branch so ops-set URLs SURVIVE a re-seed — task 37 pattern.
+        bundlerUrl: null,
       },
       create: {
         name: "Arc Testnet",
@@ -668,6 +685,16 @@ async function main() {
         isEVM: true,
         isActive: true,
         isTestnet: true,
+        // Circle Gateway + x402 coordinates (spec §7.1 Insert 1). Same wallet
+        // contract address is reused as the x402 verifying contract on Arc.
+        gatewayWalletContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+        gatewayMinterContract: "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B",
+        paymasterAddress: null, // Arc: USDC=gas natively, no Paymaster.
+        x402DomainName: "GatewayWalletBatched",
+        x402DomainVersion: "1",
+        x402VerifyingContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+        x402FacilitatorUrl: null, // Filled in once Arc facilitator deploys (M5).
+        bundlerUrl: null, // Arc has no bundler; see task 37 + §7.1.
       },
     }),
   ]);
@@ -1083,14 +1110,12 @@ async function main() {
         isActive: true,
       },
     }),
-    // USDC on Arc Testnet — spec §7, task 26.
-    // decimals = 6 is the ERC-20 interface view. Every read path
-    // (balanceOf, transfer, transferWithAuthorization) and every
-    // mobile-side amount calc stays on 6 decimals. The 18-decimal
-    // "native gas view" only matters on estimateGas paths that
-    // Nanopayments avoids. Both isStablecoin AND isNativeCurrency
-    // are true — Arc is the first chain in this project where that
-    // combo applies.
+    // USDC on Arc Testnet — spec §7, task 26. On Arc USDC is the
+    // native gas token; decimals=18 matches the native-gas view used
+    // by the existing EVM balance/transfer pipeline (no dual-view
+    // handling needed). Both isStablecoin AND isNativeCurrency are
+    // true — Arc is the first chain in this project where that combo
+    // applies.
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
@@ -1098,11 +1123,13 @@ async function main() {
           contractAddress: "0x3600000000000000000000000000000000000000",
         },
       },
-      update: {},
+      update: {
+        decimals: 18,
+      },
       create: {
         name: "USD Coin",
         symbol: "USDC",
-        decimals: 6,
+        decimals: 18,
         blockchainId: blockchains[8].id, // Arc Testnet
         contractAddress: "0x3600000000000000000000000000000000000000",
         logoUrl:
@@ -1139,6 +1166,12 @@ async function main() {
     { fromCurrency: "USDT", toCurrency: "IDR", rate: 15700, region: "ID", markup: 1.5 },
     { fromCurrency: "USDC", toCurrency: "SGD", rate: 1.35, region: "SG", markup: 1 },
     { fromCurrency: "IDRX", toCurrency: "IDR", rate: 1, region: "ID", markup: 0 },
+    // UMKM USDC → IDR payout (spec §6.6 FX prerequisites, task 26).
+    // Rate ≈ mid-market early-2026 (USDC ≈ USD, USD/IDR ~16,200-16,300).
+    // `markup: 1.5` absorbs drift per §12 Q10 — no live FX cron in v1,
+    // ops re-runs `pnpm prisma db seed` to tune. TODO: wire a scheduled
+    // refresh (Wise / OpenExchangeRates / Chainlink) post-v1.
+    { fromCurrency: "USDC", toCurrency: "IDR", rate: 16234.5, region: "ID", markup: 1.5 },
   ];
 
   await Promise.all(
@@ -1166,6 +1199,66 @@ async function main() {
       });
     }),
   );
+
+  // Xendit payout channels (spec §6.6 `channels`, task 26).
+  // Composite PK = (channelCode, country). Upsert → idempotent, ops
+  // re-runs `pnpm prisma db seed` to tune fees/limits. country-keyed
+  // (not namespace-keyed) so future MY/TH/VN expansion is data-only.
+  // xenditFeeIdr + xenditMin/MaxAmountIdr are ops-tunable placeholders;
+  // TODO: reconcile against Xendit's published fee card per channel.
+  const seedChannels: Array<{
+    channelCode: string;
+    country: string;
+    label: string;
+    kind: ChannelKind;
+    accountFormat: string;
+    priority: number;
+    xenditMinAmountIdr: number;
+    xenditMaxAmountIdr: number;
+    xenditFeeIdr: number;
+  }> = [
+    { channelCode: "GOPAY",     country: "ID", label: "GoPay",     kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 10, xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 20_000_000, xenditFeeIdr: 2500 },
+    { channelCode: "OVO",       country: "ID", label: "OVO",       kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 11, xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 10_000_000, xenditFeeIdr: 2500 },
+    { channelCode: "DANA",      country: "ID", label: "DANA",      kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 12, xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 10_000_000, xenditFeeIdr: 2500 },
+    { channelCode: "SHOPEEPAY", country: "ID", label: "ShopeePay", kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 13, xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 10_000_000, xenditFeeIdr: 2500 },
+    { channelCode: "BCA",       country: "ID", label: "BCA",       kind: ChannelKind.bank,    accountFormat: "digits:10", priority: 20, xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 50_000_000, xenditFeeIdr: 5000 },
+    { channelCode: "MANDIRI",   country: "ID", label: "Mandiri",   kind: ChannelKind.bank,    accountFormat: "digits:13", priority: 21, xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 50_000_000, xenditFeeIdr: 5000 },
+    { channelCode: "BNI",       country: "ID", label: "BNI",       kind: ChannelKind.bank,    accountFormat: "digits:10", priority: 22, xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 50_000_000, xenditFeeIdr: 5000 },
+    { channelCode: "BRI",       country: "ID", label: "BRI",       kind: ChannelKind.bank,    accountFormat: "digits:15", priority: 23, xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 50_000_000, xenditFeeIdr: 5000 },
+    // … verify each against Xendit Test Mode by dry-running POST /v2/payouts;
+    //   the API returns 400 on unknown channel_code, which is the right-sized
+    //   integration test for this seed.
+  ];
+
+  for (const ch of seedChannels) {
+    await prisma.channel.upsert({
+      where: {
+        channelCode_country: { channelCode: ch.channelCode, country: ch.country },
+      },
+      update: {
+        label: ch.label,
+        kind: ch.kind,
+        accountFormat: ch.accountFormat,
+        priority: ch.priority,
+        xenditMinAmountIdr: ch.xenditMinAmountIdr,
+        xenditMaxAmountIdr: ch.xenditMaxAmountIdr,
+        xenditFeeIdr: ch.xenditFeeIdr,
+        isActive: true,
+      },
+      create: {
+        channelCode: ch.channelCode,
+        country: ch.country,
+        label: ch.label,
+        kind: ch.kind,
+        accountFormat: ch.accountFormat,
+        priority: ch.priority,
+        xenditMinAmountIdr: ch.xenditMinAmountIdr,
+        xenditMaxAmountIdr: ch.xenditMaxAmountIdr,
+        xenditFeeIdr: ch.xenditFeeIdr,
+        isActive: true,
+      },
+    });
+  }
 
   const users = await Promise.all([
     prisma.user.upsert({

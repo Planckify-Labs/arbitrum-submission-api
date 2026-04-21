@@ -78,6 +78,31 @@ export class BlockchainCacheService {
   }
 
   /**
+   * Cache-aside for the enriched `/blockchains` config payload (§6.7, task 21).
+   * Keyed on country segment so `country=ID` and "all" don't collide. 5-minute
+   * TTL — the response is read-hot but chain-config drifts rarely; shorter TTLs
+   * would burn Valkey writes with no upside.
+   *
+   * Invalidation piggybacks on {@link invalidateBlockchain}'s existing
+   * `blockchains:*` pattern sweep — any admin update to a chain row clears this
+   * key along with the paginated list caches.
+   */
+  async getEnrichedConfig<T>(
+    countrySegment: string,
+    fallback: () => Promise<T>,
+  ): Promise<T> {
+    const key = this.cacheManager.buildKey(
+      'blockchains',
+      'config',
+      'enriched',
+      countrySegment,
+    );
+    return this.cacheManager.cacheAside(key, fallback, {
+      ttl: 5 * 60, // 5 minutes
+    });
+  }
+
+  /**
    * Set blockchain in cache (for write-through pattern)
    */
   async setBlockchain<T>(blockchainId: string, data: T): Promise<void> {

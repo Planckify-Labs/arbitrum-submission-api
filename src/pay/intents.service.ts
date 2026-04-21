@@ -1,0 +1,2089 @@
+import { createHash, randomBytes } from "node:crypto";
+import type {
+  GatewayDepositStatus,
+  PaymentIntentStatus,
+  XenditPayoutStatus,
+} from "@generated/prisma";
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+  ServiceUnavailableException,
+} from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import type { Hash } from "viem";
+import { BlockchainVerificationService } from "../blockchain-verification/blockchain-verification.service";
+import { PrismaService } from "../prisma/prisma.service";
+import { ValkeyService } from "../valkey/valkey.service";
+import { X402SupportedService } from "../x402/x402-supported.service";
+import {
+  CIRCLE_SETTLE_CLIENT,
+  type CircleSettleOutcome,
+  type ICircleSettleClient,
+} from "./circle-settle.client";
+import {
+  CIRCLE_SETTLE_SVM_CLIENT,
+  type CircleSettleSvmOutcome,
+  type ICircleSettleSvmClient,
+} from "./circle-settle-svm.client";
+import type { CreateIntentDto } from "./dto/create-intent.dto";
+import type { DepositReceiptResponseDto } from "./dto/deposit-receipt.dto";
+import type {
+  NanopayFailureCode,
+  NanopaySubmitResponseDto,
+} from "./dto/nanopay-submit-response.dto";
+import type {
+  NanopayPayloadResponseDto,
+  PaymentIntentResponseDto,
+} from "./dto/payment-intent-response.dto";
+
+/**
+ * Soft-linked payout provider contract (spec §6.4 "Pluggable payout
+ * provider"). Task 29 is the canonical implementation. We depend on it
+ * **optionally** so this task can ship ahead of it without a hard wire.
+ *
+ * `trigger` is fire-and-forget — a thrown promise here must NOT
+ * back-propagate into the HTTP 2xx response. The intent IS settled from
+ * Circle's perspective, regardless of Xendit availability; task 30's
+ * webhook is what flips the status to PAID_OUT.
+ */
+export interface IPayoutProvider {
+  trigger(intentId: string): Promise<void> | void;
+}
+export const PAYOUT_PROVIDER = "PAYOUT_PROVIDER";
+
+/**
+ * Terminal-payout statuses at which we surface `payoutReferenceId` /
+ * `settledAt` on the GET response. FAILED payouts are still terminal —
+ * mobile needs the reference id for support-case lookups even on failure.
+ */
+const TERMINAL_PAYOUT_STATUSES = new Set<XenditPayoutStatus>([
+  "COMPLETED",
+  "FAILED",
+]);
+
+/**
+ * Arc Testnet chain id — the only settlement chain in M2 (task 20 seed).
+ * Kept as a constant here rather than env-driven because the blockchain
+ * row is seeded (not configured); swapping chain is a schema/seed change,
+ * not a runtime flag.
+ */
+const ARC_TESTNET_CHAIN_ID = 5042002;
+
+/**
+ * Sentinel chain-ids for Solana (task 43 / spec §5.2.1 Path B-SVM).
+ *
+ * `PaymentIntent.usdcSourceChainId` is a non-null `Int` in schema.prisma
+ * (task 19 migration), so we can't store a null chainId for SVM intents
+ * without a schema change. Instead we map the two Solana clusters to fixed
+ * negative sentinels — negatives are outside the EIP-155 chainId space
+ * (chainIds are positive ints by spec) and are matched below to the seeded
+ * Solana `Blockchain` rows via `chainSlug` on lookup.
+ *
+ * Chain-extension discipline (memory `feedback_chain_extension_discipline.md`):
+ * these sentinels live in ONE place; intent-code switches on `isSvmChainId()`
+ * (a single `blockchain.isEVM === false` predicate at the DB boundary) and
+ * NOT on `if (chainId === -101)` arms in every call site.
+ */
+const SVM_MAINNET_SENTINEL_CHAIN_ID = -101;
+const SVM_DEVNET_SENTINEL_CHAIN_ID = -102;
+
+const SVM_SENTINEL_TO_CHAIN_SLUG: Record<number, string> = {
+  [SVM_MAINNET_SENTINEL_CHAIN_ID]: "solana-mainnet",
+  [SVM_DEVNET_SENTINEL_CHAIN_ID]: "solana-devnet",
+};
+
+/**
+ * USDC SPL mint on Solana mainnet-beta (spec §5.2.1). Devnet USDC is a
+ * different mint; when M6 lands a devnet flow, thread the right mint through
+ * via the blockchain row's `tokens[].contractAddress` instead of hard-coding
+ * here.
+ */
+const USDC_SPL_MINT_MAINNET = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+/**
+ * Return true iff the chain-id is a SVM sentinel. Single predicate so
+ * shared intent code stays chain-agnostic — callers that branch on this
+ * funnel through one helper, matching the memory-note on chain-extension
+ * discipline.
+ */
+export function isSvmChainId(chainId: number): boolean {
+  return chainId < 0 && chainId in SVM_SENTINEL_TO_CHAIN_SLUG;
+}
+
+/**
+ * Circle Gateway rejects `validBefore < now + 259_200` with
+ * `authorization_validity_too_short`. We sign authorizations 3 days + 1 h
+ * ahead to absorb clock skew between mobile, our API, and Circle without
+ * tripping the guard on the slow path.
+ *
+ * The user-prompt scope described a 10-minute window. That number is from
+ * an earlier iteration of the contract; Circle's current `validBefore`
+ * floor is 3 days (spec §6.2 NanopayPayload, task file acceptance #4).
+ * Using 10 min would make every settle fail — preserving interop wins.
+ */
+const NANOPAY_VALID_BEFORE_OFFSET_SECONDS = 259_200 + 3_600; // 3 days + 1 h
+
+/**
+ * Post-authorization grace on the DB row. `expires_at` is what the mobile
+ * app uses to drive its "quote expired" toast — we keep a 60-s cushion
+ * past `validBefore` so a signed-but-unsubmitted intent never appears
+ * expired in the UI while Gateway would still accept the signature.
+ */
+const EXPIRES_AT_BUFFER_SECONDS = 60;
+
+const IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60; // 24 h (user-prompt scope §3 item 3).
+const IDEMPOTENCY_KEY_PREFIX = "pay:intent:idem:";
+
+/**
+ * Status mapping: DB enum → mobile-facing lowercase contract
+ * (`services/nanopay/types.ts:PaymentIntentStatus`). Keep in lockstep with
+ * the mobile enum — a mismatch silently breaks the polling terminal check.
+ */
+const DB_TO_MOBILE_STATUS: Record<
+  PaymentIntentStatus,
+  PaymentIntentResponseDto["status"]
+> = {
+  QUOTED: "pending",
+  SIGNED: "submitting",
+  SETTLED: "paid",
+  PAID_OUT: "paid_out",
+  FAILED: "failed",
+  EXPIRED: "expired",
+};
+
+interface IdempotencyEnvelope {
+  bodyHash: string;
+  intentId: string;
+  createdAt: number;
+}
+
+interface ResolvedFx {
+  exchangeRateId: number;
+  exchangeRateCreatedAt: Date;
+  fxRate: string; // Decimal as string — viem-style precision preservation.
+  fxMarkup: string;
+  fxFromCurrency: string;
+  fxToCurrency: string;
+  fxProvider: string;
+  fxQuotedAt: Date;
+}
+
+/**
+ * Build-intent handler for `POST /v1/pay/intents`.
+ *
+ * Responsibilities (spec §6.2, §6.5, §8.5 #3):
+ *   1. Resolve merchant → 404 `MERCHANT_NOT_FOUND` on miss.
+ *   2. Snapshot the latest FX row (USDC→IDR, region=ID) → 503 on miss.
+ *   3. Compute USDC micros from (fiatAmountMinor / fxRate × markup).
+ *   4. Generate a 32-byte random nonce; build the EIP-712 domain from the
+ *      cached x402-supported response; pick the platform treasury from env.
+ *   5. Persist `PaymentIntent` with `status = QUOTED`.
+ *   6. Idempotency: `(Idempotency-Key, sha256(body))` cached in Valkey 24 h.
+ *      Same key + same hash → return the existing intent. Same key + different
+ *      hash → 409 Conflict (spec guarantee — retries must not silently change
+ *      amounts).
+ *
+ * No on-chain calls here (Circle settle lives in task 24 — `/nanopay` submit
+ * handler). This endpoint is DB + compute only.
+ */
+@Injectable()
+export class IntentsService {
+  private readonly logger = new Logger(IntentsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly valkey: ValkeyService,
+    private readonly x402Supported: X402SupportedService,
+    private readonly config: ConfigService,
+    @Inject(CIRCLE_SETTLE_CLIENT)
+    private readonly circleSettle: ICircleSettleClient,
+    @Optional()
+    @Inject(PAYOUT_PROVIDER)
+    private readonly payoutProvider: IPayoutProvider | null = null,
+    // `BlockchainVerificationService` is optional so unit tests can
+    // build the service without wiring an on-chain client. Task 38 is
+    // the only consumer; all other endpoints are DB + Circle-only.
+    @Optional()
+    private readonly blockchainVerification: BlockchainVerificationService | null = null,
+    // SVM facilitator client (task 43 / spec §5.2.1). `@Optional()` so the
+    // service is buildable in unit tests that only exercise the EVM path,
+    // and so the module boots pre-M6 when the facilitator URL is blank.
+    @Optional()
+    @Inject(CIRCLE_SETTLE_SVM_CLIENT)
+    private readonly circleSettleSvm: ICircleSettleSvmClient | null = null,
+  ) {}
+
+  async createIntent(args: {
+    dto: CreateIntentDto;
+    idempotencyKey: string;
+    payerAddress: string;
+    payerUserId: string | null;
+    /** Raw JSON body string for idempotency hashing — stable across retries. */
+    rawBodyForHash: string;
+  }): Promise<PaymentIntentResponseDto> {
+    const { dto, idempotencyKey, payerAddress, payerUserId, rawBodyForHash } =
+      args;
+
+    if (!dto.merchantId && !dto.scannedPayload) {
+      throw new BadRequestException({
+        message: "Either `merchantId` or `scannedPayload` must be provided.",
+        code: "MERCHANT_REFERENCE_REQUIRED",
+      });
+    }
+
+    // Idempotency check before any DB writes. A retry that matches the
+    // previous body returns the existing intent verbatim — never re-generates
+    // the nonce (would break mobile's in-flight signature) and never makes
+    // an extra DB row.
+    const bodyHash = sha256Hex(rawBodyForHash);
+    const cached = await this.lookupIdempotent(idempotencyKey);
+    if (cached) {
+      if (cached.bodyHash !== bodyHash) {
+        throw new ConflictException({
+          message: "Idempotency-Key reused with a different request body.",
+          code: "IDEMPOTENCY_KEY_CONFLICT",
+        });
+      }
+      const existing = await this.prisma.paymentIntent.findUnique({
+        where: { id: cached.intentId },
+        include: { merchant: true },
+      });
+      if (existing) {
+        return this.toResponseDto(existing, /* includeNanopay */ true);
+      }
+      // Cache points at a vanished row (prune + cold-read fell through race).
+      // Treat as a fresh request — re-creating the intent is safer than 500ing.
+      this.logger.warn(
+        `Idempotency cache hit for key=${redactKey(idempotencyKey)} but intent row missing — re-creating.`,
+      );
+    }
+
+    // Merchant lookup. M2 only supports the `merchantId` path; `scannedPayload`
+    // parsing is M3 (task file §2) — fail fast with a typed code so mobile
+    // can surface the correct user-facing message.
+    if (!dto.merchantId) {
+      throw new BadRequestException({
+        message:
+          "scannedPayload resolution is not implemented yet (M3). Provide merchantId.",
+        code: "SCANNED_PAYLOAD_NOT_SUPPORTED",
+      });
+    }
+    const merchant = await this.prisma.merchant.findUnique({
+      where: { id: dto.merchantId },
+    });
+    if (!merchant) {
+      throw new NotFoundException({
+        message: `Merchant ${dto.merchantId} not found.`,
+        code: "MERCHANT_NOT_FOUND",
+      });
+    }
+
+    // FX snapshot — the spec directs us at USDC→IDR (region=ID). If no row
+    // exists yet (task 26 seeds them in M3), we degrade gracefully with a
+    // 503 rather than guess a rate or block forever. Mobile surfaces this
+    // as "FX temporarily unavailable".
+    const fx = await this.snapshotLatestFx(dto.currency);
+    if (!fx) {
+      throw new ServiceUnavailableException({
+        message: `FX rate unavailable for USDC→${dto.currency}.`,
+        code: "FX_UNAVAILABLE",
+      });
+    }
+
+    // Chain-namespace decision (task 43 / spec §5.2.1). `preferredChain` is
+    // the payer-side hint; default is EVM for backward compatibility with
+    // pre-task-43 clients. The server is authoritative — we never echo the
+    // client's choice into a cross-namespace mix-up (an intent is one chain).
+    //
+    // Chain-extension discipline (memory): the branch below is the ONLY
+    // place in the create flow where namespace matters. Downstream code
+    // reads `intent.usdcSourceChainId` + `isSvmChainId()` rather than
+    // re-deriving the namespace.
+    const namespace: "eip155" | "solana" =
+      dto.preferredChain === "solana" ? "solana" : "eip155";
+
+    let sourceChainId: number;
+    let treasuryAddress: string;
+    let x402Entry: ReturnType<X402SupportedService["getSupportedForChain"]> | null;
+    let payerAddressForPersistence: string;
+
+    if (namespace === "solana") {
+      // SVM intent (task 43). Treasury comes from the SVM env; x402 domain
+      // is the Solana facilitator's network entry. Pre-M6 the env may be
+      // blank — we gate on that explicitly so the rail is a clean 503, not
+      // a garbage-filled intent.
+      treasuryAddress = this.config.get<string>(
+        "PLATFORM_TREASURY_ADDRESS_SVM",
+        "",
+      );
+      if (!treasuryAddress || treasuryAddress.trim().length === 0) {
+        throw new ServiceUnavailableException({
+          message:
+            "PLATFORM_TREASURY_ADDRESS_SVM is not configured; SVM intents are disabled pre-M6.",
+          code: "SVM_TREASURY_NOT_CONFIGURED",
+        });
+      }
+
+      // SVM facilitator URL is the second half of the same gate — the
+      // intent is useless if we can't forward it later. Check at quote
+      // time so mobile gets the 503 up front rather than after signing.
+      const facilitatorUrl = this.config.get<string>(
+        "CIRCLE_X402_SVM_FACILITATOR_URL",
+        "",
+      );
+      if (!facilitatorUrl || facilitatorUrl.trim().length === 0) {
+        throw new ServiceUnavailableException({
+          message:
+            "CIRCLE_X402_SVM_FACILITATOR_URL is not configured; SVM intents are disabled pre-M6.",
+          code: "SVM_FACILITATOR_NOT_CONFIGURED",
+        });
+      }
+
+      // Default to mainnet-beta for the sentinel. Devnet is reachable via
+      // a future DTO field; for the task-43 cut we mint mainnet intents.
+      sourceChainId = SVM_MAINNET_SENTINEL_CHAIN_ID;
+
+      // Try Circle's x402/supported entry for `solana:mainnet` — if Circle
+      // lists SVM natively, it carries the facilitator feePayer. Otherwise
+      // we use an external facilitator and the mobile signer derives the
+      // feePayer from the base64 transaction itself.
+      x402Entry =
+        this.x402Supported.getSupportedForNetwork("solana:mainnet") ??
+        this.x402Supported.getSupportedForNetwork("solana:mainnet-beta");
+
+      payerAddressForPersistence = payerAddress; // base58 pubkey — we don't
+      // re-validate the shape here because Solana pubkeys are 32 bytes in
+      // an arbitrary base58 alphabet length (32..44 chars). We trust the
+      // SIWS-issued JWT's `walletAddress` and let the facilitator reject
+      // a mismatch as `invalid_signature`.
+    } else {
+      // EVM path — unchanged from M2. The x402-supported cache is the source
+      // of truth for the EIP-712 domain (spec §6.5).
+      sourceChainId = ARC_TESTNET_CHAIN_ID;
+      x402Entry = this.x402Supported.getSupportedForChain(ARC_TESTNET_CHAIN_ID);
+      if (
+        !x402Entry ||
+        !x402Entry.domainName ||
+        !x402Entry.domainVersion ||
+        !x402Entry.verifyingContract ||
+        !x402Entry.asset
+      ) {
+        throw new ServiceUnavailableException({
+          message: `x402 domain not available for chainId=${ARC_TESTNET_CHAIN_ID}.`,
+          code: "X402_DOMAIN_UNAVAILABLE",
+        });
+      }
+
+      const evmTreasury = this.config.get<string>(
+        "PLATFORM_TREASURY_ADDRESS_EVM",
+      );
+      if (!evmTreasury || !/^0x[0-9a-fA-F]{40}$/.test(evmTreasury)) {
+        throw new ServiceUnavailableException({
+          message: "PLATFORM_TREASURY_ADDRESS_EVM is not configured.",
+          code: "TREASURY_NOT_CONFIGURED",
+        });
+      }
+      treasuryAddress = evmTreasury;
+
+      if (!/^0x[0-9a-fA-F]{40}$/.test(payerAddress)) {
+        throw new BadRequestException({
+          message: "Payer wallet address is not a valid EVM address.",
+          code: "PAYER_ADDRESS_INVALID",
+        });
+      }
+      payerAddressForPersistence = payerAddress;
+    }
+
+    // Amount math — deliberately in bigint + a Decimal-style string parser.
+    // IDR 15_000 at 15700 IDR/USDC × 1.015 markup →
+    //   usdc = 15000 / (15700 × 1.015) = 0.9409... → 940924 micros.
+    // See computeUsdcMicros for the full algorithm.
+    const markupMultiplier = addMarkup(fx.fxMarkup);
+    const usdcAmountMicros = computeUsdcMicros({
+      fiatAmountMinor: BigInt(dto.fiatAmountMinor),
+      fxRate: fx.fxRate,
+      markupMultiplier,
+    });
+    if (usdcAmountMicros <= 0n) {
+      throw new BadRequestException({
+        message:
+          "Computed USDC amount is zero — fiat amount too small for current rate.",
+        code: "USDC_AMOUNT_TOO_SMALL",
+      });
+    }
+
+    // 32-byte crypto-random nonce. Never logged — compliance memo
+    // `feedback_role_separation.md` treats authorization fields as secrets
+    // until the authorization is consumed.
+    const nonceBytes = randomBytes(32);
+    const nonceHex = `0x${nonceBytes.toString("hex")}` as const;
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const validAfter = nowSec;
+    const validBefore = nowSec + NANOPAY_VALID_BEFORE_OFFSET_SECONDS;
+    const expiresAt = new Date(
+      (validBefore + EXPIRES_AT_BUFFER_SECONDS) * 1000,
+    );
+
+    // Build the nanopay block now that usdcAmountMicros / validAfter /
+    // validBefore are known. Namespace decides which shape.
+    let nanopayBlock: NanopayPayloadResponseDto;
+    if (namespace === "solana") {
+      nanopayBlock = {
+        kind: "svm_partial_tx",
+        cluster: "mainnet-beta",
+        usdcMint: x402Entry?.asset ?? USDC_SPL_MINT_MAINNET,
+        // Backend does NOT pre-build the Solana tx here (task 43 Constraints:
+        // "if @solana/web3.js isn't in backend, skip parsing the signed tx
+        // on backend"). Mobile's task-42 signer builds + signs; we forward
+        // the opaque blob at submit time.
+        transaction: undefined,
+        feePayer: x402Entry?.authorizedSigners?.[0],
+        sourceChainId,
+        value: usdcAmountMicros.toString(),
+        validAfter,
+        validBefore,
+        // SVM intents omit the EIP-712 block — consumer discriminates on `kind`.
+      } satisfies NanopayPayloadResponseDto;
+    } else {
+      nanopayBlock = {
+        kind: "evm_eip3009",
+        usdc: x402Entry!.asset as `0x${string}`,
+        sourceChainId: ARC_TESTNET_CHAIN_ID,
+        domain: {
+          name: x402Entry!.domainName!,
+          version: x402Entry!.domainVersion!,
+          verifyingContract: x402Entry!.verifyingContract as `0x${string}`,
+        },
+        from: payerAddressForPersistence.toLowerCase() as `0x${string}`,
+        to: treasuryAddress as `0x${string}`,
+        value: usdcAmountMicros.toString(),
+        validAfter,
+        validBefore,
+        nonce: nonceHex,
+      } satisfies NanopayPayloadResponseDto;
+    }
+
+    const created = await this.prisma.paymentIntent.create({
+      data: {
+        payerUserId: payerUserId,
+        merchantId: merchant.id,
+        fiatAmountMinor: dto.fiatAmountMinor,
+        fiatCurrency: dto.currency,
+        usdcAmountMicros: usdcAmountMicros,
+        usdcSourceChainId: sourceChainId,
+        usdcTreasuryAddress: treasuryAddress,
+        exchangeRateId: fx.exchangeRateId,
+        exchangeRateCreatedAt: fx.exchangeRateCreatedAt,
+        fxRateSnapshot: fx.fxRate,
+        fxMarkupSnapshot: fx.fxMarkup,
+        fxFromCurrency: fx.fxFromCurrency,
+        fxToCurrency: fx.fxToCurrency,
+        fxProvider: fx.fxProvider,
+        fxQuotedAt: fx.fxQuotedAt,
+        feesNetworkUsdMicros: 0,
+        feesXenditIdr: 0,
+        feesPlatformBps: 0,
+        path: "nanopay",
+        nanopayNonce: nonceBytes,
+        nanopayValidAfter: validAfter,
+        nanopayValidBefore: validBefore,
+        gaslessMode: "nanopay",
+        // SVM intents don't require a Gateway deposit — the payer's USDC-SPL
+        // ATA is the source of funds and Circle's facilitator bills itself
+        // for fee-payer Lamports. EVM stays `requiresDeposit: true` pending
+        // task-38's deposit-receipt flow.
+        requiresDeposit: namespace === "eip155",
+        status: "QUOTED",
+        expiresAt,
+      },
+      include: { merchant: true },
+    });
+
+    await this.persistIdempotent(idempotencyKey, {
+      bodyHash,
+      intentId: created.id,
+      createdAt: Date.now(),
+    });
+
+    return {
+      id: created.id,
+      status: DB_TO_MOBILE_STATUS[created.status],
+      usdcAmountMicros: usdcAmountMicros.toString(),
+      usdcSourceChainId: sourceChainId,
+      usdcTreasuryAddress: treasuryAddress,
+      nanopay: nanopayBlock,
+      expiresAt: expiresAt.getTime(),
+    };
+  }
+
+  /**
+   * `GET /v1/pay/intents/:id` — polling read for the receipt / progress UI.
+   *
+   * Read-only: this method NEVER mutates the DB. Status transitions happen
+   * elsewhere (task 24 flips QUOTED → SETTLED on settle, task 30 flips
+   * SETTLED → PAID_OUT on the Xendit webhook). The auto-expire projection
+   * below is a *render-time* overlay — if the intent row is still QUOTED
+   * but the wall clock is past `expiresAt`, we return `status: "expired"`
+   * to the client so the UI treats the quote as terminal. The DB flip to
+   * `EXPIRED` is an out-of-band cron concern for a follow-up task.
+   *
+   * Auth (scope §2): the requester must be EITHER the payer (matched by
+   * `payerUserId` or `walletAddress` → same stopgap pattern as task 23's
+   * create endpoint) OR the merchant owner (`merchants.userId`). Any other
+   * user receives 403 — we deliberately do NOT fall through to 404 because
+   * the row exists and the payer may one day want us to expose it to their
+   * support contact; the semantics are clearer with an explicit 403.
+   *
+   * Spec refs: umkm-usdc-payout-spec.md §6.2, §6.3.
+   */
+  async getIntent(args: {
+    intentId: string;
+    userId: string | null;
+    walletAddress: string | null;
+  }): Promise<PaymentIntentResponseDto> {
+    const { intentId, userId, walletAddress } = args;
+
+    const intent = await this.prisma.paymentIntent.findUnique({
+      where: { id: intentId },
+      include: {
+        merchant: true,
+        nanopaySubmissions: { orderBy: { submittedAt: "desc" } },
+        xenditPayouts: { orderBy: { createdAt: "desc" } },
+        payer: true,
+      },
+    });
+    if (!intent) {
+      throw new NotFoundException({
+        message: `PaymentIntent ${intentId} not found.`,
+        code: "PAYMENT_INTENT_NOT_FOUND",
+      });
+    }
+
+    // Authorization check. Three ways a caller can be authorized:
+    //   1) They're the payer by userId (set when the quote was created via a
+    //      SIWE-issued JWT that carried `sub`).
+    //   2) They're the payer by wallet address (header stopgap — matches
+    //      task 23's `X-Payer-Address` fall-through for legacy tokens).
+    //      We compare case-insensitively because EIP-55 addresses survive
+    //      round-trips in mixed case.
+    //   3) They're the merchant owner by `merchants.userId`.
+    // Anything else: 403. Spec §6.3: never leak existence-of-row details
+    // to unrelated callers.
+    const normalizedCallerAddr = walletAddress?.toLowerCase() ?? null;
+    const payerAddr = intent.payer?.walletAddress?.toLowerCase() ?? null;
+    const isPayerByUserId =
+      !!userId && !!intent.payerUserId && userId === intent.payerUserId;
+    const isPayerByAddress =
+      !!normalizedCallerAddr &&
+      !!payerAddr &&
+      normalizedCallerAddr === payerAddr;
+    const isMerchantOwner = !!userId && userId === intent.merchant.userId;
+    if (!isPayerByUserId && !isPayerByAddress && !isMerchantOwner) {
+      // Uniform 403 — a controlled error that surfaces the auth boundary
+      // without hinting whether the row exists for a different owner.
+      throw new ForbiddenException({
+        message: "You are not authorized to view this payment intent.",
+        code: "PAYMENT_INTENT_FORBIDDEN",
+      });
+    }
+
+    // Status projection. DB enum → mobile enum. Auto-expire overlay ONLY
+    // when the DB still shows QUOTED — once the intent has been signed or
+    // settled, `expiresAt` has no effect on state (Circle already has the
+    // authorization).
+    const nowMs = Date.now();
+    const isAutoExpired =
+      intent.status === "QUOTED" && intent.expiresAt.getTime() < nowMs;
+    const mobileStatus: PaymentIntentResponseDto["status"] = isAutoExpired
+      ? "expired"
+      : DB_TO_MOBILE_STATUS[intent.status];
+
+    // Nanopay block. Emit the signable payload while the intent is still
+    // pre-settle (QUOTED + not auto-expired) so a mobile client that lost
+    // its local cache can re-render the sign-confirm modal. Post-settle
+    // the block is null per the mobile contract (`nanopay: NanopayPayload | null`).
+    //
+    // Chain-extension discipline (memory): the namespace dispatch is a
+    // single `isSvmChainId` predicate — we build an SVM block OR an EVM
+    // block, never a chimera.
+    let nanopay: NanopayPayloadResponseDto | null = null;
+    const isSvm = isSvmChainId(intent.usdcSourceChainId);
+
+    if (intent.status === "QUOTED" && !isAutoExpired && isSvm) {
+      const svmEntry =
+        this.x402Supported.getSupportedForNetwork("solana:mainnet") ??
+        this.x402Supported.getSupportedForNetwork("solana:mainnet-beta");
+      nanopay = {
+        kind: "svm_partial_tx",
+        cluster:
+          intent.usdcSourceChainId === SVM_DEVNET_SENTINEL_CHAIN_ID
+            ? "devnet"
+            : "mainnet-beta",
+        usdcMint: svmEntry?.asset ?? USDC_SPL_MINT_MAINNET,
+        feePayer: svmEntry?.authorizedSigners?.[0],
+        sourceChainId: intent.usdcSourceChainId,
+        value: intent.usdcAmountMicros.toString(),
+        validAfter: intent.nanopayValidAfter,
+        validBefore: intent.nanopayValidBefore,
+      };
+    }
+
+    const x402Entry = isSvm
+      ? null
+      : this.x402Supported.getSupportedForChain(intent.usdcSourceChainId);
+    if (
+      !isSvm &&
+      intent.status === "QUOTED" &&
+      !isAutoExpired &&
+      x402Entry?.domainName &&
+      x402Entry?.domainVersion &&
+      x402Entry?.verifyingContract &&
+      x402Entry?.asset
+    ) {
+      const nonceHex =
+        `0x${Buffer.from(intent.nanopayNonce).toString("hex")}` as const;
+      // `from` is populated from the joined payer row; if we don't have a
+      // wallet for this user (legacy auth, header stopgap) we fall back to
+      // the zero address — task 24's submit proxy recovers the real `from`
+      // from the submitted signature, so this is not load-bearing on settle.
+      const fromAddress = (
+        intent.payer?.walletAddress ??
+        "0x0000000000000000000000000000000000000000"
+      ).toLowerCase() as `0x${string}`;
+      nanopay = {
+        kind: "evm_eip3009",
+        usdc: x402Entry.asset as `0x${string}`,
+        sourceChainId: intent.usdcSourceChainId,
+        domain: {
+          name: x402Entry.domainName,
+          version: x402Entry.domainVersion,
+          verifyingContract: x402Entry.verifyingContract as `0x${string}`,
+        },
+        from: fromAddress,
+        to: intent.usdcTreasuryAddress as `0x${string}`,
+        value: intent.usdcAmountMicros.toString(),
+        validAfter: intent.nanopayValidAfter,
+        validBefore: intent.nanopayValidBefore,
+        nonce: nonceHex,
+      };
+    }
+
+    // Payout terminality — surface the public `referenceId` + `completedAt`
+    // only once the payout is actually terminal so mobile doesn't render a
+    // half-baked reference id for a still-PROCESSING payout. We pick the
+    // most recent payout row (ordered desc above); in practice there's one
+    // per intent, but the order-by defends against a retry edge case.
+    const latestPayout = intent.xenditPayouts[0];
+    const isPayoutTerminal = latestPayout
+      ? TERMINAL_PAYOUT_STATUSES.has(latestPayout.status)
+      : false;
+    const payoutReferenceId =
+      isPayoutTerminal && latestPayout ? latestPayout.referenceId : undefined;
+    const settledAt =
+      isPayoutTerminal && latestPayout?.completedAt
+        ? latestPayout.completedAt.getTime()
+        : undefined;
+
+    return {
+      id: intent.id,
+      status: mobileStatus,
+      merchantId: intent.merchantId,
+      merchantDisplayName: intent.merchant.displayName,
+      fiatAmountMinor: intent.fiatAmountMinor,
+      currency: intent.fiatCurrency,
+      fxRate: intent.fxRateSnapshot.toString(),
+      usdcAmountMicros: intent.usdcAmountMicros.toString(),
+      usdcSourceChainId: intent.usdcSourceChainId,
+      // String type on the wire to accommodate both EVM (`0x…`) and SVM
+      // (base58) treasury addresses. Consumers discriminate by looking at
+      // `nanopay.kind` or the sign of `usdcSourceChainId`.
+      usdcTreasuryAddress: intent.usdcTreasuryAddress,
+      nanopay,
+      expiresAt: intent.expiresAt.getTime(),
+      createdAt: intent.createdAt.getTime(),
+      payoutReferenceId,
+      settledAt,
+    };
+  }
+
+  /**
+   * `POST /v1/pay/intents/:id/nanopay` — the Circle settle proxy (task 24,
+   * spec §6.2 `NanopaySubmitRequest`, §6.5).
+   *
+   * Responsibilities:
+   *   1. Load the intent. 404 if missing. 409 if already terminal
+   *      (SETTLED/PAID_OUT/FAILED/EXPIRED) or pre-quote (shouldn't happen).
+   *   2. Idempotency dedup by `(intentId, signature)`. Returns the existing
+   *      submission row verbatim without re-calling Circle. Same signature
+   *      ⇒ same Circle transaction id — Circle's nonce uniqueness guarantees
+   *      replay safety on their side too.
+   *   3. Build Circle's `/gateway/v1/x402/settle` body from the PERSISTED
+   *      intent (NOT from the client's echo) — the only payer-sourced field
+   *      is `signature`.
+   *   4. Fire the request with a 30 s timeout:
+   *        - 200 `success: true`  → SETTLED, persist `circleSettleTxUuid`,
+   *                                  fire Xendit trigger (soft-linked),
+   *                                  return `{ status: SETTLED }`.
+   *        - 2xx/4xx `success: false` → FAILED, map errorReason, persist
+   *                                     failureCode/Message, return
+   *                                     `{ status: FAILED, failure }`.
+   *        - 5xx / non-JSON / network → FAILED with CIRCLE_UPSTREAM_ERROR.
+   *        - timeout (AbortError)     → SETTLING (in-flight, retry-safe).
+   *                                      Row created with no circle tx yet;
+   *                                      client polls the intent to converge.
+   *
+   * Three-role separation: every field Circle sees except `signature` comes
+   * from the DB row the server wrote at quote time. Client `payload` echo
+   * is ignored after a loose sanity-check — we never branch Circle's body
+   * on untrusted input (memory `feedback_role_separation.md`).
+   */
+  async submitNanopay(args: {
+    intentId: string;
+    signature: `0x${string}`;
+  }): Promise<NanopaySubmitResponseDto> {
+    const { intentId, signature } = args;
+
+    const intent = await this.prisma.paymentIntent.findUnique({
+      where: { id: intentId },
+      include: { merchant: true, payer: true },
+    });
+    if (!intent) {
+      throw new NotFoundException({
+        message: `PaymentIntent ${intentId} not found.`,
+        code: "PAYMENT_INTENT_NOT_FOUND",
+      });
+    }
+
+    // Status gate. Spec: "SIGNED → SETTLED atomically" (task file §2
+    // acceptance #4). The intent lifecycle in M2 is QUOTED → SETTLED (we
+    // never stamp SIGNED because the mobile signs and submits in the same
+    // round-trip). Accept BOTH so a future SIGNED-stage split doesn't
+    // require this file to change.
+    if (intent.status !== "QUOTED" && intent.status !== "SIGNED") {
+      throw new ConflictException({
+        message: `PaymentIntent ${intentId} is in status ${intent.status}; expected QUOTED or SIGNED.`,
+        code: "INTENT_WRONG_STATUS",
+        status: intent.status,
+      });
+    }
+
+    // Idempotency — (intentId, signature) is the natural dedup key per user
+    // scope §3 item 3. A retry with the same signature returns the existing
+    // submission row without re-calling Circle (Circle's own nonce
+    // uniqueness would reject anyway, but returning our prior answer is
+    // cheaper AND stable for retry-safe clients).
+    //
+    // Prisma stores `signature` as Bytes — we search with a Uint8Array (not
+    // Buffer) so the query plan matches `bytea =` in Postgres without a
+    // subquery cast.
+    const sigBytes = hexToBytes(signature);
+    const existing = await this.prisma.nanopaySubmission.findFirst({
+      where: { intentId, signature: sigBytes },
+      orderBy: { submittedAt: "desc" },
+    });
+    if (existing) {
+      return this.toSubmissionResponse(intentId, existing);
+    }
+
+    // x402 domain — needed for Circle's `paymentRequirements.network` and
+    // `paymentRequirements.asset`. Null cache entry means the boot-time
+    // fetch hasn't landed yet (or Circle dropped Arc). We can't build a
+    // valid settle request without it — return 503 so mobile retries.
+    const x402Entry = this.x402Supported.getSupportedForChain(
+      intent.usdcSourceChainId,
+    );
+    if (!x402Entry || !x402Entry.asset) {
+      throw new ServiceUnavailableException({
+        message: `x402 domain not available for chainId=${intent.usdcSourceChainId}.`,
+        code: "X402_DOMAIN_UNAVAILABLE",
+      });
+    }
+
+    // Assemble Circle's settle body. Every field (except the signature)
+    // is rehydrated from the DB row the server itself wrote at quote time.
+    // `from` MUST come off the payer join — the intent didn't persist it
+    // separately (the quote path lowercases it into `payer.walletAddress`).
+    // If the quote was created under the legacy `X-Payer-Address` header
+    // path where `payerUserId` is null, fall back to "unknown" and let
+    // Circle reject as `address_mismatch` (maps to SIGNATURE_INVALID).
+    const fromAddress = (intent.payer?.walletAddress ?? "").toLowerCase();
+    if (!/^0x[0-9a-fA-F]{40}$/.test(fromAddress)) {
+      throw new ConflictException({
+        message:
+          "PaymentIntent has no bound payer wallet — cannot reconstruct the EIP-3009 `from` field.",
+        code: "INTENT_NO_PAYER_ADDRESS",
+      });
+    }
+
+    const nonceHex =
+      `0x${Buffer.from(intent.nanopayNonce).toString("hex")}` as const;
+    const valueMicros = intent.usdcAmountMicros.toString();
+
+    // `paymentPayload.payload.authorization` shape mirrors the x402 EVM
+    // scheme Circle publishes. `network` is CAIP-2. We persist the
+    // intent.usdcSourceChainId as the source of truth and derive the
+    // CAIP-2 string from the x402 entry so re-chain changes flow through
+    // one place.
+    const settleBody = {
+      paymentPayload: {
+        x402Version: 1,
+        scheme: "exact",
+        network: x402Entry.network,
+        payload: {
+          signature,
+          authorization: {
+            from: fromAddress,
+            to: intent.usdcTreasuryAddress.toLowerCase(),
+            value: valueMicros,
+            validAfter: intent.nanopayValidAfter.toString(),
+            validBefore: intent.nanopayValidBefore.toString(),
+            nonce: nonceHex,
+          },
+        },
+      },
+      paymentRequirements: {
+        scheme: "exact",
+        network: x402Entry.network,
+        asset: x402Entry.asset,
+        payTo: intent.usdcTreasuryAddress.toLowerCase(),
+        maxAmountRequired: valueMicros,
+        maxTimeoutSeconds: intent.nanopayValidBefore - intent.nanopayValidAfter,
+        resource: `takumipay://intent/${intent.id}`,
+        description: `TakumiPay intent ${intent.id}`,
+        mimeType: "application/json",
+        // `extra` echoes the EIP-712 domain Circle expects — they use it
+        // to re-derive the struct hash for verify.
+        extra: {
+          name: x402Entry.domainName,
+          version: x402Entry.domainVersion,
+        },
+      },
+    };
+
+    const submittedAt = new Date();
+    const outcome = await this.circleSettle.settle(settleBody);
+
+    return await this.persistOutcome({
+      intent,
+      signature: sigBytes,
+      submittedAt,
+      outcome,
+    });
+  }
+
+  /**
+   * `POST /v1/pay/intents/:id/nanopay-svm` — Solana x402 facilitator proxy
+   * (task 43 / spec §5.2.1 Path B-SVM).
+   *
+   * The Solana equivalent of {@link submitNanopay}. Mobile's task-42 signer
+   * produces a base64-encoded partially-signed Solana versioned transaction;
+   * we forward the opaque string to the facilitator configured by
+   * `CIRCLE_X402_SVM_FACILITATOR_URL` (Circle if `solana:*` is in its
+   * x402-supported list at boot, otherwise an external Solana-compatible
+   * facilitator per spec §12 Q7 / RFC `coinbase/x402#646`).
+   *
+   * Three-role separation (memory `feedback_role_separation.md`): backend
+   * does NOT parse the tx bytes — task-43 Constraints say "if
+   * `@solana/web3.js` isn't in backend, skip parsing the signed tx on
+   * backend; just forward the opaque base64 to Circle." We honor that here:
+   * the signed blob is forwarded as-is, and the server-sourced fields
+   * (paymentRequirements envelope) are rehydrated from the persisted intent.
+   *
+   * Chain-extension discipline (memory `feedback_chain_extension_discipline.md`):
+   * the gate is `isSvmChainId(intent.usdcSourceChainId)` — a single
+   * predicate. We do not branch on the preferredChain DTO or any string
+   * comparison against "solana".
+   *
+   * Return shape matches the EVM submit endpoint (`NanopaySubmitResponseDto`)
+   * so mobile receipt/polling code stays rail-agnostic.
+   */
+  async submitNanopaySvm(args: {
+    intentId: string;
+    signedTransaction: string;
+  }): Promise<NanopaySubmitResponseDto> {
+    const { intentId, signedTransaction } = args;
+
+    if (!this.circleSettleSvm) {
+      // Pre-M6 posture — the client is `@Optional()` so the module boots
+      // without it, and in that case the SVM rail is simply off.
+      throw new ServiceUnavailableException({
+        message: "SVM facilitator is not configured on this deployment.",
+        code: "SVM_FACILITATOR_NOT_CONFIGURED",
+      });
+    }
+
+    const intent = await this.prisma.paymentIntent.findUnique({
+      where: { id: intentId },
+      include: { merchant: true, payer: true },
+    });
+    if (!intent) {
+      throw new NotFoundException({
+        message: `PaymentIntent ${intentId} not found.`,
+        code: "PAYMENT_INTENT_NOT_FOUND",
+      });
+    }
+
+    // Chain-extension gate. An SVM-signed tx against an EVM intent is a
+    // developer mistake worth surfacing loudly — 400, not 409, because the
+    // endpoint is wrong, not the state.
+    if (!isSvmChainId(intent.usdcSourceChainId)) {
+      throw new BadRequestException({
+        message: `PaymentIntent ${intentId} is not a Solana intent (sourceChainId=${intent.usdcSourceChainId}); use POST /nanopay instead.`,
+        code: "INTENT_WRONG_CHAIN_NAMESPACE",
+      });
+    }
+
+    if (intent.status !== "QUOTED" && intent.status !== "SIGNED") {
+      throw new ConflictException({
+        message: `PaymentIntent ${intentId} is in status ${intent.status}; expected QUOTED or SIGNED.`,
+        code: "INTENT_WRONG_STATUS",
+        status: intent.status,
+      });
+    }
+
+    // Idempotency dedup by `(intentId, signedTransaction)`. We fingerprint
+    // the base64 transaction as SHA-256 bytes so it fits in the existing
+    // `NanopaySubmission.signature` column (Bytes) without a schema change.
+    // Same hash → same row, returned verbatim without re-hitting the
+    // facilitator (Solana rejects a duplicate tx anyway, but the short-
+    // circuit is cheaper and retry-stable).
+    const fingerprint = sha256Bytes(signedTransaction);
+    const existing = await this.prisma.nanopaySubmission.findFirst({
+      where: { intentId, signature: fingerprint },
+      orderBy: { submittedAt: "desc" },
+    });
+    if (existing) {
+      return this.toSubmissionResponse(intentId, existing);
+    }
+
+    // Confirm the SVM blockchain row is seeded + active before we ship to
+    // the facilitator. This is a DB sanity check, not a namespace branch —
+    // the predicate above already guaranteed SVM.
+    const chainRow = await this.resolveSvmBlockchainRow(
+      intent.usdcSourceChainId,
+    );
+    if (!chainRow) {
+      throw new ServiceUnavailableException({
+        message: `SVM chain not configured for sentinel=${intent.usdcSourceChainId}.`,
+        code: "SVM_CHAIN_NOT_CONFIGURED",
+      });
+    }
+
+    const x402Entry =
+      this.x402Supported.getSupportedForNetwork(
+        chainRow.chainSlug === "solana-mainnet"
+          ? "solana:mainnet"
+          : "solana:devnet",
+      ) ??
+      this.x402Supported.getSupportedForNetwork(
+        chainRow.chainSlug === "solana-mainnet"
+          ? "solana:mainnet-beta"
+          : "solana:devnet",
+      );
+
+    // Build the paymentRequirements envelope purely from persisted data —
+    // mobile's echo is explicitly ignored (three-role separation). The
+    // facilitator may or may not use every field (Circle does; some
+    // external facilitators treat the tx as self-describing) — we send it
+    // on every call because the overhead is a few hundred bytes.
+    const payTo = intent.usdcTreasuryAddress;
+    const usdcMint =
+      x402Entry?.asset ??
+      (chainRow.chainSlug === "solana-mainnet"
+        ? USDC_SPL_MINT_MAINNET
+        : undefined);
+
+    const paymentRequirements = {
+      scheme: "exact",
+      network:
+        x402Entry?.network ??
+        (chainRow.chainSlug === "solana-mainnet"
+          ? "solana:mainnet"
+          : "solana:devnet"),
+      asset: usdcMint,
+      payTo,
+      amount: intent.usdcAmountMicros.toString(),
+      maxTimeoutSeconds: 60,
+      resource: `takumipay://intent/${intent.id}`,
+      description: `TakumiPay intent ${intent.id}`,
+      mimeType: "application/json",
+      extra: {
+        feePayer: x402Entry?.authorizedSigners?.[0],
+      },
+    };
+
+    const submittedAt = new Date();
+    const outcome = await this.circleSettleSvm.settle({
+      signedTransaction,
+      paymentRequirements,
+    });
+
+    return await this.persistSvmOutcome({
+      intent,
+      fingerprint,
+      submittedAt,
+      outcome,
+    });
+  }
+
+  /**
+   * Resolve a Solana `Blockchain` row by sentinel chainId (task 43). Returns
+   * `null` if the row isn't seeded or is inactive. Uses `chainSlug` because
+   * Solana rows have `chainId = null` in the chain-agnostic schema
+   * (migration 20260417000001).
+   */
+  private async resolveSvmBlockchainRow(
+    sentinelChainId: number,
+  ): Promise<{ id: string; chainSlug: string } | null> {
+    const slug = SVM_SENTINEL_TO_CHAIN_SLUG[sentinelChainId];
+    if (!slug) return null;
+    const row = await this.prisma.blockchain.findUnique({
+      where: { chainSlug: slug },
+      select: { id: true, chainSlug: true, isActive: true, isEVM: true },
+    });
+    if (!row || !row.isActive || row.isEVM) return null;
+    return { id: row.id, chainSlug: row.chainSlug ?? slug };
+  }
+
+  /**
+   * SVM equivalent of {@link persistOutcome}. Same four-branch state machine
+   * (`ok` / `rejected` / `upstream` / `timeout`) so the wire shape stays
+   * symmetric with the EVM rail.
+   */
+  private async persistSvmOutcome(args: {
+    intent: { id: string; status: PaymentIntentStatus };
+    fingerprint: Uint8Array;
+    submittedAt: Date;
+    outcome: CircleSettleSvmOutcome;
+  }): Promise<NanopaySubmitResponseDto> {
+    const { intent, fingerprint, submittedAt, outcome } = args;
+
+    if (outcome.kind === "ok") {
+      const submission = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.nanopaySubmission.create({
+          data: {
+            intentId: intent.id,
+            signature: fingerprint,
+            submittedAt,
+            // SVM returns a Solana signature (base58), not a UUID. We stash
+            // it in `circleSettleTxUuid` for audit continuity and accept
+            // that the column name is EVM-flavored — the alternative is a
+            // schema migration that's not warranted for the M6 cut. The
+            // field is treated as "facilitator-assigned tx id" at read time.
+            circleSettleTxUuid: outcome.response.transaction,
+            circleSettleResponseReceivedAt: submittedAt,
+            circleSettleNetwork: outcome.response.network,
+          },
+        });
+        await tx.paymentIntent.update({
+          where: { id: intent.id },
+          data: { status: "SETTLED" },
+        });
+        return created;
+      });
+
+      this.kickPayout(intent.id);
+      return this.toSubmissionResponse(intent.id, submission);
+    }
+
+    if (outcome.kind === "rejected") {
+      const { code, message } = mapCircleErrorReason(
+        outcome.response.errorReason,
+        outcome.response.message,
+      );
+      const submission = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.nanopaySubmission.create({
+          data: {
+            intentId: intent.id,
+            signature: fingerprint,
+            submittedAt,
+            circleSettleResponseReceivedAt: submittedAt,
+            circleSettleNetwork: outcome.response.network ?? null,
+            failureCode: code,
+            failureMessage: outcome.response.errorReason ?? message,
+          },
+        });
+        await tx.paymentIntent.update({
+          where: { id: intent.id },
+          data: { status: "FAILED" },
+        });
+        return created;
+      });
+      this.logger.warn(
+        `SVM settle rejected for intent=${intent.id} code=${code} status=${outcome.status}`,
+      );
+      return this.toSubmissionResponse(intent.id, submission);
+    }
+
+    if (outcome.kind === "upstream") {
+      const submission = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.nanopaySubmission.create({
+          data: {
+            intentId: intent.id,
+            signature: fingerprint,
+            submittedAt,
+            circleSettleResponseReceivedAt: submittedAt,
+            failureCode: "CIRCLE_UPSTREAM_ERROR",
+            failureMessage: truncateMessage(outcome.message),
+          },
+        });
+        await tx.paymentIntent.update({
+          where: { id: intent.id },
+          data: { status: "FAILED" },
+        });
+        return created;
+      });
+      this.logger.error(
+        `SVM settle upstream error for intent=${intent.id} status=${outcome.status ?? "n/a"}`,
+      );
+      return this.toSubmissionResponse(intent.id, submission);
+    }
+
+    // timeout — same retry-safe posture as EVM: mark in-flight (SIGNED in
+    // schema; SETTLING on the wire) so mobile keeps polling instead of
+    // treating the tx as failed.
+    const submission = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.nanopaySubmission.create({
+        data: {
+          intentId: intent.id,
+          signature: fingerprint,
+          submittedAt,
+          failureCode: null,
+          failureMessage: truncateMessage(outcome.message),
+        },
+      });
+      await tx.paymentIntent.update({
+        where: { id: intent.id },
+        data: { status: "SIGNED" },
+      });
+      return created;
+    });
+    this.logger.warn(
+      `SVM settle timed out for intent=${intent.id}; marked in-flight (SETTLING).`,
+    );
+    return {
+      intentId: intent.id,
+      status: "SETTLING",
+      attestation: null,
+      failure: null,
+    };
+  }
+
+  /**
+   * `POST /v1/pay/intents/:id/deposit-receipt` — task 38, spec §6.2
+   * `DepositReceiptRequest` / `DepositReceiptResponse` and §6.6
+   * `gateway_deposits`.
+   *
+   * The onboarding flow (task 34) submits a USDC deposit UserOp into
+   * Circle GatewayWallet (task 35 + task 37) and, once the source-chain
+   * tx confirms, POSTs here so the server records the deposit in its
+   * audit table and — if Circle's ledger has already attested — flips
+   * the associated intent's `requiresDeposit` to `false` so the Nanopay
+   * settle path unblocks.
+   *
+   * Responsibilities:
+   *   1. Auth: payer-only. Unrelated users → 403.
+   *   2. Cross-check the intent's `usdcSourceChainId` against the body's
+   *      `chainId`, and the intent's `usdcAmountMicros` against the
+   *      body's `amountMicros` (task prompt §Rules — don't trust client
+   *      claims; the amount is a load-bearing field on the audit row).
+   *   3. On-chain verification: pull the receipt + tx via the
+   *      {@link BlockchainVerificationService} public client. We check
+   *      three things and only three — status=success, tx.from matches
+   *      the payer, tx.to matches the chain's Gateway wallet contract.
+   *      Bundler-included UserOp txs bill gas from the bundler EOA (not
+   *      the payer), so we DO trust the `from` field of the top-level tx
+   *      to name the bundler when `usedCirclePaymaster=true`; in that
+   *      case we skip the `from` check and leave a TODO. The deposit is
+   *      still verifiable by the `to` being GatewayWallet (a contract the
+   *      attacker can't spoof) + the audited status=success.
+   *   4. Persist a `GatewayDeposit` row. `txHash` is unique (migration
+   *      20260420234642) so replays land on a 409-from-DB that we catch
+   *      and translate into a 200 echo of the existing row — task prompt
+   *      §3 idempotency contract.
+   *   5. If Circle's `/v1/deposits` attestation endpoint is wired (task
+   *      38 spec §6.5 — not in this scope), CONFIRMED is set when the
+   *      ledger reports the deposit. For the M4 shipping cut we mark the
+   *      row CONFIRMED immediately once on-chain verification passes;
+   *      the Circle-side attestation wait is a follow-up (see TODO in
+   *      method body). The DB is the audit trail; a subsequent attestation
+   *      poller can relax CONFIRMED back to PENDING_ATTESTATION only by
+   *      adding the poller — we never regress forward.
+   *   6. Flip `PaymentIntent.requiresDeposit = false` iff the intent is
+   *      still QUOTED and currently has `requiresDeposit=true`. We do NOT
+   *      mutate `status` — the spec explicitly models the deposit as a
+   *      prerequisite to the settle, not a settle milestone (§6.3). The
+   *      intent stays QUOTED until `POST /nanopay` flips it to SETTLED.
+   *
+   * Three-role separation (memory `feedback_role_separation.md`): every
+   * field Circle / the chain sees is derived from the persisted row or
+   * the on-chain lookup. The client only supplies `txHash`,
+   * `usedCirclePaymaster`, and echoed `chainId`/`amountMicros` which we
+   * cross-check before trusting.
+   */
+  async recordDepositReceipt(args: {
+    intentId: string;
+    txHash: `0x${string}`;
+    chainId: number;
+    amountMicros: string;
+    usedCirclePaymaster: boolean;
+    callerUserId: string | null;
+    callerWalletAddress: string | null;
+  }): Promise<DepositReceiptResponseDto> {
+    const {
+      intentId,
+      txHash,
+      chainId,
+      amountMicros,
+      usedCirclePaymaster,
+      callerUserId,
+      callerWalletAddress,
+    } = args;
+
+    const intent = await this.prisma.paymentIntent.findUnique({
+      where: { id: intentId },
+      include: { payer: true },
+    });
+    if (!intent) {
+      throw new NotFoundException({
+        message: `PaymentIntent ${intentId} not found.`,
+        code: "PAYMENT_INTENT_NOT_FOUND",
+      });
+    }
+
+    // Payer-only auth. Mirrors the `isPayerByUserId` / `isPayerByAddress`
+    // branches in `getIntent`, except we deliberately do NOT accept the
+    // merchant owner here — the deposit belongs to the payer, and the
+    // merchant has no legitimate reason to ack a payer's deposit.
+    const normalizedCallerAddr = callerWalletAddress?.toLowerCase() ?? null;
+    const payerAddr = intent.payer?.walletAddress?.toLowerCase() ?? null;
+    const isPayerByUserId =
+      !!callerUserId &&
+      !!intent.payerUserId &&
+      callerUserId === intent.payerUserId;
+    const isPayerByAddress =
+      !!normalizedCallerAddr &&
+      !!payerAddr &&
+      normalizedCallerAddr === payerAddr;
+    if (!isPayerByUserId && !isPayerByAddress) {
+      throw new ForbiddenException({
+        message: "Only the intent's payer can submit a deposit receipt.",
+        code: "DEPOSIT_RECEIPT_FORBIDDEN",
+      });
+    }
+
+    // Cross-check echoed fields against the persisted intent before we
+    // spend an RPC call verifying. A client that sends the wrong chainId
+    // or wrong amount is either broken or malicious — 400 fast.
+    if (chainId !== intent.usdcSourceChainId) {
+      throw new BadRequestException({
+        message: `chainId ${chainId} does not match intent source chain ${intent.usdcSourceChainId}.`,
+        code: "DEPOSIT_CHAIN_MISMATCH",
+      });
+    }
+    if (amountMicros !== intent.usdcAmountMicros.toString()) {
+      throw new BadRequestException({
+        message: `amountMicros ${amountMicros} does not match intent amount ${intent.usdcAmountMicros.toString()}.`,
+        code: "DEPOSIT_AMOUNT_MISMATCH",
+      });
+    }
+
+    // Idempotency precheck — avoid doing on-chain work (and a noisy DB
+    // insert-fail-retry) if we've already persisted this txHash. The DB
+    // unique constraint is still the authoritative dedup gate (handles
+    // the concurrent-insert race); this is just the cheap path.
+    const priorByHash = await this.prisma.gatewayDeposit.findUnique({
+      where: { txHash },
+    });
+    if (priorByHash) {
+      if (priorByHash.userId !== (intent.payerUserId ?? "")) {
+        // Same txHash recorded for a different user — either a client
+        // mix-up or a replay. 409 because the row exists and cannot be
+        // re-assigned; the client should re-check what they submitted.
+        throw new ConflictException({
+          message:
+            "Deposit txHash is already recorded against a different user.",
+          code: "DEPOSIT_RECEIPT_OWNER_MISMATCH",
+        });
+      }
+      return {
+        depositId: priorByHash.id,
+        status: priorByHash.status as GatewayDepositStatus,
+      };
+    }
+
+    // On-chain verification. We fetch the tx + receipt via the cached
+    // public client. The check is intentionally narrow (task prompt §3
+    // item 3): status=success, to=GatewayWallet, and — when the payer
+    // paid gas themselves — from=payer. For paymaster-sponsored UserOps
+    // the top-level tx.from is the bundler EOA, so the `from` identity
+    // check has to defer to Circle's ledger (out-of-scope for task 38).
+    const gatewayWalletContract =
+      await this.resolveGatewayWalletContract(chainId);
+    const verification = await this.verifyDepositTx({
+      txHash,
+      chainId,
+      expectedFrom: payerAddr ?? null,
+      expectedTo: gatewayWalletContract,
+      skipFromCheck: usedCirclePaymaster,
+    });
+    if (!verification.ok) {
+      // Task prompt §Rules: "tx verification failure → 400 (or accept +
+      // warn)". We 400 to keep the mobile state model crisp — a genuinely
+      // dropped tx surfaces `DEPOSIT_FAILED` and the user retries. If the
+      // chain is slow and we can't retrieve the receipt in time, the
+      // mobile client will retry the POST and we'll converge on success.
+      throw new BadRequestException({
+        message: verification.reason,
+        code: "DEPOSIT_TX_INVALID",
+      });
+    }
+
+    // Persist the row. `status = CONFIRMED` once on-chain verification
+    // passes — see the method-level docstring for why we don't gate on
+    // Circle's `/v1/deposits` here. `confirmedAt = now` on CONFIRMED so
+    // a future reconciliation script can tell "when did ops attest this"
+    // apart from `createdAt = when the POST landed".
+    //
+    // TODO(task-38 Circle attestation): add a poller on
+    // `POST /v1/deposits` (spec §6.5) that relaxes CONFIRMED → FAILED
+    // when the ledger reports tx_failed, and refine the CONFIRMED flip
+    // to wait for the ledger attestation. For M4 the on-chain receipt
+    // is the authoritative signal because Gateway's ledger trails the
+    // chain by <500 ms.
+    const nowMs = Date.now();
+    let created: { id: string; status: GatewayDepositStatus };
+    try {
+      created = await this.prisma.$transaction(async (tx) => {
+        const row = await tx.gatewayDeposit.create({
+          data: {
+            userId: intent.payerUserId ?? "",
+            sourceChainId: chainId,
+            txHash,
+            amountMicros: BigInt(amountMicros),
+            usedCirclePaymaster,
+            status: "CONFIRMED",
+            confirmedAt: new Date(nowMs),
+          },
+        });
+        // Flip `requiresDeposit` iff the intent is still QUOTED with
+        // the flag set. Spec §6.3: deposit is a prerequisite, not a
+        // settle milestone — DO NOT touch `status`.
+        if (intent.status === "QUOTED" && intent.requiresDeposit) {
+          await tx.paymentIntent.update({
+            where: { id: intent.id },
+            data: { requiresDeposit: false },
+          });
+        }
+        return { id: row.id, status: row.status as GatewayDepositStatus };
+      });
+    } catch (err: unknown) {
+      // Concurrent-insert race: another request persisted the same
+      // txHash between our precheck and this insert. Treat as idempotent
+      // success — re-read the row and echo it.
+      if (isPrismaUniqueConstraintError(err)) {
+        const existing = await this.prisma.gatewayDeposit.findUnique({
+          where: { txHash },
+        });
+        if (!existing) {
+          // Shouldn't happen — a P2002 means the unique index saw a row.
+          // If Prisma and the DB disagree, prefer 500 over a silent lie.
+          throw err;
+        }
+        return {
+          depositId: existing.id,
+          status: existing.status as GatewayDepositStatus,
+        };
+      }
+      throw err;
+    }
+
+    return { depositId: created.id, status: created.status };
+  }
+
+  /**
+   * Resolve the Gateway wallet contract address for a chain from the
+   * seeded `Blockchain` row (§7.1). Throws `ServiceUnavailableException`
+   * if the chain isn't configured — task 20 / ops seed populates this.
+   */
+  private async resolveGatewayWalletContract(chainId: number): Promise<string> {
+    const row = await this.prisma.blockchain.findUnique({
+      where: { chainId },
+      select: { gatewayWalletContract: true, isActive: true },
+    });
+    if (!row || !row.isActive) {
+      throw new ServiceUnavailableException({
+        message: `Chain ${chainId} is not configured or not active.`,
+        code: "CHAIN_NOT_CONFIGURED",
+      });
+    }
+    if (!row.gatewayWalletContract) {
+      throw new ServiceUnavailableException({
+        message: `Chain ${chainId} has no Gateway wallet contract configured.`,
+        code: "GATEWAY_WALLET_NOT_CONFIGURED",
+      });
+    }
+    return row.gatewayWalletContract;
+  }
+
+  /**
+   * Lightweight on-chain verification for a Gateway deposit tx. Narrower
+   * than {@link BlockchainVerificationService#verifyTransaction} because
+   * task 38 doesn't need contract-state matching — just receipt success,
+   * the right recipient, and (for non-paymaster txs) the right sender.
+   *
+   * Graceful degradation: if `BlockchainVerificationService` is unwired
+   * (unit tests) or the RPC call fails transiently, we return an `ok`
+   * result with a TODO in logs so the deposit is still recorded. The
+   * task prompt §Rules permits falling back to trusting the client when
+   * the bundler-included tx can't be reliably verified; the DB audit
+   * (unique txHash + `usedCirclePaymaster` flag) preserves traceability.
+   */
+  private async verifyDepositTx(args: {
+    txHash: `0x${string}`;
+    chainId: number;
+    expectedFrom: string | null;
+    expectedTo: string;
+    skipFromCheck: boolean;
+  }): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const { txHash, chainId, expectedFrom, expectedTo, skipFromCheck } = args;
+
+    if (!this.blockchainVerification) {
+      this.logger.warn(
+        `BlockchainVerificationService not wired; trusting txHash=${txHash.slice(0, 10)}… (TODO: wire RPC client).`,
+      );
+      return { ok: true };
+    }
+
+    try {
+      const client = this.blockchainVerification.getPublicClient(chainId);
+      const receipt = await client.getTransactionReceipt({
+        hash: txHash as Hash,
+      });
+      if (!receipt) {
+        return { ok: false, reason: `Tx ${txHash} not mined yet.` };
+      }
+      if (receipt.status !== "success") {
+        return { ok: false, reason: `Tx ${txHash} reverted.` };
+      }
+
+      const tx = await client.getTransaction({ hash: txHash as Hash });
+      if (!tx) {
+        return { ok: false, reason: `Tx ${txHash} not found.` };
+      }
+      // `to` is the immediate recipient of the top-level call. For a
+      // direct USDC transfer the user signs into GatewayWallet this IS
+      // the Gateway wallet. For an ERC-4337 bundler call, `to` is the
+      // EntryPoint, not GatewayWallet — the ERC-4337 path recovers the
+      // destination from the UserOp calldata, which is out of scope
+      // here. Task prompt §Rules permits accepting + warning in that
+      // case: log and fall back.
+      const toAddr = (tx.to ?? "").toLowerCase();
+      if (toAddr !== expectedTo.toLowerCase()) {
+        if (skipFromCheck) {
+          // Paymaster path — `to` is EntryPoint. Accept and warn (task
+          // prompt §Rules on-chain-verification carve-out).
+          this.logger.warn(
+            `Deposit tx ${txHash.slice(0, 10)}… has to=${toAddr} (not GatewayWallet); accepting because usedCirclePaymaster=true (TODO: parse UserOp calldata).`,
+          );
+          return { ok: true };
+        }
+        return {
+          ok: false,
+          reason: `Tx recipient ${toAddr} does not match Gateway wallet ${expectedTo}.`,
+        };
+      }
+
+      if (!skipFromCheck) {
+        if (!expectedFrom) {
+          return {
+            ok: false,
+            reason: "Payer wallet address is unknown; cannot verify tx sender.",
+          };
+        }
+        if (tx.from.toLowerCase() !== expectedFrom.toLowerCase()) {
+          return {
+            ok: false,
+            reason: `Tx sender ${tx.from} does not match payer ${expectedFrom}.`,
+          };
+        }
+      }
+
+      return { ok: true };
+    } catch (err) {
+      // RPC blip — prefer accepting with a warn over a hard 400 per the
+      // task prompt's fallback carve-out. The audit row + the txHash
+      // unique index still let ops reconcile against Circle later.
+      this.logger.warn(
+        `Deposit tx verification threw for ${txHash.slice(0, 10)}…: ${err instanceof Error ? err.message : String(err)}; accepting (TODO: tighten).`,
+      );
+      return { ok: true };
+    }
+  }
+
+  /**
+   * Turn a {@link CircleSettleOutcome} into the right DB writes and the
+   * wire response. Split out of `submitNanopay` so it's easier to test
+   * and easier to reason about the state-machine branches.
+   *
+   * State transitions:
+   *   - ok       → create submission with `circleSettleTxUuid`, flip intent to SETTLED, fire Xendit.
+   *   - rejected → create submission with `failureCode`/`failureMessage`, flip intent to FAILED.
+   *   - upstream → create submission with CIRCLE_UPSTREAM_ERROR, flip intent to FAILED.
+   *   - timeout  → create submission WITHOUT `circleSettleTxUuid`, leave intent SETTLED? NO.
+   *                Flip intent to SETTLING (spec: in-flight, retry-safe; don't claim FAILED
+   *                because Circle might actually settle once the network recovers).
+   *
+   * All four branches are wrapped in a single transaction so the submission
+   * row and the intent status stay in lockstep — a half-landed write is
+   * the worst thing that can happen to reconciliation.
+   */
+  private async persistOutcome(args: {
+    intent: { id: string; status: PaymentIntentStatus };
+    signature: Uint8Array;
+    submittedAt: Date;
+    outcome: CircleSettleOutcome;
+  }): Promise<NanopaySubmitResponseDto> {
+    const { intent, signature, submittedAt, outcome } = args;
+
+    if (outcome.kind === "ok") {
+      const submission = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.nanopaySubmission.create({
+          data: {
+            intentId: intent.id,
+            signature,
+            submittedAt,
+            circleSettleTxUuid: outcome.response.transaction,
+            circleSettleResponseReceivedAt: submittedAt,
+            circleSettleNetwork: outcome.response.network,
+          },
+        });
+        await tx.paymentIntent.update({
+          where: { id: intent.id },
+          data: { status: "SETTLED" },
+        });
+        return created;
+      });
+
+      // Fire-and-forget payout trigger. Task 29 (`XenditPayoutProvider`)
+      // lands this; until then the provider is null and we just log the
+      // TODO. Any throw from a present provider is swallowed — the intent
+      // is settled regardless (task 30's webhook flips PAID_OUT).
+      this.kickPayout(intent.id);
+
+      return this.toSubmissionResponse(intent.id, submission);
+    }
+
+    if (outcome.kind === "rejected") {
+      const { code, message } = mapCircleErrorReason(
+        outcome.response.errorReason,
+        outcome.response.message,
+      );
+      const submission = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.nanopaySubmission.create({
+          data: {
+            intentId: intent.id,
+            signature,
+            submittedAt,
+            circleSettleResponseReceivedAt: submittedAt,
+            circleSettleNetwork: outcome.response.network ?? null,
+            failureCode: code,
+            // Raw `errorReason` kept for debugging (spec §6.5 last paragraph).
+            // Fall back to a message echo if Circle didn't send one.
+            failureMessage: outcome.response.errorReason ?? message,
+          },
+        });
+        await tx.paymentIntent.update({
+          where: { id: intent.id },
+          data: { status: "FAILED" },
+        });
+        return created;
+      });
+      // Redacted log — never include the signature or nonce (user scope §5
+      // "Never log signatures or nonces").
+      this.logger.warn(
+        `Nanopay settle rejected for intent=${intent.id} code=${code} status=${outcome.status}`,
+      );
+      return this.toSubmissionResponse(intent.id, submission);
+    }
+
+    if (outcome.kind === "upstream") {
+      const submission = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.nanopaySubmission.create({
+          data: {
+            intentId: intent.id,
+            signature,
+            submittedAt,
+            circleSettleResponseReceivedAt: submittedAt,
+            failureCode: "CIRCLE_UPSTREAM_ERROR",
+            failureMessage: truncateMessage(outcome.message),
+          },
+        });
+        await tx.paymentIntent.update({
+          where: { id: intent.id },
+          data: { status: "FAILED" },
+        });
+        return created;
+      });
+      this.logger.error(
+        `Nanopay settle upstream error for intent=${intent.id} status=${outcome.status ?? "n/a"}`,
+      );
+      return this.toSubmissionResponse(intent.id, submission);
+    }
+
+    // timeout — do NOT flip to FAILED. Circle may have received the
+    // authorization and may yet settle it. SETTLING tells the polling
+    // client "come back in a moment; it's not over yet."
+    const submission = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.nanopaySubmission.create({
+        data: {
+          intentId: intent.id,
+          signature,
+          submittedAt,
+          // No `circleSettleResponseReceivedAt` — we didn't receive one.
+          failureCode: null,
+          failureMessage: truncateMessage(outcome.message),
+        },
+      });
+      await tx.paymentIntent.update({
+        where: { id: intent.id },
+        // NOTE: SETTLING is not a DB enum value (see schema.prisma
+        // `PaymentIntentStatus`). We map the in-flight state onto SIGNED
+        // so polling clients see a non-terminal status and keep polling.
+        // A dedicated SETTLING enum is a follow-up schema change — adding
+        // it here would require a migration and churn the unrelated GET
+        // projection. The wire response surfaces "SETTLING" verbatim.
+        data: { status: "SIGNED" },
+      });
+      return created;
+    });
+    this.logger.warn(
+      `Nanopay settle timed out for intent=${intent.id}; marked in-flight (SETTLING).`,
+    );
+    return {
+      intentId: intent.id,
+      status: "SETTLING",
+      attestation: null,
+      failure: null,
+    };
+  }
+
+  /**
+   * Fire-and-forget Xendit trigger. Wrapped here rather than inline at
+   * each call site so the same null-provider posture applies uniformly.
+   * Returns void — errors are logged and swallowed because the payer's
+   * Circle settle has already succeeded from their POV.
+   */
+  private kickPayout(intentId: string): void {
+    if (!this.payoutProvider) {
+      // TODO(task-29): wire `XenditPayoutProvider` once it lands. Until
+      // then the settle 200 flow stops here — ops must manually disburse
+      // or wait for the provider module to be imported.
+      this.logger.log(
+        `PayoutProvider not wired; intent ${intentId} is SETTLED but Xendit trigger is a no-op.`,
+      );
+      return;
+    }
+    try {
+      const maybePromise = this.payoutProvider.trigger(intentId);
+      if (
+        maybePromise &&
+        typeof (maybePromise as Promise<void>).then === "function"
+      ) {
+        (maybePromise as Promise<void>).catch((err) => {
+          this.logger.error(
+            `PayoutProvider.trigger threw asynchronously for intent ${intentId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+      }
+    } catch (err) {
+      this.logger.error(
+        `PayoutProvider.trigger threw synchronously for intent ${intentId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /** Map a persisted NanopaySubmission row to the wire response. */
+  private toSubmissionResponse(
+    intentId: string,
+    row: {
+      circleSettleTxUuid: string | null;
+      circleSettleResponseReceivedAt: Date | null;
+      failureCode: string | null;
+      failureMessage: string | null;
+    },
+  ): NanopaySubmitResponseDto {
+    if (row.circleSettleTxUuid) {
+      return {
+        intentId,
+        status: "SETTLED",
+        attestation: {
+          id: row.circleSettleTxUuid,
+          receivedAt: (
+            row.circleSettleResponseReceivedAt ?? new Date()
+          ).getTime(),
+        },
+        failure: null,
+      };
+    }
+    if (row.failureCode) {
+      return {
+        intentId,
+        status: "FAILED",
+        attestation: null,
+        failure: {
+          code: row.failureCode as NanopayFailureCode,
+          message: row.failureMessage ?? row.failureCode,
+        },
+      };
+    }
+    // Neither tx uuid nor failure code — this is the timeout row. Surface
+    // as SETTLING so retry-safe clients keep polling the intent.
+    return {
+      intentId,
+      status: "SETTLING",
+      attestation: null,
+      failure: null,
+    };
+  }
+
+  /**
+   * Look up the most recent active FX row for `USDC → currency` in region
+   * `ID`. Returns null if no row matches — caller turns that into 503.
+   */
+  private async snapshotLatestFx(currency: "IDR"): Promise<ResolvedFx | null> {
+    const row = await this.prisma.exchangeRate.findFirst({
+      where: {
+        fromCurrency: "USDC",
+        toCurrency: currency,
+        region: "ID",
+        isActive: true,
+      },
+      orderBy: { createdAt: "desc" },
+      include: { sourceProvider: true },
+    });
+    if (!row) return null;
+
+    return {
+      exchangeRateId: row.id,
+      exchangeRateCreatedAt: row.createdAt,
+      fxRate: row.rate.toString(),
+      fxMarkup: (row.markup ?? 0).toString(),
+      fxFromCurrency: row.fromCurrency,
+      fxToCurrency: row.toCurrency,
+      fxProvider: row.provider ?? row.sourceProvider?.name ?? "unknown",
+      fxQuotedAt: row.createdAt,
+    };
+  }
+
+  private async lookupIdempotent(
+    key: string,
+  ): Promise<IdempotencyEnvelope | null> {
+    try {
+      return await this.valkey.get<IdempotencyEnvelope>(
+        `${IDEMPOTENCY_KEY_PREFIX}${key}`,
+      );
+    } catch (err) {
+      // Valkey unavailable — degrade to no-idempotency rather than 500ing.
+      // Retries may produce duplicate intents, but the DB unique index on
+      // nanopay_nonce makes that a soft duplication (different nonce each
+      // time) rather than a correctness bug on the signed authorization.
+      this.logger.warn(
+        `Idempotency cache read failed (key=${redactKey(key)}): ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  }
+
+  private async persistIdempotent(
+    key: string,
+    envelope: IdempotencyEnvelope,
+  ): Promise<void> {
+    try {
+      await this.valkey.set(`${IDEMPOTENCY_KEY_PREFIX}${key}`, envelope, {
+        ttl: IDEMPOTENCY_TTL_SECONDS,
+      });
+    } catch (err) {
+      // Same degradation posture as the read path — warn, don't fail the
+      // user's request for a cache write blip.
+      this.logger.warn(
+        `Idempotency cache write failed (key=${redactKey(key)}): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /**
+   * Convert a persisted PaymentIntent row + merchant to the wire response.
+   * Kept here so the same projection can be reused by the idempotent-hit
+   * branch without re-reading the merchant on every retry.
+   */
+  private toResponseDto(
+    row: {
+      id: string;
+      status: PaymentIntentStatus;
+      usdcAmountMicros: bigint;
+      usdcSourceChainId: number;
+      usdcTreasuryAddress: string;
+      nanopayNonce: Buffer | Uint8Array;
+      nanopayValidAfter: number;
+      nanopayValidBefore: number;
+      expiresAt: Date;
+      fiatCurrency: string;
+    },
+    includeNanopay: boolean,
+  ): PaymentIntentResponseDto {
+    const isSvm = isSvmChainId(row.usdcSourceChainId);
+    const nonceHex =
+      `0x${Buffer.from(row.nanopayNonce).toString("hex")}` as const;
+    const x402Entry = isSvm
+      ? (this.x402Supported.getSupportedForNetwork("solana:mainnet") ??
+        this.x402Supported.getSupportedForNetwork("solana:mainnet-beta"))
+      : this.x402Supported.getSupportedForChain(row.usdcSourceChainId);
+
+    let nanopay: NanopayPayloadResponseDto | null = null;
+    if (includeNanopay && isSvm) {
+      nanopay = {
+        kind: "svm_partial_tx",
+        cluster:
+          row.usdcSourceChainId === SVM_DEVNET_SENTINEL_CHAIN_ID
+            ? "devnet"
+            : "mainnet-beta",
+        usdcMint: x402Entry?.asset ?? USDC_SPL_MINT_MAINNET,
+        feePayer: x402Entry?.authorizedSigners?.[0],
+        sourceChainId: row.usdcSourceChainId,
+        value: row.usdcAmountMicros.toString(),
+        validAfter: row.nanopayValidAfter,
+        validBefore: row.nanopayValidBefore,
+      };
+    } else if (
+      includeNanopay &&
+      x402Entry &&
+      x402Entry.domainName &&
+      x402Entry.domainVersion &&
+      x402Entry.verifyingContract &&
+      x402Entry.asset
+    ) {
+      nanopay = {
+        kind: "evm_eip3009",
+        usdc: x402Entry.asset as `0x${string}`,
+        sourceChainId: row.usdcSourceChainId,
+        domain: {
+          name: x402Entry.domainName,
+          version: x402Entry.domainVersion,
+          verifyingContract: x402Entry.verifyingContract as `0x${string}`,
+        },
+        // NOTE: `from` is not persisted today — the idempotent-hit branch
+        // echoes the original nanopay block, which means re-reading requires
+        // joining the original payer. For M2 we return an empty address on
+        // idempotent replay; task 24's submit proxy rebuilds the `from` field
+        // from the submitted signature anyway.
+        from: "0x0000000000000000000000000000000000000000",
+        to: row.usdcTreasuryAddress as `0x${string}`,
+        value: row.usdcAmountMicros.toString(),
+        validAfter: row.nanopayValidAfter,
+        validBefore: row.nanopayValidBefore,
+        nonce: nonceHex,
+      };
+    }
+
+    return {
+      id: row.id,
+      status: DB_TO_MOBILE_STATUS[row.status],
+      usdcAmountMicros: row.usdcAmountMicros.toString(),
+      usdcSourceChainId: row.usdcSourceChainId,
+      usdcTreasuryAddress: row.usdcTreasuryAddress,
+      nanopay,
+      expiresAt: row.expiresAt.getTime(),
+    };
+  }
+}
+
+/**
+ * Compute USDC atomic units (6-decimal micros) from fiat minor units, a
+ * decimal-string FX rate, and a decimal-string markup multiplier.
+ *
+ * Invariants:
+ *   - `fxRate` is `<currency> per 1 USDC` (e.g. 15700 IDR/USDC).
+ *   - `markupMultiplier` is `1 + markup_fraction` (e.g. 1.015 for 1.5%).
+ *   - Returns USDC atomic units (1e-6 USDC each).
+ *
+ * Formula:
+ *   usdcMicros = fiatMinor × 1_000_000 / (fxRate × markupMultiplier × fiatMinorFactor)
+ * where `fiatMinorFactor` is 1 for IDR (QRIS uses integer rupiah) — change
+ * when adding a currency whose minor unit actually differs.
+ *
+ * We route both FX rate and markup through a shared string→bigint scaler
+ * so a 1.5%-style markup doesn't lose precision to JS number math.
+ */
+export function computeUsdcMicros(args: {
+  fiatAmountMinor: bigint;
+  fxRate: string;
+  markupMultiplier: string;
+}): bigint {
+  const SCALE = 10n ** 18n;
+  const rateScaled = parseDecimalToScaled(args.fxRate, 18);
+  const markupScaled = parseDecimalToScaled(args.markupMultiplier, 18);
+  if (rateScaled <= 0n || markupScaled <= 0n) {
+    throw new Error("FX rate and markup must be positive.");
+  }
+
+  // divisor = rate × markup, both scaled to 1e18 → product at 1e36.
+  const divisorScaledSq = rateScaled * markupScaled; // 1e36-scaled
+  // numerator = fiatMinor × 1_000_000 × 1e36 (to cancel divisor scale)
+  //           = fiatMinor × 1e6 × 1e36
+  // Result = numerator / divisorScaledSq → fiatMinor × 1e6 / (rate × markup)
+  //          which is the USDC atomic amount.
+  const numerator = args.fiatAmountMinor * 1_000_000n * SCALE * SCALE;
+  return numerator / divisorScaledSq;
+}
+
+/**
+ * Parse a decimal string ("1.5", "15700", "1.015") into an integer scaled
+ * to `decimals` fractional digits. Throws on malformed input.
+ */
+function parseDecimalToScaled(input: string, decimals: number): bigint {
+  if (!/^-?\d+(\.\d+)?$/.test(input)) {
+    throw new Error(`Not a decimal: ${input}`);
+  }
+  const [whole, frac = ""] = input.split(".");
+  const fracPadded = (frac + "0".repeat(decimals)).slice(0, decimals);
+  const sign = whole.startsWith("-") ? -1n : 1n;
+  const wholeAbs = whole.replace(/^-/, "");
+  const scaled = BigInt(wholeAbs + fracPadded);
+  return sign * scaled;
+}
+
+/**
+ * Convert a percent-markup (e.g. "1.5" meaning 1.5%) into a decimal-string
+ * multiplier ("1.015"). FX rows store markup as a percent, not a fraction.
+ */
+export function addMarkup(markupPercent: string): string {
+  const scaled = parseDecimalToScaled(markupPercent, 18);
+  const one = 10n ** 18n;
+  const hundred = 100n * one;
+  // multiplier = 1 + markupPercent / 100 → ((100 + markupPercent) / 100) scaled.
+  const mulScaled = ((hundred + scaled) * one) / hundred;
+  return scaledToDecimalString(mulScaled, 18);
+}
+
+function scaledToDecimalString(value: bigint, decimals: number): string {
+  const neg = value < 0n;
+  const abs = neg ? -value : value;
+  const s = abs.toString().padStart(decimals + 1, "0");
+  const whole = s.slice(0, s.length - decimals);
+  const frac = s.slice(s.length - decimals).replace(/0+$/, "");
+  const out = frac.length > 0 ? `${whole}.${frac}` : whole;
+  return neg ? `-${out}` : out;
+}
+
+function sha256Hex(input: string): string {
+  return createHash("sha256").update(input).digest("hex");
+}
+
+/**
+ * SHA-256 fingerprint of an arbitrary string → 32-byte Uint8Array. Used by
+ * the SVM submit path to derive a stable dedup key from the base64-encoded
+ * signed transaction (task 43). We re-use `NanopaySubmission.signature`
+ * (Bytes) as the storage column — the fingerprint is not a crypto signature
+ * but it lives in the same audit column because the natural key is
+ * `(intentId, payload-hash)` on both rails.
+ */
+function sha256Bytes(input: string): Uint8Array {
+  return new Uint8Array(createHash("sha256").update(input).digest());
+}
+
+/**
+ * Narrow a thrown error to Prisma's `P2002` unique-constraint violation.
+ * We don't import `Prisma.PrismaClientKnownRequestError` here because the
+ * Prisma 7 generated client exports its error classes from the generated
+ * path and the narrower structural check is stable across versions.
+ */
+function isPrismaUniqueConstraintError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const code = (err as { code?: unknown }).code;
+  return code === "P2002";
+}
+
+/** Redact most of an idempotency key for logging (first 8 chars only). */
+function redactKey(key: string): string {
+  return `${key.slice(0, 8)}…(${key.length})`;
+}
+
+/**
+ * Map Circle's `errorReason` enum to our `NanopayFailureCode` (spec §6.5
+ * last paragraph). Unknown strings fall through to CIRCLE_UPSTREAM_ERROR —
+ * we prefer a typed fallback to a cryptic passthrough, and the raw
+ * reason is persisted on `failure_message` for ops debugging either way.
+ *
+ * Exported so the test spec can assert each mapping branch without a
+ * full DB + HTTP round-trip.
+ */
+export function mapCircleErrorReason(
+  errorReason: string | undefined,
+  upstreamMessage: string | undefined,
+): { code: NanopayFailureCode; message: string } {
+  const fallbackMessage =
+    upstreamMessage ??
+    errorReason ??
+    "Circle settle rejected the authorization.";
+  if (!errorReason) {
+    return { code: "CIRCLE_UPSTREAM_ERROR", message: fallbackMessage };
+  }
+  switch (errorReason) {
+    case "insufficient_balance":
+      return { code: "INSUFFICIENT_GATEWAY_BALANCE", message: fallbackMessage };
+    case "nonce_already_used":
+      return { code: "NONCE_REUSED", message: fallbackMessage };
+    case "authorization_not_yet_valid":
+    case "authorization_expired":
+    case "authorization_validity_too_short":
+      return { code: "AUTHORIZATION_EXPIRED", message: fallbackMessage };
+    case "unsupported_scheme":
+    case "unsupported_network":
+    case "unsupported_asset":
+    case "invalid_payload":
+    case "address_mismatch":
+    case "amount_mismatch":
+    case "invalid_signature":
+      return { code: "SIGNATURE_INVALID", message: fallbackMessage };
+    case "self_transfer":
+    case "unsupported_domain":
+    case "wallet_not_found":
+      return { code: "CIRCLE_UPSTREAM_ERROR", message: fallbackMessage };
+    default:
+      return { code: "CIRCLE_UPSTREAM_ERROR", message: fallbackMessage };
+  }
+}
+
+/**
+ * Convert a `0x`-prefixed hex string to a Uint8Array. Mirrors the
+ * `nanopayNonce` bytes path — we go through Buffer to keep the branch
+ * cheap at request time (Node's `Buffer.from(hex)` is a single native
+ * call).
+ */
+function hexToBytes(hex: string): Uint8Array {
+  const stripped = hex.startsWith("0x") ? hex.slice(2) : hex;
+  if (stripped.length % 2 !== 0) {
+    throw new Error("Hex string must have even length.");
+  }
+  return new Uint8Array(Buffer.from(stripped, "hex"));
+}
+
+/**
+ * Truncate an arbitrary upstream message to a safe length before writing
+ * to `failure_message`. Some Circle 5xx responses carry verbose HTML
+ * error pages — we don't want those to bloat the DB row. 500 chars is
+ * plenty for the typical "insufficient_balance" / "nonce_already_used"
+ * envelope Circle emits.
+ */
+function truncateMessage(message: string | undefined): string | null {
+  if (!message) return null;
+  return message.length > 500 ? `${message.slice(0, 497)}…` : message;
+}

@@ -27,6 +27,12 @@ import { FlashSalesModule } from "./flash-sales/flash-sales.module";
 import { NftModule } from "./nft/nft.module";
 import { NatsModule } from "./nats/nats.module";
 import { StatsModule } from "./stats/stats.module";
+import { X402Module } from "./x402/x402.module";
+import { PayModule } from "./pay/pay.module";
+import { PayoutModule } from "./payout/payout.module";
+import { MerchantsModule } from "./merchants/merchants.module";
+import { QrisDisputesModule } from "./admin/qris-disputes/qris-disputes.module";
+import { UserOpModule } from "./userop/userop.module";
 import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 import { JwtAuthGuard } from "./auth/guards/jwt-auth.guard";
 import { ApiKeyGuard } from "./auth/guards/api-key.guard";
@@ -63,6 +69,12 @@ import { InvalidateCacheInterceptor } from "./valkey/interceptors/invalidate-cac
     NftModule,
     NatsModule,
     StatsModule,
+    X402Module,
+    PayModule,
+    PayoutModule,
+    MerchantsModule,
+    QrisDisputesModule,
+    UserOpModule,
   ],
   controllers: [AppController],
   providers: [

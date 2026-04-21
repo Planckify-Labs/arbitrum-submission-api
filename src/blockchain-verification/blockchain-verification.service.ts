@@ -71,13 +71,27 @@ export class BlockchainVerificationService {
             (token) => token.isNativeCurrency,
           );
 
+          // Chain-extension discipline: native decimals MUST come from the
+          // seeded `tokens` row where `isNativeCurrency = true`. Arc's native
+          // is USDC with decimals=6 — a hardcoded `18` fallback would silently
+          // mis-format Arc balances on any viem helper that inspects
+          // `chain.nativeCurrency.decimals`. If seed is incomplete, skip this
+          // chain rather than register with fake decimals.
+          // Spec ref: umkm-usdc-payout-spec.md §7.1 (ChainConfig audit).
+          if (!nativeToken) {
+            this.logger.warn(
+              `Skipping chain ${blockchain.name} (chainId=${blockchain.chainId}): no active native-currency token row found; native decimals unknown.`,
+            );
+            continue;
+          }
+
           const dynamicChain: Chain = {
             id: blockchain.chainId,
             name: blockchain.name,
             nativeCurrency: {
-              name: nativeToken?.name || "Native Token",
-              symbol: nativeToken?.symbol || "NATIVE",
-              decimals: nativeToken?.decimals || 18,
+              name: nativeToken.name,
+              symbol: nativeToken.symbol,
+              decimals: nativeToken.decimals,
             },
             rpcUrls: {
               default: {
@@ -113,7 +127,7 @@ export class BlockchainVerificationService {
           this.walletClients.set(blockchain.chainId, walletClient);
 
           this.logger.log(
-            `Initialized dynamic client for chain ${blockchain.chainId} (${blockchain.name}) with native currency ${nativeToken?.symbol || "NATIVE"}`,
+            `Initialized dynamic client for chain ${blockchain.chainId} (${blockchain.name}) with native currency ${nativeToken.symbol} (decimals=${nativeToken.decimals})`,
           );
         } catch (error) {
           this.logger.warn(

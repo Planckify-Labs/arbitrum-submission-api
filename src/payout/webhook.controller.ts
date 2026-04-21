@@ -1,0 +1,309 @@
+import {
+  Body,
+  Controller,
+  ForbiddenException,
+  Headers,
+  HttpCode,
+  HttpStatus,
+  Inject,
+  Logger,
+  NotFoundException,
+  Post,
+  UnauthorizedException,
+} from "@nestjs/common";
+import { ApiTags } from "@nestjs/swagger";
+import {
+  PaymentIntentStatus,
+  XenditPayoutStatus,
+} from "@generated/prisma";
+import { Public } from "../decorators/public.decorator";
+import { PrismaService } from "../prisma/prisma.service";
+import {
+  PAYOUT_PROVIDER_XENDIT,
+  type IPayoutProviderAdapter,
+} from "./payout-provider.port";
+
+/**
+ * `POST /webhooks/xendit` — Xendit disbursement callback handler (task 30).
+ *
+ * Authorization: the endpoint is **public** (no JWT) — Xendit's edge cannot
+ * mint one of our SIWE tokens. Authenticity is proven by a static shared
+ * secret in the `x-callback-token` header, compared constant-time against
+ * `XENDIT_WEBHOOK_TOKEN` (task 29's `verifyWebhookSignature`). That's the
+ * scheme Xendit uses today — they do NOT HMAC the body, so the raw body
+ * bytes aren't load-bearing and we can let Nest parse JSON normally.
+ *
+ * Flow (spec §6.4, §9):
+ *   1. Guard: reject `401` if `x-callback-token` header is missing —
+ *      fail-closed on absent credential.
+ *   2. Guard: reject `403` if the token mismatches the configured value.
+ *   3. Look up the `XenditPayout` row by the callback's `id` (Xendit's
+ *      provider-side id). `404` if unknown — either a replay against a
+ *      deleted row or a spoofed payload that slipped the token check
+ *      during rotation.
+ *   4. Replay protection (defense-in-depth against token leaks): verify
+ *      the row's `referenceId` matches the callback's `reference_id` —
+ *      we never changed the reference after POSTing, so a mismatch means
+ *      the attacker re-used the leaked token with a crafted id/ref pair
+ *      that wasn't part of our outbound call. `403`.
+ *   5. Idempotency: if the row is already in the same terminal status
+ *      the callback asks for, short-circuit with 200 (no DB writes, no
+ *      push re-fire). Xendit retries webhooks — second PAID delivery on
+ *      the same reference must be a no-op.
+ *   6. Map the callback status → our enum and persist in a single
+ *      transaction together with the intent transition:
+ *        COMPLETED → XenditPayout.COMPLETED + PaymentIntent.PAID_OUT
+ *                    + set `completedAt`.
+ *        FAILED    → XenditPayout.FAILED. Intent stays SETTLED for the
+ *                    ops runbook (task 49). Spec §12 Q5.
+ *        other     → status update only, no intent transition.
+ *   7. Respond `200` immediately. Any heavy work (push notifications)
+ *      is fire-and-forget via `setImmediate` — webhooks must return fast
+ *      or Xendit retries, compounding load.
+ *
+ * NEVER trust the webhook body for amounts / merchant details. `status`
+ * and `id` are the only authoritative fields; everything else is echoed
+ * back and could be tampered with downstream.
+ */
+@Controller("webhooks")
+@ApiTags("webhooks")
+export class WebhookController {
+  private readonly logger = new Logger(WebhookController.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(PAYOUT_PROVIDER_XENDIT)
+    private readonly xenditProvider: IPayoutProviderAdapter,
+  ) {}
+
+  @Post("xendit")
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  async handleXenditCallback(
+    @Headers() headers: Record<string, string | string[] | undefined>,
+    @Body() body: unknown,
+  ): Promise<{ ok: true; status: XenditPayoutStatus }> {
+    // 1. Fail-closed on missing token. We treat absent auth differently
+    //    from wrong auth (401 vs 403) so ops dashboards can tell apart
+    //    "Xendit misconfigured the callback" from "someone probed us".
+    const rawToken = headers["x-callback-token"];
+    const hasToken =
+      typeof rawToken === "string"
+        ? rawToken.length > 0
+        : Array.isArray(rawToken) && rawToken.length > 0;
+    if (!hasToken) {
+      this.logger.warn("Xendit webhook: missing x-callback-token header");
+      throw new UnauthorizedException({
+        message: "Missing x-callback-token header.",
+        code: "WEBHOOK_TOKEN_MISSING",
+      });
+    }
+
+    // 2. Constant-time compare via the port's verifier. `body` is the
+    //    parsed object — Xendit uses a static shared-secret header, not
+    //    a body-hash HMAC, so re-serializing here is fine (the port
+    //    accepts the string-shape for HMAC-using providers later).
+    const bodyForSig = JSON.stringify(body ?? {});
+    if (!this.xenditProvider.verifyWebhookSignature(headers, bodyForSig)) {
+      this.logger.warn("Xendit webhook: x-callback-token mismatch — 403");
+      throw new ForbiddenException({
+        message: "Invalid x-callback-token.",
+        code: "WEBHOOK_TOKEN_INVALID",
+      });
+    }
+
+    // Pull the two fields we trust from Xendit: `id` and `status`.
+    // Everything else is informational / logged only.
+    const payload =
+      body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+    const xenditPayoutId =
+      typeof payload.id === "string" ? payload.id : undefined;
+    const rawStatus =
+      typeof payload.status === "string" ? payload.status : undefined;
+    const referenceIdFromBody =
+      typeof payload.reference_id === "string"
+        ? payload.reference_id
+        : undefined;
+
+    if (!xenditPayoutId) {
+      // Payload shape is off — treat as unknown row since we can't
+      // correlate. 404 matches the "unknown id" branch so ops has a
+      // single signal to alert on.
+      this.logger.warn(
+        "Xendit webhook: callback body missing `id`; cannot correlate.",
+      );
+      throw new NotFoundException({
+        message: "Unknown payout id in callback body.",
+        code: "PAYOUT_NOT_FOUND",
+      });
+    }
+
+    // 3. Look up the XenditPayout row. Filter-at-source — a single query.
+    const payoutRow = await this.prisma.xenditPayout.findFirst({
+      where: { xenditPayoutId },
+    });
+    if (!payoutRow) {
+      this.logger.warn(
+        `Xendit webhook: unknown xenditPayoutId=${xenditPayoutId}`,
+      );
+      throw new NotFoundException({
+        message: "Unknown payout id in callback body.",
+        code: "PAYOUT_NOT_FOUND",
+      });
+    }
+
+    // 4. Replay protection. `reference_id` is what WE sent — if the
+    //    callback body carries a different value it's either spoof or
+    //    corruption. Only enforce when the body supplies the field
+    //    (Xendit always does per §6.4, but stay lenient on shape drift).
+    if (
+      referenceIdFromBody !== undefined &&
+      referenceIdFromBody !== payoutRow.referenceId
+    ) {
+      this.logger.warn(
+        `Xendit webhook: reference_id mismatch — body=${referenceIdFromBody} row=${payoutRow.referenceId} xenditPayoutId=${xenditPayoutId}`,
+      );
+      throw new ForbiddenException({
+        message: "reference_id does not match the recorded payout.",
+        code: "WEBHOOK_REFERENCE_MISMATCH",
+      });
+    }
+
+    // 5. Map the callback status. Unknown values are passed through as
+    //    PROCESSING-ish (PENDING) — the webhook will re-deliver on the
+    //    real terminal state.
+    const nextStatus = mapXenditCallbackStatus(rawStatus);
+
+    // 5a. Idempotency — already in that status, nothing to do.
+    if (payoutRow.status === nextStatus) {
+      this.logger.log(
+        `Xendit webhook: idempotent no-op xenditPayoutId=${xenditPayoutId} status=${nextStatus}`,
+      );
+      return { ok: true, status: nextStatus };
+    }
+
+    // 6. Persist the transition atomically — the XenditPayout row and
+    //    (on COMPLETED) the PaymentIntent row must flip together. A
+    //    partial write would leave mobile polling a SETTLED intent with
+    //    a COMPLETED payout behind it.
+    const now = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      await tx.xenditPayout.update({
+        where: { id: payoutRow.id },
+        data: {
+          status: nextStatus,
+          webhookReceivedAt: now,
+          completedAt:
+            nextStatus === XenditPayoutStatus.COMPLETED
+              ? now
+              : payoutRow.completedAt,
+          // Stash full callback for dispute debugging (§6.6 comment).
+          xenditResponseBody: (payload as object) ?? undefined,
+        },
+      });
+
+      if (nextStatus === XenditPayoutStatus.COMPLETED) {
+        // Intent → PAID_OUT. This is the sole transition that flips it.
+        await tx.paymentIntent.update({
+          where: { id: payoutRow.intentId },
+          data: { status: PaymentIntentStatus.PAID_OUT },
+        });
+      }
+      // On FAILED we deliberately leave PaymentIntent at SETTLED — ops
+      // retries via the task 49 refund runbook. The failure banner on
+      // mobile comes from the XenditPayout.status, not the intent
+      // status.
+    });
+
+    this.logger.log(
+      `Xendit webhook applied xenditPayoutId=${xenditPayoutId} intentId=${payoutRow.intentId} status=${nextStatus}`,
+    );
+
+    if (nextStatus === XenditPayoutStatus.FAILED) {
+      // Emit a structured log ops can grep — link to task 49 runbook
+      // per the task file acceptance criterion.
+      this.logger.error(
+        `XENDIT_PAYOUT_DECLINED intentId=${payoutRow.intentId} xenditPayoutId=${xenditPayoutId} — see task 49 refund runbook.`,
+      );
+    }
+
+    // 7. Fire-and-forget push notification on PAID_OUT. Task 32's push
+    //    service may not exist yet — soft-link via dynamic import so a
+    //    missing module is a logged no-op, not a 500. Kept off the hot
+    //    path with `setImmediate` so Xendit gets its 200 in <50ms.
+    if (nextStatus === XenditPayoutStatus.COMPLETED) {
+      setImmediate(() => {
+        void this.firePaidOutPush(payoutRow.intentId);
+      });
+    }
+
+    return { ok: true, status: nextStatus };
+  }
+
+  /**
+   * Soft-linked push — task 32 owns the real implementation. We never
+   * import its module directly because task 32 may land after this one
+   * and we don't want a compile-time coupling. Any failure is swallowed
+   * and logged; the webhook's job is done the moment the DB writes
+   * commit.
+   */
+  private async firePaidOutPush(intentId: string): Promise<void> {
+    try {
+      // Dynamic import so the module is optional. Task 32 should export
+      // `sendPaidOutPush(intentId)` from `src/push/push.service.ts` (or
+      // similar). Until that lands, the catch arm below turns the
+      // missing module into a one-line log.
+      const mod = await import("../push/push.service" as string).catch(
+        () => null,
+      );
+      const send = (mod as { sendPaidOutPush?: (id: string) => Promise<void> } | null)
+        ?.sendPaidOutPush;
+      if (typeof send === "function") {
+        await send(intentId);
+        this.logger.log(`PAID_OUT push fired intentId=${intentId}`);
+      } else {
+        this.logger.debug(
+          `PAID_OUT push skipped intentId=${intentId} — push service not wired (task 32).`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(
+        `PAID_OUT push failed intentId=${intentId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+}
+
+/**
+ * Map Xendit's callback `status` onto our `XenditPayoutStatus` enum.
+ * Mirrors the mapping in `XenditPayoutProvider.mapXenditStatus` but
+ * returns the Prisma enum directly (the provider returns our coarse
+ * `TProviderStatus` which doesn't include PROCESSING as a Prisma value
+ * 1:1 — today they match, but keeping the two maps independent means
+ * a future Xendit status addition only edits one file at a time).
+ *
+ * Exported for tests.
+ */
+export function mapXenditCallbackStatus(
+  raw: string | undefined,
+): XenditPayoutStatus {
+  switch ((raw ?? "").toUpperCase()) {
+    case "COMPLETED":
+    case "SUCCEEDED":
+    case "PAID":
+      return XenditPayoutStatus.COMPLETED;
+    case "PROCESSING":
+    case "QUEUED":
+      return XenditPayoutStatus.PROCESSING;
+    case "FAILED":
+    case "EXPIRED":
+    case "CANCELLED":
+    case "CANCELED":
+    case "DECLINED":
+      return XenditPayoutStatus.FAILED;
+    case "PENDING":
+    case "":
+    default:
+      return XenditPayoutStatus.PENDING;
+  }
+}

@@ -97,35 +97,40 @@ model Vendor {
 }
 
 model User {
-  id                String               @id @default(ulid())
-  walletAddress     String?              @unique
-  walletAddressLower String?             @unique
-  email             String?              @unique
-  username          String?              @unique
-  password          String?
-  name              String?
-  profileImage      String?
-  authProvider      AuthProvider
-  socialId          String?
-  role              UserRole             @default(USER)
-  status            UserStatus           @default(ACTIVE)
-  permissions       Json?
-  lastLoginAt       DateTime?
-  loginAttempts     Int                  @default(0)
-  lockedUntil       DateTime?
-  transactions      TransactionHistory[]
-  createdAt         DateTime             @default(now())
-  updatedAt         DateTime             @updatedAt
-  Region            Region?              @relation(fields: [regionId], references: [id])
-  regionId          String?
-  ApiKey            ApiKey[]
-  auditLogs         AdminAuditLog[]
-  dappFavorites     UserDappFavorite[]
-  addressBook       AddressBook[]
-  pointBalance      PointBalance?
-  pointTransactions PointTransaction[]
-  pointRedemptions  PointRedemption[]
-  nftAssets         NftAsset[]
+  id                 String               @id @default(ulid())
+  walletAddress      String?              @unique
+  walletAddressLower String?              @unique
+  email              String?              @unique
+  username           String?              @unique
+  password           String?
+  name               String?
+  profileImage       String?
+  authProvider       AuthProvider
+  socialId           String?
+  role               UserRole             @default(USER)
+  status             UserStatus           @default(ACTIVE)
+  permissions        Json?
+  lastLoginAt        DateTime?
+  loginAttempts      Int                  @default(0)
+  lockedUntil        DateTime?
+  transactions       TransactionHistory[]
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  Region             Region?              @relation(fields: [regionId], references: [id])
+  regionId           String?
+  ApiKey             ApiKey[]
+  auditLogs          AdminAuditLog[]
+  dappFavorites      UserDappFavorite[]
+  addressBook        AddressBook[]
+  pointBalance       PointBalance?
+  pointTransactions  PointTransaction[]
+  pointRedemptions   PointRedemption[]
+  nftAssets          NftAsset[]
+
+  // UMKM USDC payout rails (§6.6)
+  merchant              Merchant?
+  paymentIntentsAsPayer PaymentIntent[]  @relation("PaymentIntentPayer")
+  gatewayDeposits       GatewayDeposit[]
 
   @@unique([authProvider, socialId])
   @@index([role])
@@ -150,6 +155,26 @@ model Blockchain {
   isTestnet         Boolean            @default(false)
   pointTransactions PointTransaction[]
   nftAssets         NftAsset[]
+
+  // Circle Gateway / Paymaster / x402 coordinates (§7.1). Nullable — Gateway is
+  // not deployed on every chain, and Arc itself has no Paymaster (USDC=gas).
+  // Populated by ops via seed/SQL; x402_* columns are also rewritten by the
+  // boot-time `GET /gateway/v1/x402/supported` refresh (§6.5).
+  gatewayWalletContract String?
+  gatewayMinterContract String?
+  paymasterAddress      String?
+  x402DomainName        String?
+  x402DomainVersion     String?
+  x402VerifyingContract String?
+  x402FacilitatorUrl    String?
+
+  // ERC-4337 bundler URL (task 37 — `POST /v1/userop/submit`). Currently
+  // carries the provider API key in the query string (`?apikey=…`). This
+  // column is SERVER-ONLY — must never be serialized through the public
+  // `GET /v1/blockchains` endpoint (task 21). See
+  // `docs/security_review_needed.md §4` for the planned migration to split
+  // the URL from the key and move the key to a secrets manager.
+  bundlerUrl String?
 }
 
 model Token {
@@ -752,4 +777,219 @@ model NftAsset {
   @@index([userId, isOwned])
   @@index([contractAddress])
   @@index([blockchainId])
+}
+
+// ── UMKM USDC Payout Rails (§6.6) ───────────────────────────────────────────
+// Persistence for the scan-QRIS → USDC Nanopay → Xendit IDR disbursement
+// pipeline. Column names and semantics follow umkm-usdc-payout-spec.md §6.6
+// verbatim — the on-wire API shape (§6) is the canonical contract.
+
+enum PaymentIntentStatus {
+  QUOTED
+  SIGNED
+  SETTLED
+  PAID_OUT
+  FAILED
+  EXPIRED
+}
+
+enum PaymentIntentPath {
+  nanopay
+  x402
+  direct_arc
+}
+
+enum GaslessMode {
+  nanopay
+  arc_native
+  x402_eip3009
+  none
+}
+
+enum XenditPayoutStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum GatewayDepositStatus {
+  PENDING_ATTESTATION
+  CONFIRMED
+  FAILED
+}
+
+enum ChannelKind {
+  ewallet
+  bank
+}
+
+enum QrisClaimDisputeStatus {
+  none
+  open
+  resolved_valid
+  resolved_invalid
+}
+
+model Merchant {
+  id                      String    @id @default(ulid())
+  user                    User      @relation(fields: [userId], references: [id])
+  userId                  String    @unique
+  displayName             String
+  contactPhone            String
+  country                 String    @db.Char(2)
+  xenditChannelCode       String
+  // Encrypted at rest via the repo's existing envelope helper. BYTEA in Postgres.
+  xenditAccountNumber     Bytes
+  xenditAccountHolderName String
+  qrisPan                 String?
+  qrisStickerPhotoKey     String?
+  jwsQr                   String
+  jwsIssuedAt             DateTime  @db.Timestamptz()
+  jwsExpiresAt            DateTime? @db.Timestamptz()
+  payoutProvider          String    @default("xendit")
+  createdAt               DateTime  @default(now()) @db.Timestamptz()
+  updatedAt               DateTime  @updatedAt @db.Timestamptz()
+
+  paymentIntents PaymentIntent[]
+  qrisClaims     MerchantQrisClaim[]
+
+  // NOTE: the partial unique index on qrisPan (WHERE qrisPan IS NOT NULL) is
+  // defined in the migration SQL — Prisma's @@index / @@unique cannot express
+  // partial predicates. Do not add @@index([qrisPan]) here; the partial unique
+  // is sufficient for lookups and enforces first-claim-wins.
+}
+
+model PaymentIntent {
+  id                    String              @id @default(ulid())
+  payer                 User?               @relation("PaymentIntentPayer", fields: [payerUserId], references: [id], onDelete: SetNull)
+  payerUserId           String?
+  merchant              Merchant            @relation(fields: [merchantId], references: [id])
+  merchantId            String
+  fiatAmountMinor       Int
+  fiatCurrency          String
+  usdcAmountMicros      BigInt
+  usdcSourceChainId     Int
+  usdcTreasuryAddress   String
+  // Audit trail — references the `exchange_rates` hypertable; FK omitted
+  // because TimescaleDB hypertables cannot be FK targets (see CLAUDE.md).
+  // Composite (id + createdAt) is mirrored on the snapshot columns below so
+  // application-level lookups can locate the source row.
+  exchangeRateId        Int
+  exchangeRateCreatedAt DateTime            @db.Timestamptz()
+  fxRateSnapshot        Decimal             @db.Decimal(36, 18)
+  fxMarkupSnapshot      Decimal             @db.Decimal(36, 18)
+  fxFromCurrency        String
+  fxToCurrency          String
+  fxProvider            String
+  fxQuotedAt            DateTime            @db.Timestamptz()
+  feesNetworkUsdMicros  Int
+  feesXenditIdr         Int
+  feesPlatformBps       Int
+  path                  PaymentIntentPath
+  nanopayNonce          Bytes               @unique
+  nanopayValidAfter     Int
+  nanopayValidBefore    Int
+  gaslessMode           GaslessMode
+  requiresDeposit       Boolean
+  status                PaymentIntentStatus @default(QUOTED)
+  createdAt             DateTime            @default(now()) @db.Timestamptz()
+  updatedAt             DateTime            @updatedAt @db.Timestamptz()
+  expiresAt             DateTime            @db.Timestamptz()
+
+  nanopaySubmissions NanopaySubmission[]
+  // payouts are audit-permanent; deleting an intent must NOT cascade to them.
+  xenditPayouts      XenditPayout[]
+
+  @@index([status, expiresAt])
+  @@index([merchantId, createdAt(sort: Desc)])
+}
+
+model NanopaySubmission {
+  id                             String        @id @default(ulid())
+  intent                         PaymentIntent @relation(fields: [intentId], references: [id], onDelete: Cascade)
+  intentId                       String
+  signature                      Bytes
+  submittedAt                    DateTime      @db.Timestamptz()
+  circleSettleTxUuid             String?       @db.Uuid
+  circleSettleResponseReceivedAt DateTime?     @db.Timestamptz()
+  circleSettleNetwork            String?
+  failureCode                    String?
+  failureMessage                 String?
+
+  @@index([intentId])
+}
+
+model XenditPayout {
+  id                     String             @id @default(ulid())
+  // onDelete: Restrict — payouts are audit-permanent; an intent must not be
+  // deletable while a payout row references it (§6.6 audit guarantees).
+  intent                 PaymentIntent      @relation(fields: [intentId], references: [id], onDelete: Restrict)
+  intentId               String
+  xenditPayoutId         String?
+  referenceId            String
+  channelCode            String
+  accountNumberEncrypted Bytes
+  amount                 Int
+  currency               String
+  status                 XenditPayoutStatus @default(PENDING)
+  requestedAt            DateTime?          @db.Timestamptz()
+  completedAt            DateTime?          @db.Timestamptz()
+  webhookReceivedAt      DateTime?          @db.Timestamptz()
+  xenditResponseBody     Json?
+  createdAt              DateTime           @default(now()) @db.Timestamptz()
+  updatedAt              DateTime           @updatedAt @db.Timestamptz()
+
+  @@index([intentId])
+}
+
+model GatewayDeposit {
+  id                  String               @id @default(ulid())
+  user                User                 @relation(fields: [userId], references: [id])
+  userId              String
+  sourceChainId       Int
+  // Unique — task 38 uses txHash as the natural idempotency key for
+  // `POST /v1/pay/intents/:id/deposit-receipt`. A replay returns the
+  // existing row without creating a duplicate audit entry (spec §6.6).
+  txHash              String               @unique
+  amountMicros        BigInt
+  usedCirclePaymaster Boolean
+  status              GatewayDepositStatus @default(PENDING_ATTESTATION)
+  createdAt           DateTime             @default(now()) @db.Timestamptz()
+  confirmedAt         DateTime?            @db.Timestamptz()
+
+  @@index([userId, status])
+}
+
+model Channel {
+  channelCode        String      @db.Text
+  country            String      @db.Char(2)
+  label              String
+  kind               ChannelKind
+  accountFormat      String
+  priority           Int
+  isActive           Boolean     @default(true)
+  xenditMinAmountIdr Int?
+  xenditMaxAmountIdr Int?
+  xenditFeeIdr       Int
+  createdAt          DateTime    @default(now()) @db.Timestamptz()
+  updatedAt          DateTime    @updatedAt @db.Timestamptz()
+
+  @@id([channelCode, country])
+  @@index([country, isActive, priority])
+}
+
+model MerchantQrisClaim {
+  id              String                 @id @default(ulid())
+  merchant        Merchant               @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  merchantId      String
+  qrisPan         String
+  stickerPhotoKey String
+  claimedAt       DateTime               @db.Timestamptz()
+  reviewedAt      DateTime?              @db.Timestamptz()
+  disputeStatus   QrisClaimDisputeStatus @default(none)
+  createdAt       DateTime               @default(now()) @db.Timestamptz()
+  updatedAt       DateTime               @updatedAt @db.Timestamptz()
+
+  @@index([qrisPan])
 }
