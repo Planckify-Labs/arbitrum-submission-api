@@ -28,9 +28,12 @@ import { type JWK, SignJWT } from "jose";
  *     currency: "IDR",
  *     amountMinor: null, // merchant QR is amount-open; payer types the amount
  *     qrisPan?: string,  // present only if the sticker was linked
- *     iat: unix-seconds,
- *     exp: iat + TAKUMIPAY_QR_EXP_DAYS × 86400
+ *     iat: unix-seconds
  *   }
+ *
+ * No `exp` claim — QRs never expire. Revocation is handled server-side
+ * at intent-creation time (merchant.isActive check). JWS signature proves
+ * TakumiPay issued it; the server decides whether to honor it.
  *
  * JOSE header: `{ alg: "ES256", typ: "JWT", kid: TAKUMIPAY_QR_KID }`.
  *
@@ -59,27 +62,12 @@ export class QrSigningService {
     jws: string;
     wire: string;
     iat: number;
-    exp: number;
     kid: string;
   }> {
     const key = this.loadPrivateKey();
     const kid = this.config.get<string>("TAKUMIPAY_QR_KID") ?? "2026-04-20";
-    const expDaysRaw = this.config.get<string>("TAKUMIPAY_QR_EXP_DAYS");
-    const expDays = Number.parseInt(expDaysRaw ?? "365", 10);
-    if (!Number.isFinite(expDays) || expDays <= 0) {
-      throw new ServiceUnavailableException({
-        message: "TAKUMIPAY_QR_EXP_DAYS must be a positive integer.",
-        code: "QR_EXP_DAYS_INVALID",
-      });
-    }
-
     const iat = Math.floor(Date.now() / 1000);
-    const exp = iat + expDays * 86_400;
 
-    // Claims body — see module docstring. We copy-route `displayName` under
-    // both `merchantName` and `displayName` so either spec-shape reader
-    // (§4.4 uses merchantName; §6.1 uses displayName) decodes the same
-    // semantic field.
     const claims: Record<string, unknown> = {
       merchantId: input.merchantId,
       merchantName: input.displayName,
@@ -95,14 +83,12 @@ export class QrSigningService {
     const jws = await new SignJWT(claims)
       .setProtectedHeader({ alg: "ES256", typ: "JWT", kid })
       .setIssuedAt(iat)
-      .setExpirationTime(exp)
       .sign(key);
 
     return {
       jws,
       wire: `takumipay:v1:${jws}`,
       iat,
-      exp,
       kid,
     };
   }

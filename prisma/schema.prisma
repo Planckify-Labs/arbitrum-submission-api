@@ -847,6 +847,7 @@ model Merchant {
   jwsQr                   String
   jwsIssuedAt             DateTime  @db.Timestamptz()
   jwsExpiresAt            DateTime? @db.Timestamptz()
+  isActive                Boolean   @default(true)
   payoutProvider          String    @default("xendit")
   createdAt               DateTime  @default(now()) @db.Timestamptz()
   updatedAt               DateTime  @updatedAt @db.Timestamptz()

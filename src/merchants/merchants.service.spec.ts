@@ -45,7 +45,6 @@ function configStub(
 ): Pick<ConfigService, "get"> {
   const defaults: Record<string, string> = {
     TAKUMIPAY_QR_KID: "test-2026-04-20",
-    TAKUMIPAY_QR_EXP_DAYS: "365",
   };
   const merged = { ...defaults, ...overrides };
   return {
@@ -198,7 +197,7 @@ describe("MerchantsService", () => {
       expect(payload.amountMinor).toBeNull();
       expect(payload.qrisPan).toBe("936000091234567890");
       expect(typeof payload.iat).toBe("number");
-      expect(typeof payload.exp).toBe("number");
+      expect(payload.exp).toBeUndefined();
     });
 
     it("rejects duplicate QRIS PAN claims with 409 (first-claim-wins)", async () => {

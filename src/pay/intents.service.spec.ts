@@ -76,7 +76,7 @@ function prismaStub(opts?: {
   fxRow?: Record<string, unknown> | null;
   createdIntent?: Record<string, unknown>;
 }): FakePrisma {
-  const merchant = opts?.merchant === undefined ? { id: "mch_123" } : opts.merchant;
+  const merchant = opts?.merchant === undefined ? { id: "mch_123", isActive: true } : opts.merchant;
   const fxRow =
     opts?.fxRow === undefined
       ? {

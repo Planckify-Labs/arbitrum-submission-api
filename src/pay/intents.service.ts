@@ -279,6 +279,12 @@ export class IntentsService {
         code: "MERCHANT_NOT_FOUND",
       });
     }
+    if (!merchant.isActive) {
+      throw new ForbiddenException({
+        message: `Merchant ${dto.merchantId} is deactivated.`,
+        code: "MERCHANT_DEACTIVATED",
+      });
+    }
 
     // FX snapshot — the spec directs us at USDC→IDR (region=ID). If no row
     // exists yet (task 26 seeds them in M3), we degrade gracefully with a

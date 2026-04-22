@@ -50,6 +50,9 @@ export class MerchantResponseDto {
   @ApiPropertyOptional({ description: "Unix ms — when the JWS expires." })
   jwsExpiresAt?: number | null;
 
+  @ApiProperty({ description: "Whether the merchant can receive payments." })
+  isActive!: boolean;
+
   @ApiProperty({ description: "Unix ms creation time." })
   createdAt!: number;
 

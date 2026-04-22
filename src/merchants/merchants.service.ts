@@ -141,7 +141,7 @@ export class MerchantsService {
             qrisStickerPhotoKey: dto.qrisLink?.stickerPhotoKey ?? null,
             jwsQr: signed.wire,
             jwsIssuedAt: new Date(signed.iat * 1000),
-            jwsExpiresAt: new Date(signed.exp * 1000),
+            jwsExpiresAt: null,
             payoutProvider: "xendit",
           },
         });
@@ -238,7 +238,6 @@ export class MerchantsService {
 
     let newJwsWire = existing.jwsQr;
     let newJwsIat = existing.jwsIssuedAt;
-    let newJwsExp = existing.jwsExpiresAt;
     if (jwsFieldChanged || payoutFieldChanged) {
       const signed = await this.qrSigning.signMerchantQr({
         merchantId: existing.id,
@@ -248,7 +247,6 @@ export class MerchantsService {
       });
       newJwsWire = signed.wire;
       newJwsIat = new Date(signed.iat * 1000);
-      newJwsExp = new Date(signed.exp * 1000);
     }
 
     const updated = await this.prisma.merchant.update({
@@ -264,7 +262,7 @@ export class MerchantsService {
           dto.payoutAccountHolderName ?? existing.xenditAccountHolderName,
         jwsQr: newJwsWire,
         jwsIssuedAt: newJwsIat,
-        jwsExpiresAt: newJwsExp,
+        jwsExpiresAt: null,
       },
     });
 
@@ -299,7 +297,7 @@ export class MerchantsService {
       data: {
         jwsQr: signed.wire,
         jwsIssuedAt: new Date(signed.iat * 1000),
-        jwsExpiresAt: new Date(signed.exp * 1000),
+        jwsExpiresAt: null,
       },
     });
 
@@ -439,6 +437,7 @@ export class MerchantsService {
     xenditAccountNumber: Uint8Array | Buffer;
     xenditAccountHolderName: string;
     qrisPan: string | null;
+    isActive: boolean;
     jwsQr: string;
     jwsIssuedAt: Date;
     jwsExpiresAt: Date | null;
@@ -456,6 +455,7 @@ export class MerchantsService {
       payoutAccountHolderName: row.xenditAccountHolderName,
       contactPhone: row.contactPhone || undefined,
       qrisPan: row.qrisPan ?? undefined,
+      isActive: row.isActive,
       jwsQr: row.jwsQr,
       jwsIssuedAt: row.jwsIssuedAt.getTime(),
       jwsExpiresAt: row.jwsExpiresAt?.getTime() ?? null,

@@ -127,7 +127,7 @@ function svmPrismaStub(opts?: {
     expiresAt: new Date("2026-04-23T01:10:00Z"),
     fiatCurrency: "IDR",
   };
-  const merchant = opts?.merchant ?? { id: "mch_123" };
+  const merchant = opts?.merchant ?? { id: "mch_123", isActive: true };
   const fxRow =
     opts?.fxRow === undefined
       ? {
