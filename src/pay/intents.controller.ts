@@ -225,10 +225,8 @@ export class IntentsController {
    *
    * The Solana twin of `/nanopay` above. Mobile (task 42) signs the
    * pre-built Solana transaction and POSTs the base64 blob here; we forward
-   * the opaque string to the facilitator URL in
-   * `CIRCLE_X402_SVM_FACILITATOR_URL` (Circle's `/gateway/v1/x402/settle`
-   * if Circle lists `solana:*` at boot per spec §12 Q7, otherwise an
-   * external Solana-compatible facilitator).
+   * the opaque string to the facilitator URL configured in
+   * `Blockchain.x402FacilitatorUrl` for the SVM chain.
    *
    * The response shape is identical to `/nanopay` — same
    * `NanopaySubmitResponseDto`, same four statuses (`SETTLED` / `FAILED` /

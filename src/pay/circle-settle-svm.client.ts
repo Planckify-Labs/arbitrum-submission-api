@@ -11,18 +11,9 @@ import { ConfigService } from "@nestjs/config";
  * (`@solana/web3.js` isn't a backend dep per task 43 Constraints) — we just
  * forward whatever the mobile signer emitted.
  *
- * Endpoint selection (task 43 §Scope #2): the target URL is driven by
- * `CIRCLE_X402_SVM_FACILITATOR_URL`. Ops flips that between Circle's
- * `/gateway/v1/x402/settle` (if Circle lists `solana:*` at boot) and a
- * Solana-compatible external facilitator (Coinbase CDP, rapid402, self-host)
- * based on the M6 kickoff decision (spec §12 Q7). Switching is a deploy-time
- * config change, NOT a code change — chain-extension discipline (memory
- * `feedback_chain_extension_discipline.md`).
- *
- * RFC: github.com/coinbase/x402/issues/646 (SVM scheme stability). If the
- * wire format drifts pre-M6, the opaque-forward posture here limits the blast
- * radius to this file — mobile signer (task 42) is the other load-bearing
- * piece.
+ * The facilitator URL is resolved per-chain from `Blockchain.x402FacilitatorUrl`
+ * and passed in at call time by {@link IntentsService}. Ops configures it via
+ * seed/SQL — switching facilitators is a DB update, not a deploy.
  */
 
 /**
@@ -88,6 +79,7 @@ export type CircleSettleSvmOutcome =
 
 export interface ICircleSettleSvmClient {
   settle(
+    facilitatorUrl: string,
     body: CircleSettleSvmRequest,
     signal?: AbortSignal,
   ): Promise<CircleSettleSvmOutcome>;
@@ -106,36 +98,17 @@ export const CIRCLE_SETTLE_SVM_TIMEOUT_MS = 30_000;
 @Injectable()
 export class CircleSettleSvmClient implements ICircleSettleSvmClient {
   private readonly logger = new Logger(CircleSettleSvmClient.name);
-  private readonly url: string | undefined;
   private readonly apiKey: string | undefined;
 
   constructor(private readonly config: ConfigService) {
-    // Full URL — the path is baked in because different facilitators use
-    // different paths. Circle uses `/gateway/v1/x402/settle`; an external
-    // facilitator may expose `/settle` or `/v1/payment/settle`. One env, no
-    // path concatenation in code.
-    const raw = this.config.get<string>("CIRCLE_X402_SVM_FACILITATOR_URL");
-    this.url = raw && raw.trim().length > 0 ? raw.trim() : undefined;
     this.apiKey = this.config.get<string>("CIRCLE_API_KEY") || undefined;
   }
 
   async settle(
+    facilitatorUrl: string,
     body: CircleSettleSvmRequest,
     parentSignal?: AbortSignal,
   ): Promise<CircleSettleSvmOutcome> {
-    if (!this.url) {
-      // Pre-M6 posture (task 43 Rules): env may remain blank. Surface as an
-      // upstream error so the caller flips the intent to FAILED with a
-      // typed code; NOT a throw — mobile gets a structured response.
-      return {
-        kind: "upstream",
-        status: null,
-        rawBody: null,
-        message:
-          "CIRCLE_X402_SVM_FACILITATOR_URL is not configured; SVM settle path is disabled.",
-      };
-    }
-
     const controller = new AbortController();
     const timer = setTimeout(
       () => controller.abort(),
@@ -154,7 +127,7 @@ export class CircleSettleSvmClient implements ICircleSettleSvmClient {
 
     let status: number | null = null;
     try {
-      const response = await fetch(this.url, {
+      const response = await fetch(facilitatorUrl, {
         method: "POST",
         headers,
         body: JSON.stringify(body),

@@ -97,6 +97,7 @@ function svmPrismaStub(opts?: {
     chainSlug: string;
     isActive: boolean;
     isEVM: boolean;
+    x402FacilitatorUrl?: string | null;
   } | null;
   createdIntent?: Record<string, unknown>;
   merchant?: Record<string, unknown> | null;
@@ -111,6 +112,7 @@ function svmPrismaStub(opts?: {
           chainSlug: "solana-mainnet",
           isActive: true,
           isEVM: false,
+          x402FacilitatorUrl: "https://facilitator.example/v1/settle",
         }
       : opts.blockchain;
   const createdIntent = opts?.createdIntent ?? {
@@ -217,13 +219,18 @@ function buildSvmService(overrides: {
   const env: Record<string, string | undefined> = {
     PLATFORM_TREASURY_ADDRESS_EVM: "0x00000000000000000000000000000000abCDef01",
     PLATFORM_TREASURY_ADDRESS_SVM: SVM_TREASURY_PUBKEY,
-    CIRCLE_X402_SVM_FACILITATOR_URL: "https://facilitator.example/v1/settle",
     ...(overrides.env ?? {}),
+  };
+
+  const bcCache = {
+    getByChainId: jest.fn(async (_chainId: number, fallback: () => Promise<unknown>) => fallback()),
+    getByChainSlug: jest.fn(async (_slug: string, fallback: () => Promise<unknown>) => fallback()),
   };
 
   const svc = new IntentsService(
     prisma as unknown as PrismaService,
     valkeyStub() as unknown as ValkeyService,
+    bcCache as any,
     x402Stub(),
     configStub(env),
     evmCircleSettleStub() as any,
@@ -285,12 +292,17 @@ describe("IntentsService.createIntent (SVM)", () => {
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 
-  it("503s when CIRCLE_X402_SVM_FACILITATOR_URL is blank", async () => {
-    const prisma = svmPrismaStub();
-    const { svc } = buildSvmService({
-      prisma,
-      env: { CIRCLE_X402_SVM_FACILITATOR_URL: "" },
+  it("503s when x402FacilitatorUrl is null on the SVM blockchain row", async () => {
+    const prisma = svmPrismaStub({
+      blockchain: {
+        id: "bc_solana_mainnet",
+        chainSlug: "solana-mainnet",
+        isActive: true,
+        isEVM: false,
+        x402FacilitatorUrl: null,
+      },
     });
+    const { svc } = buildSvmService({ prisma });
     await expect(
       svc.createIntent({ dto: svmDto, ...defaultArgs }),
     ).rejects.toBeInstanceOf(ServiceUnavailableException);

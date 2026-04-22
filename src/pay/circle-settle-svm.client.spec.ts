@@ -1,13 +1,6 @@
 import type { ConfigService } from "@nestjs/config";
 import { CircleSettleSvmClient } from "./circle-settle-svm.client";
 
-/**
- * Task 43 — unit tests for the SVM facilitator HTTP client. Per task
- * Constraints, we never hit Circle — global `fetch` is mocked per test so
- * we exercise the four outcome branches (`ok` / `rejected` / `upstream` /
- * `timeout`) deterministically.
- */
-
 function configStub(
   env: Partial<Record<string, string>> = {},
 ): ConfigService {
@@ -28,15 +21,6 @@ describe("CircleSettleSvmClient", () => {
     jest.resetAllMocks();
   });
 
-  it("returns `upstream` outcome when CIRCLE_X402_SVM_FACILITATOR_URL is blank", async () => {
-    const client = new CircleSettleSvmClient(configStub({}));
-    const outcome = await client.settle({ signedTransaction: "abc" });
-    expect(outcome.kind).toBe("upstream");
-    if (outcome.kind === "upstream") {
-      expect(outcome.message).toMatch(/not configured/i);
-    }
-  });
-
   it("returns `ok` on facilitator 200 with success=true body", async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
@@ -49,10 +33,8 @@ describe("CircleSettleSvmClient", () => {
       }),
     }) as unknown as typeof fetch;
 
-    const client = new CircleSettleSvmClient(
-      configStub({ CIRCLE_X402_SVM_FACILITATOR_URL: URL }),
-    );
-    const outcome = await client.settle({ signedTransaction: "abc" });
+    const client = new CircleSettleSvmClient(configStub({}));
+    const outcome = await client.settle(URL, { signedTransaction: "abc" });
     expect(outcome.kind).toBe("ok");
     if (outcome.kind === "ok") {
       expect(outcome.response.transaction).toBe("svm-sig-base58");
@@ -71,10 +53,8 @@ describe("CircleSettleSvmClient", () => {
       }),
     }) as unknown as typeof fetch;
 
-    const client = new CircleSettleSvmClient(
-      configStub({ CIRCLE_X402_SVM_FACILITATOR_URL: URL }),
-    );
-    const outcome = await client.settle({ signedTransaction: "abc" });
+    const client = new CircleSettleSvmClient(configStub({}));
+    const outcome = await client.settle(URL, { signedTransaction: "abc" });
     expect(outcome.kind).toBe("rejected");
     if (outcome.kind === "rejected") {
       expect(outcome.status).toBe(400);
@@ -90,10 +70,8 @@ describe("CircleSettleSvmClient", () => {
       json: jest.fn().mockResolvedValue({ message: "down" }),
     }) as unknown as typeof fetch;
 
-    const client = new CircleSettleSvmClient(
-      configStub({ CIRCLE_X402_SVM_FACILITATOR_URL: URL }),
-    );
-    const outcome = await client.settle({ signedTransaction: "abc" });
+    const client = new CircleSettleSvmClient(configStub({}));
+    const outcome = await client.settle(URL, { signedTransaction: "abc" });
     expect(outcome.kind).toBe("upstream");
     if (outcome.kind === "upstream") {
       expect(outcome.status).toBe(503);
@@ -108,10 +86,8 @@ describe("CircleSettleSvmClient", () => {
       json: jest.fn().mockRejectedValue(new Error("not JSON")),
     }) as unknown as typeof fetch;
 
-    const client = new CircleSettleSvmClient(
-      configStub({ CIRCLE_X402_SVM_FACILITATOR_URL: URL }),
-    );
-    const outcome = await client.settle({ signedTransaction: "abc" });
+    const client = new CircleSettleSvmClient(configStub({}));
+    const outcome = await client.settle(URL, { signedTransaction: "abc" });
     expect(outcome.kind).toBe("upstream");
   });
 
@@ -122,10 +98,8 @@ describe("CircleSettleSvmClient", () => {
       return Promise.reject(err);
     }) as unknown as typeof fetch;
 
-    const client = new CircleSettleSvmClient(
-      configStub({ CIRCLE_X402_SVM_FACILITATOR_URL: URL }),
-    );
-    const outcome = await client.settle({ signedTransaction: "abc" });
+    const client = new CircleSettleSvmClient(configStub({}));
+    const outcome = await client.settle(URL, { signedTransaction: "abc" });
     expect(outcome.kind).toBe("timeout");
   });
 
@@ -134,10 +108,8 @@ describe("CircleSettleSvmClient", () => {
       .fn()
       .mockRejectedValue(new Error("ENOTFOUND")) as unknown as typeof fetch;
 
-    const client = new CircleSettleSvmClient(
-      configStub({ CIRCLE_X402_SVM_FACILITATOR_URL: URL }),
-    );
-    const outcome = await client.settle({ signedTransaction: "abc" });
+    const client = new CircleSettleSvmClient(configStub({}));
+    const outcome = await client.settle(URL, { signedTransaction: "abc" });
     expect(outcome.kind).toBe("upstream");
   });
 
@@ -155,12 +127,9 @@ describe("CircleSettleSvmClient", () => {
     global.fetch = fetchMock as unknown as typeof fetch;
 
     const client = new CircleSettleSvmClient(
-      configStub({
-        CIRCLE_X402_SVM_FACILITATOR_URL: URL,
-        CIRCLE_API_KEY: "SAND_API_KEY:deadbeef",
-      }),
+      configStub({ CIRCLE_API_KEY: "SAND_API_KEY:deadbeef" }),
     );
-    await client.settle({ signedTransaction: "abc" });
+    await client.settle(URL, { signedTransaction: "abc" });
     const init = fetchMock.mock.calls[0][1];
     expect(init.headers["Authorization"]).toBe("Bearer SAND_API_KEY:deadbeef");
   });

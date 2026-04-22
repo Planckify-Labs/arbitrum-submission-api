@@ -59,11 +59,9 @@ import { IntentsService } from "./intents.service";
     IntentsService,
     CircleSettleClient,
     { provide: CIRCLE_SETTLE_CLIENT, useClass: CircleSettleClient },
-    // Solana x402 facilitator client (task 43 / spec §5.2.1). The client
-    // gracefully no-ops when `CIRCLE_X402_SVM_FACILITATOR_URL` is blank, so
-    // pre-M6 deployments can mount this module with the SVM rail simply
-    // unavailable (service throws `SVM_FACILITATOR_NOT_CONFIGURED` on
-    // invocation; create-intent rejects SVM with the same code).
+    // Solana x402 facilitator client (task 43 / spec §5.2.1). The
+    // facilitator URL is resolved from `Blockchain.x402FacilitatorUrl` at
+    // call time — chains without a URL configured get a typed 503.
     CircleSettleSvmClient,
     { provide: CIRCLE_SETTLE_SVM_CLIENT, useClass: CircleSettleSvmClient },
   ],

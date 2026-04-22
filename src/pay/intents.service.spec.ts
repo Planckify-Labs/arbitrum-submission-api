@@ -68,6 +68,7 @@ interface FakePrisma {
   };
   merchant: { findUnique: jest.Mock };
   exchangeRate: { findFirst: jest.Mock };
+  blockchain: { findUnique: jest.Mock };
 }
 
 function prismaStub(opts?: {
@@ -110,6 +111,14 @@ function prismaStub(opts?: {
     },
     merchant: { findUnique: jest.fn(async () => merchant) },
     exchangeRate: { findFirst: jest.fn(async () => fxRow) },
+    blockchain: {
+      findUnique: jest.fn(async () => ({
+        isActive: true,
+        x402FacilitatorUrl:
+          "https://gateway-api-testnet.circle.com/gateway/v1/x402/settle",
+        gatewayWalletContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+      })),
+    },
   };
 }
 
@@ -129,6 +138,13 @@ function circleSettleStub() {
   };
 }
 
+function blockchainCacheStub() {
+  return {
+    getByChainId: jest.fn(async (_chainId: number, fallback: () => Promise<unknown>) => fallback()),
+    getByChainSlug: jest.fn(async (_slug: string, fallback: () => Promise<unknown>) => fallback()),
+  };
+}
+
 function buildService(overrides: {
   prisma?: FakePrisma;
   x402?: Pick<X402SupportedService, "getSupportedForChain">;
@@ -143,16 +159,18 @@ function buildService(overrides: {
   const config = overrides.config ?? configStub();
   const circleSettle = overrides.circleSettle ?? circleSettleStub();
   const blockchainVerification = overrides.blockchainVerification ?? null;
+  const bcCache = blockchainCacheStub();
   const svc = new IntentsService(
     prisma as unknown as PrismaService,
     valkey as unknown as ValkeyService,
+    bcCache as any,
     x402 as unknown as X402SupportedService,
     config as unknown as ConfigService,
     circleSettle as any,
     null, // payoutProvider — optional, null is valid.
     blockchainVerification as any,
   );
-  return { svc, prisma, x402, valkey, config, circleSettle, blockchainVerification };
+  return { svc, prisma, x402, valkey, config, circleSettle, blockchainVerification, bcCache };
 }
 
 describe("IntentsService", () => {
@@ -630,6 +648,14 @@ describe("IntentsService.submitNanopay", () => {
       },
       merchant: { findUnique: jest.fn() },
       exchangeRate: { findFirst: jest.fn() },
+      blockchain: {
+        findUnique: jest.fn(async () => ({
+          isActive: true,
+          x402FacilitatorUrl:
+            "https://gateway-api-testnet.circle.com/gateway/v1/x402/settle",
+          gatewayWalletContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+        })),
+      },
       $transaction,
     };
   }

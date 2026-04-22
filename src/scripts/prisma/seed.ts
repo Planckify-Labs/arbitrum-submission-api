@@ -669,7 +669,8 @@ async function main() {
         x402DomainName: "GatewayWalletBatched",
         x402DomainVersion: "1",
         x402VerifyingContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
-        x402FacilitatorUrl: null, // Filled in once Arc facilitator deploys (M5).
+        x402FacilitatorUrl:
+          "https://gateway-api-testnet.circle.com/gateway/v1/x402/settle",
         // Bundler URL is server-only; Arc doesn't need one (USDC=gas → no
         // UserOps, no bundler). Explicit `null` converges drift on re-seed
         // so an ops-set URL on Arc (which would be a mistake) gets cleared.
@@ -693,7 +694,8 @@ async function main() {
         x402DomainName: "GatewayWalletBatched",
         x402DomainVersion: "1",
         x402VerifyingContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
-        x402FacilitatorUrl: null, // Filled in once Arc facilitator deploys (M5).
+        x402FacilitatorUrl:
+          "https://gateway-api-testnet.circle.com/gateway/v1/x402/settle",
         bundlerUrl: null, // Arc has no bundler; see task 37 + §7.1.
       },
     }),

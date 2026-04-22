@@ -49,6 +49,20 @@ export class BlockchainCacheService {
   }
 
   /**
+   * Get blockchain by chain slug with cache-aside pattern.
+   * Used by SVM flows where chainId is null and slug is the lookup key.
+   */
+  async getByChainSlug<T>(
+    chainSlug: string,
+    fallback: () => Promise<T>,
+  ): Promise<T> {
+    const key = this.cacheManager.buildKey('blockchain', 'slug', chainSlug);
+    return this.cacheManager.cacheAside(key, fallback, {
+      ttl: this.TTL.BLOCKCHAIN,
+    });
+  }
+
+  /**
    * Get active blockchains list with cache-aside pattern
    * Used by blockchain-verification service on initialization
    */

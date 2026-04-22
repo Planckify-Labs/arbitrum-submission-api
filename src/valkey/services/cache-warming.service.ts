@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ValkeyService } from '../valkey.service';
+import { BlockchainCacheService } from './blockchain-cache.service';
 import { ProductCacheService } from './product-cache.service';
 import { ExchangeRateCacheService } from './exchange-rate-cache.service';
 
@@ -20,6 +21,7 @@ export class CacheWarmingService implements OnModuleInit {
     private readonly prismaService: PrismaService,
     private readonly productCacheService: ProductCacheService,
     private readonly exchangeRateCacheService: ExchangeRateCacheService,
+    private readonly blockchainCacheService: BlockchainCacheService,
   ) {
     this.enabled = this.configService.get<string>('CACHE_WARMING_ENABLED', 'true') === 'true';
   }
@@ -51,6 +53,7 @@ export class CacheWarmingService implements OnModuleInit {
       this.warmProductCache(),
       this.warmExchangeRateCache(),
       this.warmCatalogCache(),
+      this.warmBlockchainCache(),
     ]);
 
     const duration = Date.now() - startTime;
@@ -172,6 +175,32 @@ export class CacheWarmingService implements OnModuleInit {
       this.logger.debug('Warmed catalog cache');
     } catch (error) {
       this.logger.error(`Failed to warm catalog cache: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Warm blockchain cache with active chains so facilitator URLs and
+   * gateway contracts are available from the first request.
+   */
+  private async warmBlockchainCache(): Promise<void> {
+    try {
+      const chains = await this.prismaService.blockchain.findMany({
+        where: { isActive: true },
+      });
+
+      for (const chain of chains) {
+        if (chain.chainId != null) {
+          await this.blockchainCacheService.getByChainId(chain.chainId, async () => chain);
+        }
+        if (chain.chainSlug) {
+          await this.blockchainCacheService.getByChainSlug(chain.chainSlug, async () => chain);
+        }
+        await this.blockchainCacheService.setBlockchain(chain.id, chain);
+      }
+
+      this.logger.debug(`Warmed cache for ${chains.length} blockchains`);
+    } catch (error) {
+      this.logger.error(`Failed to warm blockchain cache: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 

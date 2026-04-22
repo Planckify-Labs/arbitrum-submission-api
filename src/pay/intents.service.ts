@@ -19,6 +19,7 @@ import { ConfigService } from "@nestjs/config";
 import type { Hash } from "viem";
 import { BlockchainVerificationService } from "../blockchain-verification/blockchain-verification.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { BlockchainCacheService } from "../valkey/services/blockchain-cache.service";
 import { ValkeyService } from "../valkey/valkey.service";
 import { X402SupportedService } from "../x402/x402-supported.service";
 import {
@@ -199,6 +200,7 @@ export class IntentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly valkey: ValkeyService,
+    private readonly blockchainCache: BlockchainCacheService,
     private readonly x402Supported: X402SupportedService,
     private readonly config: ConfigService,
     @Inject(CIRCLE_SETTLE_CLIENT)
@@ -206,14 +208,8 @@ export class IntentsService {
     @Optional()
     @Inject(PAYOUT_PROVIDER)
     private readonly payoutProvider: IPayoutProvider | null = null,
-    // `BlockchainVerificationService` is optional so unit tests can
-    // build the service without wiring an on-chain client. Task 38 is
-    // the only consumer; all other endpoints are DB + Circle-only.
     @Optional()
     private readonly blockchainVerification: BlockchainVerificationService | null = null,
-    // SVM facilitator client (task 43 / spec §5.2.1). `@Optional()` so the
-    // service is buildable in unit tests that only exercise the EVM path,
-    // and so the module boots pre-M6 when the facilitator URL is blank.
     @Optional()
     @Inject(CIRCLE_SETTLE_SVM_CLIENT)
     private readonly circleSettleSvm: ICircleSettleSvmClient | null = null,
@@ -330,19 +326,20 @@ export class IntentsService {
         });
       }
 
-      // SVM facilitator URL is the second half of the same gate — the
-      // intent is useless if we can't forward it later. Check at quote
-      // time so mobile gets the 503 up front rather than after signing.
-      const facilitatorUrl = this.config.get<string>(
-        "CIRCLE_X402_SVM_FACILITATOR_URL",
-        "",
-      );
-      if (!facilitatorUrl || facilitatorUrl.trim().length === 0) {
-        throw new ServiceUnavailableException({
-          message:
-            "CIRCLE_X402_SVM_FACILITATOR_URL is not configured; SVM intents are disabled pre-M6.",
-          code: "SVM_FACILITATOR_NOT_CONFIGURED",
-        });
+      // Facilitator URL is the second half of the same gate — the intent
+      // is useless if we can't forward it later. Check at quote time so
+      // mobile gets the 503 up front rather than after signing.
+      {
+        const svmRow = await this.resolveSvmBlockchainRow(
+          SVM_MAINNET_SENTINEL_CHAIN_ID,
+        );
+        if (!svmRow?.x402FacilitatorUrl) {
+          throw new ServiceUnavailableException({
+            message:
+              "x402FacilitatorUrl not configured for SVM chain; SVM intents are disabled.",
+            code: "SVM_FACILITATOR_NOT_CONFIGURED",
+          });
+        }
       }
 
       // Default to mainnet-beta for the sentinel. Devnet is reachable via
@@ -867,8 +864,12 @@ export class IntentsService {
       },
     };
 
+    const facilitatorUrl = await this.resolveFacilitatorUrl(
+      intent.usdcSourceChainId,
+    );
+
     const submittedAt = new Date();
-    const outcome = await this.circleSettle.settle(settleBody);
+    const outcome = await this.circleSettle.settle(facilitatorUrl, settleBody);
 
     return await this.persistOutcome({
       intent,
@@ -884,10 +885,8 @@ export class IntentsService {
    *
    * The Solana equivalent of {@link submitNanopay}. Mobile's task-42 signer
    * produces a base64-encoded partially-signed Solana versioned transaction;
-   * we forward the opaque string to the facilitator configured by
-   * `CIRCLE_X402_SVM_FACILITATOR_URL` (Circle if `solana:*` is in its
-   * x402-supported list at boot, otherwise an external Solana-compatible
-   * facilitator per spec §12 Q7 / RFC `coinbase/x402#646`).
+   * we forward the opaque string to the facilitator URL stored in
+   * `Blockchain.x402FacilitatorUrl` for the SVM chain row.
    *
    * Three-role separation (memory `feedback_role_separation.md`): backend
    * does NOT parse the tx bytes — task-43 Constraints say "if
@@ -976,6 +975,13 @@ export class IntentsService {
       });
     }
 
+    if (!chainRow.x402FacilitatorUrl) {
+      throw new ServiceUnavailableException({
+        message: `x402FacilitatorUrl not configured for chain ${chainRow.chainSlug}.`,
+        code: "SVM_FACILITATOR_NOT_CONFIGURED",
+      });
+    }
+
     const x402Entry =
       this.x402Supported.getSupportedForNetwork(
         chainRow.chainSlug === "solana-mainnet"
@@ -1020,10 +1026,10 @@ export class IntentsService {
     };
 
     const submittedAt = new Date();
-    const outcome = await this.circleSettleSvm.settle({
-      signedTransaction,
-      paymentRequirements,
-    });
+    const outcome = await this.circleSettleSvm.settle(
+      chainRow.x402FacilitatorUrl,
+      { signedTransaction, paymentRequirements },
+    );
 
     return await this.persistSvmOutcome({
       intent,
@@ -1041,15 +1047,31 @@ export class IntentsService {
    */
   private async resolveSvmBlockchainRow(
     sentinelChainId: number,
-  ): Promise<{ id: string; chainSlug: string } | null> {
+  ): Promise<{
+    id: string;
+    chainSlug: string;
+    x402FacilitatorUrl: string | null;
+  } | null> {
     const slug = SVM_SENTINEL_TO_CHAIN_SLUG[sentinelChainId];
     if (!slug) return null;
-    const row = await this.prisma.blockchain.findUnique({
-      where: { chainSlug: slug },
-      select: { id: true, chainSlug: true, isActive: true, isEVM: true },
-    });
+    const row = await this.blockchainCache.getByChainSlug(slug, () =>
+      this.prisma.blockchain.findUnique({
+        where: { chainSlug: slug },
+        select: {
+          id: true,
+          chainSlug: true,
+          isActive: true,
+          isEVM: true,
+          x402FacilitatorUrl: true,
+        },
+      }),
+    );
     if (!row || !row.isActive || row.isEVM) return null;
-    return { id: row.id, chainSlug: row.chainSlug ?? slug };
+    return {
+      id: row.id,
+      chainSlug: row.chainSlug ?? slug,
+      x402FacilitatorUrl: row.x402FacilitatorUrl ?? null,
+    };
   }
 
   /**
@@ -1414,10 +1436,16 @@ export class IntentsService {
    * if the chain isn't configured — task 20 / ops seed populates this.
    */
   private async resolveGatewayWalletContract(chainId: number): Promise<string> {
-    const row = await this.prisma.blockchain.findUnique({
-      where: { chainId },
-      select: { gatewayWalletContract: true, isActive: true },
-    });
+    const row = await this.blockchainCache.getByChainId(chainId, () =>
+      this.prisma.blockchain.findUnique({
+        where: { chainId },
+        select: {
+          gatewayWalletContract: true,
+          x402FacilitatorUrl: true,
+          isActive: true,
+        },
+      }),
+    );
     if (!row || !row.isActive) {
       throw new ServiceUnavailableException({
         message: `Chain ${chainId} is not configured or not active.`,
@@ -1431,6 +1459,28 @@ export class IntentsService {
       });
     }
     return row.gatewayWalletContract;
+  }
+
+  private async resolveFacilitatorUrl(chainId: number): Promise<string> {
+    const row = await this.blockchainCache.getByChainId(chainId, () =>
+      this.prisma.blockchain.findUnique({
+        where: { chainId },
+        select: { x402FacilitatorUrl: true, isActive: true },
+      }),
+    );
+    if (!row || !row.isActive) {
+      throw new ServiceUnavailableException({
+        message: `Chain ${chainId} is not configured or not active.`,
+        code: "CHAIN_NOT_CONFIGURED",
+      });
+    }
+    if (!row.x402FacilitatorUrl) {
+      throw new ServiceUnavailableException({
+        message: `x402FacilitatorUrl not configured for chainId=${chainId}.`,
+        code: "FACILITATOR_URL_NOT_CONFIGURED",
+      });
+    }
+    return row.x402FacilitatorUrl;
   }
 
   /**

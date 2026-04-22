@@ -76,6 +76,7 @@ export type CircleSettleOutcome =
  */
 export interface ICircleSettleClient {
   settle(
+    facilitatorUrl: string,
     body: CircleSettleRequest,
     signal?: AbortSignal,
   ): Promise<CircleSettleOutcome>;
@@ -83,9 +84,6 @@ export interface ICircleSettleClient {
 
 /** DI token for the Circle settle client so tests can inject a stub. */
 export const CIRCLE_SETTLE_CLIENT = "CIRCLE_SETTLE_CLIENT";
-
-/** Default Circle Gateway testnet base. Overridable via env. */
-export const DEFAULT_CIRCLE_GATEWAY_API = "https://gateway-api-testnet.circle.com";
 
 /**
  * Per user-prompt scope item 2 (timeouts): "Circle call: 30s timeout. If
@@ -95,25 +93,17 @@ export const DEFAULT_CIRCLE_GATEWAY_API = "https://gateway-api-testnet.circle.co
  */
 export const CIRCLE_SETTLE_TIMEOUT_MS = 30_000;
 
-/** Circle's x402 settle path — locked by the OpenAPI (spec §6.5). */
-export const CIRCLE_SETTLE_PATH = "/gateway/v1/x402/settle";
-
 @Injectable()
 export class CircleSettleClient implements ICircleSettleClient {
   private readonly logger = new Logger(CircleSettleClient.name);
-  private readonly base: string;
   private readonly apiKey: string | undefined;
 
   constructor(private readonly config: ConfigService) {
-    this.base = this.config
-      .get<string>("CIRCLE_GATEWAY_API", DEFAULT_CIRCLE_GATEWAY_API)
-      .replace(/\/+$/, "");
-    // Optional. Omitted on the hot path by default; present only if ops
-    // wants Circle Console coverage (spec §13).
     this.apiKey = this.config.get<string>("CIRCLE_API_KEY") || undefined;
   }
 
   async settle(
+    facilitatorUrl: string,
     body: CircleSettleRequest,
     parentSignal?: AbortSignal,
   ): Promise<CircleSettleOutcome> {
@@ -135,7 +125,7 @@ export class CircleSettleClient implements ICircleSettleClient {
 
     let status: number | null = null;
     try {
-      const response = await fetch(`${this.base}${CIRCLE_SETTLE_PATH}`, {
+      const response = await fetch(facilitatorUrl, {
         method: "POST",
         headers,
         body: JSON.stringify(body),
