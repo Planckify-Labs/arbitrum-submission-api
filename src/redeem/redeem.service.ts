@@ -293,6 +293,100 @@ export class RedeemService {
     }
   }
 
+  // ── Admin: list all redemptions ─────────────────────────────────────────
+
+  async findAllAdmin(query: RedeemHistoryQueryDto & { userId?: string }) {
+    const limit = query.limit ?? 20;
+    const where: Prisma.PointRedemptionWhereInput = {};
+    if (query.userId) where.userId = query.userId;
+    if (query.status) where.status = query.status;
+    if (query.cursor) {
+      where.id = { lt: query.cursor };
+    }
+
+    const records = await this.prisma.pointRedemption.findMany({
+      where,
+      take: limit + 1,
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      include: {
+        user: { select: { id: true, username: true, email: true } },
+        productVariant: { include: { product: true } },
+        productPrice: true,
+      },
+    });
+
+    const hasMore = records.length > limit;
+    const data = hasMore ? records.slice(0, limit) : records;
+    const nextCursor = hasMore ? data[data.length - 1].id : null;
+
+    return {
+      data: data.map((r) => ({
+        id: r.id,
+        status: r.status,
+        pointsSpent: r.pointsSpent.toString(),
+        vendorRefId: r.vendorRefId,
+        customerInfo: r.customerInfo,
+        user: r.user,
+        product: {
+          id: r.productVariant.product.id,
+          name: r.productVariant.product.name,
+          imageUrl: r.productVariant.product.imageUrl,
+          isVoucher: r.productVariant.product.isVoucher,
+          variant: {
+            id: r.productVariant.id,
+            name: r.productVariant.name,
+          },
+          price: {
+            amount: Number(r.productPrice.sellPrice),
+            currency: r.productPrice.currency,
+          },
+        },
+        createdAt: r.createdAt.toISOString(),
+        updatedAt: r.updatedAt.toISOString(),
+      })),
+      nextCursor,
+      hasMore,
+    };
+  }
+
+  // ── Admin: get any redemption by ID ───────────────────────────────────────
+
+  async findOneAdmin(id: string) {
+    const redemption = await this.prisma.pointRedemption.findUnique({
+      where: { id },
+      include: {
+        user: { select: { id: true, username: true, email: true } },
+        productVariant: { include: { product: true } },
+        productPrice: true,
+      },
+    });
+    if (!redemption) throw new NotFoundException(`Redemption ${id} not found`);
+    return {
+      id: redemption.id,
+      status: redemption.status,
+      pointsSpent: redemption.pointsSpent.toString(),
+      vendorRefId: redemption.vendorRefId,
+      customerInfo: redemption.customerInfo,
+      user: redemption.user,
+      product: {
+        id: redemption.productVariant.product.id,
+        name: redemption.productVariant.product.name,
+        imageUrl: redemption.productVariant.product.imageUrl,
+        isVoucher: redemption.productVariant.product.isVoucher,
+        variant: {
+          id: redemption.productVariant.id,
+          name: redemption.productVariant.name,
+        },
+        price: {
+          amount: Number(redemption.productPrice.sellPrice),
+          currency: redemption.productPrice.currency,
+        },
+      },
+      createdAt: redemption.createdAt.toISOString(),
+      updatedAt: redemption.updatedAt.toISOString(),
+    };
+  }
+
   async getRedeemHistory(userId: string, query: RedeemHistoryQueryDto) {
     const limit = query.limit ?? 20;
 

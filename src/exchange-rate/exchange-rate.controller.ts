@@ -2,10 +2,14 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
+  Delete,
   Body,
   Query,
   Param,
   BadRequestException,
+  HttpCode,
+  HttpStatus,
 } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { ExchangeRateService } from "./exchange-rate.service";
@@ -15,6 +19,10 @@ import {
   GetLatestExchangeRateDto,
 } from "./dto/exchange-rate.dto";
 import {
+  CreateExchangeSourceDto,
+  UpdateExchangeSourceDto,
+} from "./dto/exchange-source.dto";
+import {
   ApiCreateExchangeRate,
   ApiGetLatestExchangeRate,
   ApiGetAllExchangeRates,
@@ -23,6 +31,8 @@ import {
 } from "../decorators/swagger/exchange-rate.decorators";
 import { Public } from "../decorators/public.decorator";
 import { ApiKey } from "../decorators/api-key.decorator";
+import { Roles } from "../decorators/roles.decorator";
+import { UserRole } from "@generated/prisma";
 
 @ApiTags("Exchange Rates")
 @Controller("exchange-rates")
@@ -58,6 +68,40 @@ export class ExchangeRateController {
   async getAverage(@Query() query: QueryExchangeRateDto) {
     console.log("Getting average exchange rate with query:", query);
     return await this.exchangeRateService.getAverageRate(query);
+  }
+
+  @Get("sources")
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async findAllSources() {
+    return this.exchangeRateService.findAllSources();
+  }
+
+  @Get("sources/:id")
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async findSourceById(@Param("id") id: string) {
+    return this.exchangeRateService.findSourceById(id);
+  }
+
+  @Post("sources")
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async createSource(@Body() dto: CreateExchangeSourceDto) {
+    return this.exchangeRateService.createSource(dto);
+  }
+
+  @Patch("sources/:id")
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async updateSource(
+    @Param("id") id: string,
+    @Body() dto: UpdateExchangeSourceDto,
+  ) {
+    return this.exchangeRateService.updateSource(id, dto);
+  }
+
+  @Delete("sources/:id")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async deleteSource(@Param("id") id: string) {
+    return this.exchangeRateService.deleteSource(id);
   }
 
   @Get(":id")

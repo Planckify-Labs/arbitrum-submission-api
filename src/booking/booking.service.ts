@@ -206,6 +206,19 @@ export class BookingService {
     return booking;
   }
 
+  async findAllAdmin(query: BookingQueryDto) {
+    const { status, cursor, take = 10 } = query;
+    return this.prisma.bookingOrder.findMany({
+      where: status ? { status } : undefined,
+      take,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      orderBy: { createdAt: 'desc' },
+      include: {
+        purchase: true,
+      },
+    });
+  }
+
   async getLatestBooking(walletAddress: string) {
     return this.bookingCache.getLatestBooking(walletAddress, async () => {
       const booking = await this.prisma.bookingOrder.findFirst({

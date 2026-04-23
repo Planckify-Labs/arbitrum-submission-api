@@ -19,12 +19,28 @@ import { ExecuteRedeemDto } from "./dto/execute-redeem.dto";
 import { RedeemHistoryQueryDto } from "./dto/redeem-history-query.dto";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { ApiKey } from "../decorators/api-key.decorator";
+import { Roles } from "../decorators/roles.decorator";
+import { UserRole } from "@generated/prisma";
 
 @Controller("redeem")
 @ApiTags("redeem")
 @ApiSecurity("api-key")
 export class RedeemController {
   constructor(private readonly redeemService: RedeemService) {}
+
+  @Get("admin/all")
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: "List all redemptions (Admin)" })
+  findAllAdmin(@Query() query: RedeemHistoryQueryDto) {
+    return this.redeemService.findAllAdmin(query);
+  }
+
+  @Get("admin/:id")
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: "Get any redemption by ID (Admin)" })
+  findOneAdmin(@Param("id") id: string) {
+    return this.redeemService.findOneAdmin(id);
+  }
 
   @Post("execute")
   @UseGuards(JwtAuthGuard)

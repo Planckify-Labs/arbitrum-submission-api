@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateSmartContractDto } from "./dto/create-smart-contract.dto";
 import { UpdateSmartContractDto } from "./dto/update-smart-contract.dto";
@@ -6,6 +10,8 @@ import { SearchSmartContractDto } from "./dto/search-smart-contract.dto";
 import { Prisma } from "@generated/prisma";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import { SmartContractCacheService } from "../valkey/services/smart-contract-cache.service";
+import { CreateContractAbiDto } from "./dto/contract-abi.dto";
+import { UpdateContractAbiDto } from "./dto/contract-abi.dto";
 
 @Injectable()
 export class SmartContractsService {
@@ -223,6 +229,40 @@ export class SmartContractsService {
       }
       throw error;
     }
+  }
+
+  async findAllAbis() {
+    return this.prisma.contractABI.findMany({
+      orderBy: { name: "asc" },
+    });
+  }
+
+  async findAbiById(id: string) {
+    const abi = await this.prisma.contractABI.findUnique({ where: { id } });
+    if (!abi) throw new NotFoundException(`Contract ABI ${id} not found`);
+    return abi;
+  }
+
+  async createAbi(dto: CreateContractAbiDto) {
+    return this.prisma.contractABI.create({ data: dto as any });
+  }
+
+  async updateAbi(id: string, dto: UpdateContractAbiDto) {
+    await this.findAbiById(id);
+    return this.prisma.contractABI.update({ where: { id }, data: dto as any });
+  }
+
+  async deleteAbi(id: string) {
+    await this.findAbiById(id);
+    const count = await this.prisma.smartContract.count({
+      where: { abiId: id },
+    });
+    if (count > 0) {
+      throw new ConflictException(
+        `Cannot delete ABI: ${count} smart contracts reference it`,
+      );
+    }
+    await this.prisma.contractABI.delete({ where: { id } });
   }
 
   /**

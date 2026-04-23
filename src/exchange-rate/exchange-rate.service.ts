@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   CreateExchangeRateDto,
@@ -7,6 +11,10 @@ import {
   ExchangeRateResponseDto,
   GetLatestExchangeRateDto,
 } from "./dto/exchange-rate.dto";
+import {
+  CreateExchangeSourceDto,
+  UpdateExchangeSourceDto,
+} from "./dto/exchange-source.dto";
 import { Prisma, ExchangeRate } from "@generated/prisma";
 import { ExchangeRateCacheService } from "../valkey/services/exchange-rate-cache.service";
 
@@ -250,5 +258,42 @@ export class ExchangeRateService {
     } catch {
       return null;
     }
+  }
+
+  async findAllSources() {
+    return this.prisma.exchangeSource.findMany({
+      orderBy: { priority: "asc" },
+    });
+  }
+
+  async findSourceById(id: string) {
+    const source = await this.prisma.exchangeSource.findUnique({
+      where: { id },
+    });
+    if (!source)
+      throw new NotFoundException(`Exchange source ${id} not found`);
+    return source;
+  }
+
+  async createSource(dto: CreateExchangeSourceDto) {
+    return this.prisma.exchangeSource.create({ data: dto });
+  }
+
+  async updateSource(id: string, dto: UpdateExchangeSourceDto) {
+    await this.findSourceById(id);
+    return this.prisma.exchangeSource.update({ where: { id }, data: dto });
+  }
+
+  async deleteSource(id: string) {
+    await this.findSourceById(id);
+    const count = await this.prisma.exchangeRate.count({
+      where: { sourceProviderId: id },
+    });
+    if (count > 0) {
+      throw new ConflictException(
+        `Cannot delete source: ${count} exchange rates reference it`,
+      );
+    }
+    await this.prisma.exchangeSource.delete({ where: { id } });
   }
 }

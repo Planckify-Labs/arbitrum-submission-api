@@ -48,6 +48,15 @@ export class TransactionsService {
       where: cursorDate ? { createdAt: { lt: cursorDate } } : undefined,
       include: {
         token: true,
+        user: {
+          select: {
+            id: true,
+            walletAddress: true,
+            username: true,
+            name: true,
+            email: true,
+          },
+        },
       },
       orderBy: {
         createdAt: "desc",
@@ -63,6 +72,15 @@ export class TransactionsService {
         token: {
           include: {
             blockchain: true,
+          },
+        },
+        user: {
+          select: {
+            id: true,
+            walletAddress: true,
+            username: true,
+            name: true,
+            email: true,
           },
         },
       },
@@ -105,6 +123,15 @@ export class TransactionsService {
       where: { userId },
       include: {
         token: true,
+        user: {
+          select: {
+            id: true,
+            walletAddress: true,
+            username: true,
+            name: true,
+            email: true,
+          },
+        },
       },
     });
   }
@@ -128,6 +155,15 @@ export class TransactionsService {
       },
       include: {
         token: true,
+        user: {
+          select: {
+            id: true,
+            walletAddress: true,
+            username: true,
+            name: true,
+            email: true,
+          },
+        },
       },
       orderBy: {
         createdAt: "desc",
@@ -148,6 +184,15 @@ export class TransactionsService {
       where: { tokenId },
       include: {
         token: true,
+        user: {
+          select: {
+            id: true,
+            walletAddress: true,
+            username: true,
+            name: true,
+            email: true,
+          },
+        },
       },
       orderBy: {
         createdAt: "desc",

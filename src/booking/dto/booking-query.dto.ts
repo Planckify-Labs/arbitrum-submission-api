@@ -1,5 +1,5 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsEnum, IsOptional, IsDateString, IsString } from "class-validator";
+import { IsEnum, IsOptional, IsDateString, IsString, IsInt, Min } from "class-validator";
 import { Type } from "class-transformer";
 import { BookingStatus } from "../enums/booking-status.enum";
 
@@ -44,6 +44,26 @@ export class BookingQueryDto {
   @IsString()
   @IsOptional()
   productId?: string;
+
+  @ApiProperty({
+    description: "Cursor for pagination (booking ID)",
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  cursor?: string;
+
+  @ApiProperty({
+    description: "Number of records to return",
+    example: 10,
+    required: false,
+    type: Number,
+  })
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  @Type(() => Number)
+  take?: number;
 }
 
 export class BookingStatsResponseDto {

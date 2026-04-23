@@ -17,6 +17,8 @@ import { PointHistoryQueryDto } from "./dto/point-history-query.dto";
 import { Public } from "../decorators/public.decorator";
 import { ApiKey } from "../decorators/api-key.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { Roles } from "../decorators/roles.decorator";
+import { UserRole } from "@generated/prisma";
 
 @Controller("points")
 @ApiTags("points")
@@ -30,6 +32,34 @@ export class PointsController {
   @ApiOperation({ summary: "Get current point price for a token/currency pair" })
   getPointPrice(@Query() query: GetPointPriceQueryDto) {
     return this.pointsService.getPointPrice(query);
+  }
+
+  @Get("admin/balances")
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: "List all user point balances (Admin)" })
+  getAllBalances() {
+    return this.pointsService.getAllBalancesAdmin();
+  }
+
+  @Get("admin/balance/:userId")
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: "Get user point balance (Admin)" })
+  getBalanceAdmin(@Param("userId") userId: string) {
+    return this.pointsService.getBalanceAdmin(userId);
+  }
+
+  @Get("admin/history")
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: "List point transactions (Admin)" })
+  getHistoryAdmin(@Query() query: PointHistoryQueryDto) {
+    return this.pointsService.getHistoryAdmin(query);
+  }
+
+  @Get("admin/summary/:userId")
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: "Get user points summary (Admin)" })
+  getSummaryAdmin(@Param("userId") userId: string) {
+    return this.pointsService.getSummaryAdmin(userId);
   }
 
   @Get("balance")

@@ -446,6 +446,94 @@ export class PointsService {
     await this.pointsCache.invalidateBalance(dto.userId);
   }
 
+  // ── Admin: get balance for a specific user ─────────────────────────────────
+
+  async getBalanceAdmin(userId: string) {
+    return this.getBalance(userId);
+  }
+
+  // ── Admin: get all users' point history ───────────────────────────────────
+
+  async getHistoryAdmin(query: PointHistoryQueryDto & { userId?: string }) {
+    const { userId, ...rest } = query;
+    if (userId) {
+      return this.getHistory(userId, rest);
+    }
+    // Return all users' history
+    const limit = rest.limit ?? 20;
+    const where: Prisma.PointTransactionWhereInput = {};
+    if (rest.type) where.type = rest.type;
+    if (rest.status) where.status = rest.status;
+    if (rest.cursor) {
+      where.id = { lt: rest.cursor };
+    }
+
+    const records = await this.prisma.pointTransaction.findMany({
+      where,
+      take: limit + 1,
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      include: {
+        user: { select: { id: true, username: true, email: true, walletAddress: true } },
+        token: { select: { symbol: true } },
+      },
+    });
+
+    const hasMore = records.length > limit;
+    const data = hasMore ? records.slice(0, limit) : records;
+    const nextCursor = hasMore ? data[data.length - 1].id : null;
+
+    return {
+      data: data.map((tx) => ({
+        id: tx.id,
+        type: tx.type,
+        amount: tx.amount.toString(),
+        balanceBefore: tx.balanceBefore.toString(),
+        balanceAfter: tx.balanceAfter.toString(),
+        status: tx.status,
+        tokenAmount: tx.tokenAmount?.toString() ?? null,
+        tokenSymbol: tx.token?.symbol ?? null,
+        txHash: tx.txHash,
+        refId: tx.refId,
+        referenceType: tx.referenceType,
+        referenceId: tx.referenceId,
+        user: tx.user,
+        createdAt: tx.createdAt.toISOString(),
+      })),
+      nextCursor,
+      hasMore,
+    };
+  }
+
+  // ── Admin: get points summary for a specific user ─────────────────────────
+
+  async getSummaryAdmin(userId: string) {
+    return this.getPointsSummary(userId);
+  }
+
+  // ── Admin: get all user balances ──────────────────────────────────────────
+
+  async getAllBalancesAdmin() {
+    const users = await this.prisma.user.findMany({
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        walletAddress: true,
+      },
+    });
+    const balances = await Promise.all(
+      users.map(async (user) => {
+        try {
+          const balance = await this.getBalance(user.id);
+          return { ...user, balance };
+        } catch {
+          return { ...user, balance: 0 };
+        }
+      }),
+    );
+    return balances.filter((b) => b.balance !== 0);
+  }
+
   // ── Admin: update PointPriceConfig ─────────────────────────────────────────
 
   async updatePriceConfig(

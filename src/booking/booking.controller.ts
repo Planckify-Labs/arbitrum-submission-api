@@ -26,11 +26,21 @@ import { ApiOperation, ApiResponse } from "@nestjs/swagger";
 import { BookingRateLimitGuard } from "./guards/booking-rate-limit.guard";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { addressesEqual } from "../auth/address-compare";
+import { Roles } from "../decorators/roles.decorator";
+import { UserRole } from "@generated/prisma";
 
 @Controller("bookings")
 @ApiTags("bookings")
 export class BookingController {
   constructor(private readonly bookingService: BookingService) {}
+
+  @Get()
+  @UseGuards(JwtAuthGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: "List all bookings (Admin only)" })
+  findAllAdmin(@Query() query: BookingQueryDto) {
+    return this.bookingService.findAllAdmin(query);
+  }
 
   @Post()
   @UseGuards(BookingRateLimitGuard)
@@ -47,14 +57,16 @@ export class BookingController {
     @Query() query: BookingQueryDto,
     @Request() req,
   ) {
-    if (
-      !addressesEqual(
-        req.user.walletAddress,
-        walletAddress,
-        req.user.addressNamespace,
-      )
-    ) {
-      throw new ForbiddenException("You can only access your own wallet data");
+    if (req.user.role !== 'ADMIN' && req.user.role !== 'SUPER_ADMIN') {
+      if (
+        !addressesEqual(
+          req.user.walletAddress,
+          walletAddress,
+          req.user.addressNamespace,
+        )
+      ) {
+        throw new ForbiddenException("You can only access your own wallet data");
+      }
     }
     return this.bookingService.getBookings(walletAddress, query);
   }
@@ -66,14 +78,16 @@ export class BookingController {
     @Param("walletAddress") walletAddress: string,
     @Request() req,
   ) {
-    if (
-      !addressesEqual(
-        req.user.walletAddress,
-        walletAddress,
-        req.user.addressNamespace,
-      )
-    ) {
-      throw new ForbiddenException("You can only access your own wallet data");
+    if (req.user.role !== 'ADMIN' && req.user.role !== 'SUPER_ADMIN') {
+      if (
+        !addressesEqual(
+          req.user.walletAddress,
+          walletAddress,
+          req.user.addressNamespace,
+        )
+      ) {
+        throw new ForbiddenException("You can only access your own wallet data");
+      }
     }
     return this.bookingService.getLatestBooking(walletAddress);
   }
@@ -85,14 +99,16 @@ export class BookingController {
     @Param("walletAddress") walletAddress: string,
     @Request() req,
   ) {
-    if (
-      !addressesEqual(
-        req.user.walletAddress,
-        walletAddress,
-        req.user.addressNamespace,
-      )
-    ) {
-      throw new ForbiddenException("You can only access your own wallet data");
+    if (req.user.role !== 'ADMIN' && req.user.role !== 'SUPER_ADMIN') {
+      if (
+        !addressesEqual(
+          req.user.walletAddress,
+          walletAddress,
+          req.user.addressNamespace,
+        )
+      ) {
+        throw new ForbiddenException("You can only access your own wallet data");
+      }
     }
     return this.bookingService.getBookingStats(walletAddress);
   }
@@ -105,14 +121,16 @@ export class BookingController {
     @Param("walletAddress") walletAddress: string,
     @Request() req,
   ) {
-    if (
-      !addressesEqual(
-        req.user.walletAddress,
-        walletAddress,
-        req.user.addressNamespace,
-      )
-    ) {
-      throw new ForbiddenException("You can only access your own wallet data");
+    if (req.user.role !== 'ADMIN' && req.user.role !== 'SUPER_ADMIN') {
+      if (
+        !addressesEqual(
+          req.user.walletAddress,
+          walletAddress,
+          req.user.addressNamespace,
+        )
+      ) {
+        throw new ForbiddenException("You can only access your own wallet data");
+      }
     }
     return this.bookingService.getAbandonedBookings(walletAddress);
   }
