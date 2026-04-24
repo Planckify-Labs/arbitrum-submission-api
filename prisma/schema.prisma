@@ -156,6 +156,11 @@ model Blockchain {
   pointTransactions PointTransaction[]
   nftAssets         NftAsset[]
 
+  // Onchain settlement coordinates (Phase 1)
+  takumiWalletContract String?
+  quoteSignerAddress   String?
+  minConfirmations     Int?
+
   // Circle Gateway / Paymaster / x402 coordinates (§7.1). Nullable — Gateway is
   // not deployed on every chain, and Arc itself has no Paymaster (USDC=gas).
   // Populated by ops via seed/SQL; x402_* columns are also rewritten by the
@@ -195,6 +200,12 @@ model Token {
   pointTransactions  PointTransaction[]
   createdAt          DateTime               @default(now())
   updatedAt          DateTime               @updatedAt
+
+  // Onchain settlement (Phase 1)
+  isPaymentEnabled Boolean @default(false)
+  platformFeeBps   Int     @default(0)
+
+  paymentIntents PaymentIntent[]
 
   @@unique([blockchainId, contractAddress])
 }
@@ -869,9 +880,16 @@ model PaymentIntent {
   merchantId            String
   fiatAmountMinor       Int
   fiatCurrency          String
-  usdcAmountMicros      BigInt
-  usdcSourceChainId     Int
+  tokenAmountMinor      BigInt              @map("usdcAmountMicros")
+  sourceChainId         Int                 @map("usdcSourceChainId")
   usdcTreasuryAddress   String
+  // Onchain settlement — multi-token + fee fields (Phase 1)
+  sourceToken                Token?              @relation(fields: [sourceTokenId], references: [id])
+  sourceTokenId              String?
+  platformFeeAmountMinor     BigInt?
+  merchantBackingAmountMinor BigInt?
+  platformFeeBpsSnapshot     Int?
+  quoteSignature             Bytes?
   // Audit trail — references the `exchange_rates` hypertable; FK omitted
   // because TimescaleDB hypertables cannot be FK targets (see CLAUDE.md).
   // Composite (id + createdAt) is mirrored on the snapshot columns below so
@@ -903,9 +921,10 @@ model PaymentIntent {
   updatedAt             DateTime            @updatedAt @db.Timestamptz()
   expiresAt             DateTime            @db.Timestamptz()
 
-  nanopaySubmissions NanopaySubmission[]
+  nanopaySubmissions  NanopaySubmission[]
   // payouts are audit-permanent; deleting an intent must NOT cascade to them.
-  payouts            ProviderPayout[]
+  payouts             ProviderPayout[]
+  onchainSettlements  OnchainSettlement[]
 
   @@index([status, expiresAt])
   @@index([merchantId, createdAt(sort: Desc)])
@@ -1027,4 +1046,22 @@ model MerchantQrisClaim {
   updatedAt       DateTime               @updatedAt @db.Timestamptz()
 
   @@index([qrisPan])
+}
+
+// ── Onchain Settlement (Phase 1) ───────────────────────────────────────────
+
+model OnchainSettlement {
+  id             String        @id @default(ulid())
+  intent         PaymentIntent @relation(fields: [intentId], references: [id], onDelete: Cascade)
+  intentId       String
+  txHash         String
+  chainId        Int
+  confirmations  Int?
+  verifiedAt     DateTime?     @db.Timestamptz()
+  failureCode    String?
+  failureMessage String?
+  createdAt      DateTime      @default(now()) @db.Timestamptz()
+
+  @@unique([intentId, txHash])
+  @@index([txHash])
 }
