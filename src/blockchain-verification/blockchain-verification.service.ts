@@ -16,6 +16,7 @@ import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { addressesEqual } from "../auth/address-compare";
 import { TakumiWalletAbi } from "./abis/takumi-wallet.abi";
+import { TakumiWalletMerchantAbi } from "./abis/takumi-wallet-merchant.abi";
 import {
   TTakumiWalletTransaction,
   TTransactionVerificationResult,
@@ -164,6 +165,84 @@ export class BlockchainVerificationService {
     return client;
   }
 
+  /**
+   * Phase A — tx-receipt-level verification only.
+   *
+   * Waits for the transaction receipt with the required confirmations,
+   * then validates: receipt status, chain ID, sender, recipient, and
+   * confirmation count. Does NOT verify contract-level data (Phase B).
+   *
+   * Extracted from `verifyTransaction` (task 16) so that callers needing
+   * only receipt-level checks (e.g. the onchain settlement provider) can
+   * call this independently, while `verifyTransaction` continues to use
+   * it internally before proceeding to Phase B.
+   */
+  async verifyTxReceiptOnly(args: {
+    transactionHash: string;
+    expectedSender: string;
+    expectedRecipient: string;
+    expectedChainId: number;
+    minimumConfirmations?: number;
+  }): Promise<{ receipt: TransactionReceipt; transaction: Transaction; confirmations: number }> {
+    const {
+      transactionHash,
+      expectedSender,
+      expectedRecipient,
+      expectedChainId,
+      minimumConfirmations = this.minConfirmations,
+    } = args;
+
+    const client = this.getClient(expectedChainId);
+
+    const receipt: TransactionReceipt =
+      await client.waitForTransactionReceipt({
+        hash: transactionHash as Hash,
+        confirmations: minimumConfirmations,
+        timeout: 60_000,
+      });
+
+    const transaction: Transaction = await client.getTransaction({
+      hash: transactionHash as Hash,
+    });
+
+    const confirmations = await this.getTransactionConfirmations(
+      transactionHash,
+      expectedChainId,
+    );
+
+    if (receipt.status !== "success") {
+      throw new BadRequestException(
+        `Transaction ${transactionHash} was reverted or failed`,
+      );
+    }
+
+    if (transaction.chainId !== expectedChainId) {
+      throw new BadRequestException(
+        `Chain ID mismatch: expected ${expectedChainId}, got ${transaction.chainId}`,
+      );
+    }
+
+    if (transaction.from.toLowerCase() !== expectedSender.toLowerCase()) {
+      throw new BadRequestException(
+        `Sender address mismatch: expected ${expectedSender}, got ${transaction.from}`,
+      );
+    }
+
+    if (transaction.to?.toLowerCase() !== expectedRecipient.toLowerCase()) {
+      throw new BadRequestException(
+        `Recipient address mismatch: expected ${expectedRecipient}, got ${transaction.to}`,
+      );
+    }
+
+    if (confirmations < minimumConfirmations) {
+      throw new BadRequestException(
+        `Insufficient confirmations: ${confirmations}/${minimumConfirmations}`,
+      );
+    }
+
+    return { receipt, transaction, confirmations };
+  }
+
   async verifyTransaction(
     request: TTransactionVerificationRequest,
   ): Promise<TTransactionVerificationResult> {
@@ -180,54 +259,17 @@ export class BlockchainVerificationService {
     );
 
     try {
-      const client = this.getClient(expectedChainId);
-
-      const receipt: TransactionReceipt =
-        await client.waitForTransactionReceipt({
-          hash: transactionHash as Hash,
-          confirmations: minimumConfirmations,
-          timeout: 60_000,
+      // Phase A — tx-receipt checks (delegated to verifyTxReceiptOnly)
+      const { receipt, transaction, confirmations } =
+        await this.verifyTxReceiptOnly({
+          transactionHash,
+          expectedSender,
+          expectedRecipient,
+          expectedChainId,
+          minimumConfirmations,
         });
 
-      const transaction: Transaction = await client.getTransaction({
-        hash: transactionHash as Hash,
-      });
-
-      const confirmations = await this.getTransactionConfirmations(
-        transactionHash,
-        expectedChainId,
-      );
-
-      if (receipt.status !== "success") {
-        throw new BadRequestException(
-          `Transaction ${transactionHash} was reverted or failed`,
-        );
-      }
-
-      if (transaction.chainId !== expectedChainId) {
-        throw new BadRequestException(
-          `Chain ID mismatch: expected ${expectedChainId}, got ${transaction.chainId}`,
-        );
-      }
-
-      if (transaction.from.toLowerCase() !== expectedSender.toLowerCase()) {
-        throw new BadRequestException(
-          `Sender address mismatch: expected ${expectedSender}, got ${transaction.from}`,
-        );
-      }
-
-      if (transaction.to?.toLowerCase() !== expectedRecipient.toLowerCase()) {
-        throw new BadRequestException(
-          `Recipient address mismatch: expected ${expectedRecipient}, got ${transaction.to}`,
-        );
-      }
-
-      if (confirmations < minimumConfirmations) {
-        throw new BadRequestException(
-          `Insufficient confirmations: ${confirmations}/${minimumConfirmations}`,
-        );
-      }
-
+      const client = this.getClient(expectedChainId);
       const currentBlock = await client.getBlock({
         blockTag: "latest",
       });
@@ -250,6 +292,7 @@ export class BlockchainVerificationService {
         `Transaction ${transactionHash} verified successfully with ${confirmations} confirmations`,
       );
 
+      // Phase B — contract-level verification
       await this.verifyTransactionInContract({
         refId: request.refId,
         contractAddress: request.contractAddress,
@@ -450,6 +493,112 @@ export class BlockchainVerificationService {
 
       throw new BadRequestException(
         `Failed to verify transaction in contract: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Verify a merchant payment in the TakumiWalletMerchant contract (task 17).
+   *
+   * Calls `readContract` with `getMerchantPaymentByRef(refId)` on the
+   * merchant contract ABI and compares all returned fields against the
+   * expected values from the DB. Throws `BadRequestException` with a
+   * specific message on any mismatch.
+   *
+   * The MerchantPayment struct returned by the contract:
+   *   payer, tokenAddress, merchantId, refId, amount, platformFeeAmount,
+   *   fiatAmountMinor, fiatCurrency, exchangeRateId, timestamp.
+   */
+  async verifyMerchantPaymentInContract(args: {
+    contractAddress: string;
+    chainId: number;
+    refId: string;
+    expectedPayer: string;
+    expectedMerchantId: string;
+    expectedTokenAddress: string;
+    expectedAmount: string;
+    expectedFiatAmountMinor: number;
+    expectedFiatCurrency: string;
+    expectedExchangeRateId: number;
+  }): Promise<void> {
+    try {
+      this.logger.log(
+        `Verifying merchant payment in contract ${args.contractAddress} for refId ${args.refId} on chain ${args.chainId}`,
+      );
+
+      const walletClient = this.getWalletClient(args.chainId);
+      const payment = await readContract(walletClient, {
+        address: args.contractAddress as `0x${string}`,
+        abi: TakumiWalletMerchantAbi,
+        functionName: "getMerchantPaymentByRef",
+        args: [args.refId],
+      });
+
+      if (payment.refId !== args.refId) {
+        throw new BadRequestException(
+          `Merchant payment refId mismatch: expected ${args.refId}, got ${payment.refId}`,
+        );
+      }
+
+      if (!addressesEqual(payment.payer, args.expectedPayer)) {
+        throw new BadRequestException(
+          `Merchant payment payer mismatch: expected ${args.expectedPayer}, got ${payment.payer}`,
+        );
+      }
+
+      if (payment.merchantId !== args.expectedMerchantId) {
+        throw new BadRequestException(
+          `Merchant payment merchantId mismatch: expected ${args.expectedMerchantId}, got ${payment.merchantId}`,
+        );
+      }
+
+      // Handle native token sentinel: address(0) represents native currency
+      const isNativeToken =
+        args.expectedTokenAddress === "0x0000000000000000000000000000000000000000" ||
+        args.expectedTokenAddress.toLowerCase() === args.contractAddress.toLowerCase();
+
+      if (
+        !isNativeToken &&
+        payment.tokenAddress.toLowerCase() !== args.expectedTokenAddress.toLowerCase()
+      ) {
+        throw new BadRequestException(
+          `Merchant payment tokenAddress mismatch: expected ${args.expectedTokenAddress}, got ${payment.tokenAddress}`,
+        );
+      }
+
+      if (payment.amount.toString() !== args.expectedAmount) {
+        throw new BadRequestException(
+          `Merchant payment amount mismatch: expected ${args.expectedAmount}, got ${payment.amount.toString()}`,
+        );
+      }
+
+      if (Number(payment.fiatAmountMinor) !== args.expectedFiatAmountMinor) {
+        throw new BadRequestException(
+          `Merchant payment fiatAmountMinor mismatch: expected ${args.expectedFiatAmountMinor}, got ${payment.fiatAmountMinor}`,
+        );
+      }
+
+      if (Number(payment.exchangeRateId) !== args.expectedExchangeRateId) {
+        throw new BadRequestException(
+          `Merchant payment exchangeRateId mismatch: expected ${args.expectedExchangeRateId}, got ${payment.exchangeRateId}`,
+        );
+      }
+
+      this.logger.log(
+        `Merchant payment contract verification successful: refId=${payment.refId}, payer=${payment.payer}, amount=${payment.amount.toString()}, merchantId=${payment.merchantId}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Merchant payment contract verification failed for refId ${args.refId}: ${error.message}`,
+        error.stack,
+      );
+
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+
+      throw new BadRequestException(
+        `Failed to verify merchant payment in contract: ${error.message}`,
       );
     }
   }

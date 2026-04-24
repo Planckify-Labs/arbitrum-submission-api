@@ -93,6 +93,13 @@ export class CreateIntentDto {
   @IsOptional()
   @IsIn(["evm", "solana"])
   preferredChain?: "evm" | "solana";
+
+  @ApiPropertyOptional({
+    description: "Token.id (ULID) from mobile picker. Required for onchain rail.",
+  })
+  @IsOptional()
+  @IsString()
+  sourceTokenId?: string;
 }
 
 /**

@@ -24,6 +24,7 @@ import type { NanopaySubmitResponseDto } from "./dto/nanopay-submit-response.dto
 import type { PaymentIntentResponseDto } from "./dto/payment-intent-response.dto";
 import { SubmitNanopayDto } from "./dto/submit-nanopay.dto";
 import { SubmitNanopaySvmDto } from "./dto/submit-nanopay-svm.dto";
+import { OnchainSubmitDto } from "./dto/onchain-submit.dto";
 import { IntentsService } from "./intents.service";
 
 /**
@@ -259,6 +260,43 @@ export class IntentsController {
     return await this.intentsService.submitNanopaySvm({
       intentId,
       signedTransaction: dto.signedTransaction,
+    });
+  }
+
+  /**
+   * `POST /v1/pay/intents/:id/onchain` — onchain settlement submit
+   * (task 19 / spec §4.4, §4.8).
+   *
+   * Mobile submits the confirmed tx hash + chain ID after the payer's
+   * wallet sends a `processMerchantPayment` transaction to the
+   * TakumiWalletMerchant contract. The server verifies the tx on-chain
+   * (Phase A: receipt checks, Phase B: contract-level data match), then
+   * flips the intent to SETTLED and fires the fiat payout.
+   *
+   * Return shape mirrors `/nanopay` — same `NanopaySubmitResponseDto`,
+   * same three statuses (`SETTLED` / `FAILED` / `SETTLING`), so mobile
+   * receipt / polling code stays rail-agnostic.
+   *
+   * Idempotency: `(intentId, txHash)` is the natural dedup key (unique
+   * index on `onchain_settlements`). A second POST with the same txHash
+   * returns the existing row verbatim (200), not a new verification.
+   */
+  @Post("intents/:id/onchain")
+  @HttpCode(HttpStatus.OK)
+  async submitOnchain(
+    @Param("id") intentId: string,
+    @Body() dto: OnchainSubmitDto,
+  ): Promise<NanopaySubmitResponseDto> {
+    if (!intentId || intentId.length < 8) {
+      throw new BadRequestException({
+        message: "Intent id is required.",
+        code: "INTENT_ID_REQUIRED",
+      });
+    }
+    return await this.intentsService.submitOnchain({
+      intentId,
+      txHash: dto.txHash,
+      chainId: dto.chainId,
     });
   }
 

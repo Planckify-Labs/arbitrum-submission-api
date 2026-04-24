@@ -7,24 +7,14 @@ import {
   PAYMENT_SETTLEMENT_ONCHAIN,
 } from "./settlement-provider.port";
 import { NanopaySettlementProvider } from "./providers/nanopay.settlement.provider";
+import { OnchainSettlementProvider } from "./providers/onchain.settlement.provider";
 import { SettlementOrchestratorService } from "./settlement-orchestrator.service";
-
-// Placeholder for Phase 4 -- replaced by real OnchainSettlementProvider in task 18
-const OnchainSettlementStub = {
-  provide: PAYMENT_SETTLEMENT_ONCHAIN,
-  useValue: {
-    key: "onchain",
-    async settle() {
-      throw new Error("Onchain settlement provider not yet implemented (task 18)");
-    },
-  },
-};
 
 @Module({
   imports: [ConfigModule, PrismaModule, BlockchainVerificationModule],
   providers: [
     { provide: PAYMENT_SETTLEMENT_NANOPAY, useClass: NanopaySettlementProvider },
-    OnchainSettlementStub,
+    { provide: PAYMENT_SETTLEMENT_ONCHAIN, useClass: OnchainSettlementProvider },
     SettlementOrchestratorService,
   ],
   exports: [SettlementOrchestratorService],
