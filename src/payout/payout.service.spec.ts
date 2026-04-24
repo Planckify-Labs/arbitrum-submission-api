@@ -10,7 +10,7 @@ function prismaStub(opts?: {
   createResult?: Record<string, unknown>;
 }): {
   paymentIntent: { findUnique: jest.Mock };
-  xenditPayout: { create: jest.Mock };
+  providerPayout: { create: jest.Mock };
 } {
   const intent =
     opts?.intent === undefined
@@ -21,16 +21,16 @@ function prismaStub(opts?: {
           fiatCurrency: "IDR",
           merchant: {
             id: "mch_123",
-            xenditChannelCode: "GOPAY",
-            xenditAccountNumber: encryptAccountNumber("081234567890"),
-            xenditAccountHolderName: "Budi Warung",
+            payoutChannelCode: "GOPAY",
+            payoutAccountNumber: encryptAccountNumber("081234567890"),
+            payoutAccountHolderName: "Budi Warung",
             payoutProvider: "xendit",
           } as unknown as Merchant,
         } as unknown as PaymentIntent & { merchant: Merchant })
       : opts.intent;
   return {
     paymentIntent: { findUnique: jest.fn(async () => intent) },
-    xenditPayout: { create: jest.fn(async () => opts?.createResult ?? {}) },
+    providerPayout: { create: jest.fn(async () => opts?.createResult ?? {}) },
   };
 }
 
@@ -44,11 +44,11 @@ function providerStub(
       status: "PENDING",
       amount: intent.fiatAmountMinor,
       currency: intent.fiatCurrency,
-      channelCode: merchant.xenditChannelCode,
+      channelCode: merchant.payoutChannelCode,
       requestedAt: new Date("2026-04-20T10:00:00Z"),
       rawResponse: { id: "disb_stub", status: "PENDING" },
     })),
-    getStatus: jest.fn(async () => "PENDING"),
+    getStatus: jest.fn(async () => ({ status: "PENDING" as const })),
     verifyWebhookSignature: jest.fn(() => true),
     ...overrides,
   };
@@ -60,11 +60,17 @@ function build(
 ) {
   const prisma = prismaStub(prismaOverrides);
   const provider = providerStub(providerOverrides);
+  // PayoutService now injects both Xendit + Duitku adapters. For tests
+  // that pivot on the Xendit path we reuse the same stub for both — the
+  // resolveProvider switch picks by `merchant.payoutProvider`, so tests
+  // that don't flip to "duitku" never touch the Duitku stub.
+  const duitkuProvider = providerStub();
   const svc = new PayoutService(
     prisma as unknown as PrismaService,
     provider,
+    duitkuProvider,
   );
-  return { svc, prisma, provider };
+  return { svc, prisma, provider, duitkuProvider };
 }
 
 describe("PayoutService.triggerPayout", () => {
@@ -73,9 +79,9 @@ describe("PayoutService.triggerPayout", () => {
     const intent = { id: "pi_01HXYZ", fiatAmountMinor: 15_000, fiatCurrency: "IDR" } as PaymentIntent;
     const merchant = {
       id: "mch_123",
-      xenditChannelCode: "GOPAY",
-      xenditAccountNumber: encryptAccountNumber("081234567890"),
-      xenditAccountHolderName: "Budi Warung",
+      payoutChannelCode: "GOPAY",
+      payoutAccountNumber: encryptAccountNumber("081234567890"),
+      payoutAccountHolderName: "Budi Warung",
       payoutProvider: "xendit",
     } as unknown as Merchant;
 
@@ -83,12 +89,12 @@ describe("PayoutService.triggerPayout", () => {
 
     expect(receipt?.providerPayoutId).toBe("disb_stub");
     expect(provider.triggerPayout).toHaveBeenCalledTimes(1);
-    expect(prisma.xenditPayout.create).toHaveBeenCalledTimes(1);
+    expect(prisma.providerPayout.create).toHaveBeenCalledTimes(1);
 
-    const call = prisma.xenditPayout.create.mock.calls[0][0];
+    const call = prisma.providerPayout.create.mock.calls[0][0];
     expect(call.data.status).toBe("PENDING");
     expect(call.data.intentId).toBe("pi_01HXYZ");
-    expect(call.data.xenditPayoutId).toBe("disb_stub");
+    expect(call.data.providerPayoutId).toBe("disb_stub");
   });
 
   it("persists a FAILED row when the provider throws a PayoutProviderError", async () => {
@@ -106,19 +112,19 @@ describe("PayoutService.triggerPayout", () => {
     const intent = { id: "pi_01HXYZ", fiatAmountMinor: 15_000, fiatCurrency: "IDR" } as PaymentIntent;
     const merchant = {
       id: "mch_123",
-      xenditChannelCode: "BAD",
-      xenditAccountNumber: encryptAccountNumber("081234567890"),
-      xenditAccountHolderName: "X",
+      payoutChannelCode: "BAD",
+      payoutAccountNumber: encryptAccountNumber("081234567890"),
+      payoutAccountHolderName: "X",
       payoutProvider: "xendit",
     } as unknown as Merchant;
 
     const receipt = await svc.triggerPayout(intent, merchant);
     expect(receipt).toBeNull();
-    expect(prisma.xenditPayout.create).toHaveBeenCalledTimes(1);
-    const call = prisma.xenditPayout.create.mock.calls[0][0];
+    expect(prisma.providerPayout.create).toHaveBeenCalledTimes(1);
+    const call = prisma.providerPayout.create.mock.calls[0][0];
     expect(call.data.status).toBe("FAILED");
-    expect(call.data.xenditPayoutId).toBeNull();
-    expect(call.data.xenditResponseBody).toMatchObject({
+    expect(call.data.providerPayoutId).toBeNull();
+    expect(call.data.providerResponseBody).toMatchObject({
       error: "channel not supported",
     });
   });
@@ -128,16 +134,16 @@ describe("PayoutService.triggerPayout", () => {
     const intent = { id: "pi_01HXYZ", fiatAmountMinor: 15_000, fiatCurrency: "IDR" } as PaymentIntent;
     const merchant = {
       id: "mch_123",
-      xenditChannelCode: "GOPAY",
-      xenditAccountNumber: encryptAccountNumber("081234567890"),
-      xenditAccountHolderName: "X",
+      payoutChannelCode: "GOPAY",
+      payoutAccountNumber: encryptAccountNumber("081234567890"),
+      payoutAccountHolderName: "X",
       payoutProvider: "wirecard-2003", // unknown key
     } as unknown as Merchant;
 
     const receipt = await svc.triggerPayout(intent, merchant);
     expect(receipt).toBeNull();
     expect(provider.triggerPayout).not.toHaveBeenCalled();
-    const call = prisma.xenditPayout.create.mock.calls[0][0];
+    const call = prisma.providerPayout.create.mock.calls[0][0];
     expect(call.data.status).toBe("FAILED");
   });
 });

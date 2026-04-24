@@ -1,8 +1,14 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ConfigService } from "@nestjs/config";
 import type { Merchant, PaymentIntent } from "@generated/prisma";
 import { encryptAccountNumber } from "../account-number-crypto";
 import { PayoutProviderError } from "../types";
 import { XenditPayoutProvider } from "./xendit-payout.provider";
+
+const xenditRequestBodyFixture = JSON.parse(
+  readFileSync(join(__dirname, "xendit-request-body.fixture.json"), "utf8"),
+);
 
 /**
  * Tests for the Xendit payout provider adapter.
@@ -39,9 +45,9 @@ function intentStub(overrides: Partial<PaymentIntent> = {}): PaymentIntent {
 function merchantStub(overrides: Partial<Merchant> = {}): Merchant {
   return {
     id: "mch_123",
-    xenditChannelCode: "GOPAY",
-    xenditAccountNumber: encryptAccountNumber("081234567890"),
-    xenditAccountHolderName: "Budi Warung",
+    payoutChannelCode: "GOPAY",
+    payoutAccountNumber: encryptAccountNumber("081234567890"),
+    payoutAccountHolderName: "Budi Warung",
     payoutProvider: "xendit",
     ...overrides,
   } as unknown as Merchant;
@@ -53,6 +59,30 @@ function jsonResponse(status: number, body: unknown): Response {
     headers: { "Content-Type": "application/json" },
   });
 }
+
+describe("XenditPayoutProvider wire-format parity (task 17)", () => {
+  it("produces a request body byte-for-byte equal to the pre-refactor fixture", async () => {
+    // Wire-format guarantee from research §6.5: the rename (tasks 01–04)
+    // changed internal TS property names only. The request body sent to
+    // Xendit MUST be unchanged. If this test fails after a rename PR, the
+    // rename has leaked into the wire.
+    const fetchMock = jest.fn().mockResolvedValueOnce(
+      jsonResponse(200, {
+        id: "disb_wire",
+        status: "PENDING",
+        reference_id: "pi_01HXYZ",
+      }),
+    );
+    const provider = new XenditPayoutProvider(
+      configStub() as any,
+      fetchMock as any,
+    );
+    await provider.triggerPayout(intentStub(), merchantStub());
+    const [, init] = fetchMock.mock.calls[0];
+    const parsed = JSON.parse((init as RequestInit).body as string);
+    expect(parsed).toEqual(xenditRequestBodyFixture);
+  });
+});
 
 describe("XenditPayoutProvider.triggerPayout", () => {
   it("returns a PENDING receipt on 200 and echoes the provider id", async () => {
@@ -249,6 +279,8 @@ describe("XenditPayoutProvider.verifyWebhookSignature", () => {
 describe("XenditPayoutProvider.getStatus", () => {
   it("returns PENDING as a stub (webhook is source of truth in v1)", async () => {
     const provider = new XenditPayoutProvider(configStub() as any);
-    await expect(provider.getStatus("disb_abc")).resolves.toBe("PENDING");
+    await expect(provider.getStatus("disb_abc")).resolves.toEqual({
+      status: "PENDING",
+    });
   });
 });

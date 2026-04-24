@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import type {
   GatewayDepositStatus,
   PaymentIntentStatus,
-  XenditPayoutStatus,
+  ProviderPayoutStatus,
 } from "@generated/prisma";
 import {
   BadRequestException,
@@ -63,7 +63,7 @@ export const PAYOUT_PROVIDER = "PAYOUT_PROVIDER";
  * `settledAt` on the GET response. FAILED payouts are still terminal —
  * mobile needs the reference id for support-case lookups even on failure.
  */
-const TERMINAL_PAYOUT_STATUSES = new Set<XenditPayoutStatus>([
+const TERMINAL_PAYOUT_STATUSES = new Set<ProviderPayoutStatus>([
   "COMPLETED",
   "FAILED",
 ]);
@@ -491,7 +491,7 @@ export class IntentsService {
         fxProvider: fx.fxProvider,
         fxQuotedAt: fx.fxQuotedAt,
         feesNetworkUsdMicros: 0,
-        feesXenditIdr: 0,
+        feesPayoutMinor: 0,
         feesPlatformBps: 0,
         path: "nanopay",
         nanopayNonce: nonceBytes,
@@ -558,7 +558,7 @@ export class IntentsService {
       include: {
         merchant: true,
         nanopaySubmissions: { orderBy: { submittedAt: "desc" } },
-        xenditPayouts: { orderBy: { createdAt: "desc" } },
+        payouts: { orderBy: { createdAt: "desc" } },
         payer: true,
       },
     });
@@ -683,7 +683,7 @@ export class IntentsService {
     // half-baked reference id for a still-PROCESSING payout. We pick the
     // most recent payout row (ordered desc above); in practice there's one
     // per intent, but the order-by defends against a retry edge case.
-    const latestPayout = intent.xenditPayouts[0];
+    const latestPayout = intent.payouts[0];
     const isPayoutTerminal = latestPayout
       ? TERMINAL_PAYOUT_STATUSES.has(latestPayout.status)
       : false;

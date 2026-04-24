@@ -5,7 +5,7 @@ import {
 } from "@nestjs/common";
 import {
   PaymentIntentStatus,
-  XenditPayoutStatus,
+  ProviderPayoutStatus,
 } from "@generated/prisma";
 import type { IPayoutProviderAdapter } from "./payout-provider.port";
 import type { PrismaService } from "../prisma/prisma.service";
@@ -23,9 +23,9 @@ import {
 type PayoutRow = {
   id: string;
   intentId: string;
-  xenditPayoutId: string | null;
+  providerPayoutId: string | null;
   referenceId: string;
-  status: XenditPayoutStatus;
+  status: ProviderPayoutStatus;
   completedAt: Date | null;
   webhookReceivedAt: Date | null;
 };
@@ -34,9 +34,9 @@ function payoutRowStub(overrides: Partial<PayoutRow> = {}): PayoutRow {
   return {
     id: "xp_01",
     intentId: "pi_01HXYZ",
-    xenditPayoutId: "disb_abc123",
+    providerPayoutId: "disb_abc123",
     referenceId: "pi_01HXYZ",
-    status: XenditPayoutStatus.PENDING,
+    status: ProviderPayoutStatus.PENDING,
     completedAt: null,
     webhookReceivedAt: null,
     ...overrides,
@@ -64,13 +64,13 @@ function prismaStub(opts: {
   const intentUpdate: jest.Mock = jest.fn(async () => ({}));
   const $transaction: jest.Mock = jest.fn(async (cb: any) => {
     return cb({
-      xenditPayout: { update: payoutUpdate },
+      providerPayout: { update: payoutUpdate },
       paymentIntent: { update: intentUpdate },
     });
   });
   return {
     mock: {
-      xenditPayout: { findFirst, update: payoutUpdate },
+      providerPayout: { findFirst, update: payoutUpdate },
       paymentIntent: { update: intentUpdate },
       $transaction,
     } as unknown as PrismaService,
@@ -125,7 +125,7 @@ describe("WebhookController.handleXenditCallback — auth guards", () => {
 });
 
 describe("WebhookController.handleXenditCallback — lookup", () => {
-  it("throws 404 when the xenditPayoutId is unknown", async () => {
+  it("throws 404 when the providerPayoutId is unknown", async () => {
     const { controller } = build({ findRow: null });
     await expect(
       controller.handleXenditCallback(
@@ -162,7 +162,7 @@ describe("WebhookController.handleXenditCallback — lookup", () => {
 });
 
 describe("WebhookController.handleXenditCallback — state transitions", () => {
-  it("COMPLETED flips XenditPayout → COMPLETED and PaymentIntent → PAID_OUT", async () => {
+  it("COMPLETED flips ProviderPayout → COMPLETED and PaymentIntent → PAID_OUT", async () => {
     const row = payoutRowStub();
     const { controller, payoutUpdate, intentUpdate, $transaction } = build({
       findRow: row,
@@ -176,14 +176,14 @@ describe("WebhookController.handleXenditCallback — state transitions", () => {
       },
     );
 
-    expect(result).toEqual({ ok: true, status: XenditPayoutStatus.COMPLETED });
+    expect(result).toEqual({ ok: true, status: ProviderPayoutStatus.COMPLETED });
     expect($transaction).toHaveBeenCalledTimes(1);
 
-    // XenditPayout row flipped to COMPLETED with completedAt set.
+    // ProviderPayout row flipped to COMPLETED with completedAt set.
     expect(payoutUpdate).toHaveBeenCalledTimes(1);
     const payoutArgs = payoutUpdate.mock.calls[0][0];
     expect(payoutArgs.where).toEqual({ id: row.id });
-    expect(payoutArgs.data.status).toBe(XenditPayoutStatus.COMPLETED);
+    expect(payoutArgs.data.status).toBe(ProviderPayoutStatus.COMPLETED);
     expect(payoutArgs.data.completedAt).toBeInstanceOf(Date);
     expect(payoutArgs.data.webhookReceivedAt).toBeInstanceOf(Date);
 
@@ -195,7 +195,7 @@ describe("WebhookController.handleXenditCallback — state transitions", () => {
     });
   });
 
-  it("FAILED flips only the XenditPayout row; intent stays SETTLED (no update)", async () => {
+  it("FAILED flips only the ProviderPayout row; intent stays SETTLED (no update)", async () => {
     const row = payoutRowStub();
     const { controller, payoutUpdate, intentUpdate } = build({
       findRow: row,
@@ -210,16 +210,16 @@ describe("WebhookController.handleXenditCallback — state transitions", () => {
       },
     );
 
-    expect(result).toEqual({ ok: true, status: XenditPayoutStatus.FAILED });
+    expect(result).toEqual({ ok: true, status: ProviderPayoutStatus.FAILED });
     expect(payoutUpdate).toHaveBeenCalledTimes(1);
     expect(payoutUpdate.mock.calls[0][0].data.status).toBe(
-      XenditPayoutStatus.FAILED,
+      ProviderPayoutStatus.FAILED,
     );
     // No intent mutation on failure — ops handles via task 49 runbook.
     expect(intentUpdate).not.toHaveBeenCalled();
   });
 
-  it("PENDING / QUEUED only updates XenditPayout.status without touching the intent", async () => {
+  it("PENDING / QUEUED only updates ProviderPayout.status without touching the intent", async () => {
     const row = payoutRowStub();
     const { controller, payoutUpdate, intentUpdate } = build({
       findRow: row,
@@ -233,10 +233,10 @@ describe("WebhookController.handleXenditCallback — state transitions", () => {
       },
     );
 
-    expect(result.status).toBe(XenditPayoutStatus.PROCESSING);
+    expect(result.status).toBe(ProviderPayoutStatus.PROCESSING);
     expect(payoutUpdate).toHaveBeenCalledTimes(1);
     expect(payoutUpdate.mock.calls[0][0].data.status).toBe(
-      XenditPayoutStatus.PROCESSING,
+      ProviderPayoutStatus.PROCESSING,
     );
     expect(intentUpdate).not.toHaveBeenCalled();
   });
@@ -244,7 +244,7 @@ describe("WebhookController.handleXenditCallback — state transitions", () => {
 
 describe("WebhookController.handleXenditCallback — idempotency", () => {
   it("returns 200 no-op when the row is already in the same status", async () => {
-    const row = payoutRowStub({ status: XenditPayoutStatus.COMPLETED });
+    const row = payoutRowStub({ status: ProviderPayoutStatus.COMPLETED });
     const { controller, payoutUpdate, intentUpdate, $transaction } = build({
       findRow: row,
     });
@@ -256,7 +256,7 @@ describe("WebhookController.handleXenditCallback — idempotency", () => {
         reference_id: "pi_01HXYZ",
       },
     );
-    expect(result).toEqual({ ok: true, status: XenditPayoutStatus.COMPLETED });
+    expect(result).toEqual({ ok: true, status: ProviderPayoutStatus.COMPLETED });
     // No DB writes on idempotent delivery — matters because Xendit retries
     // aggressively and we don't want to fire duplicate push notifications.
     expect($transaction).not.toHaveBeenCalled();
@@ -267,21 +267,21 @@ describe("WebhookController.handleXenditCallback — idempotency", () => {
 
 describe("mapXenditCallbackStatus", () => {
   it.each([
-    ["COMPLETED", XenditPayoutStatus.COMPLETED],
-    ["completed", XenditPayoutStatus.COMPLETED],
-    ["PAID", XenditPayoutStatus.COMPLETED],
-    ["SUCCEEDED", XenditPayoutStatus.COMPLETED],
-    ["FAILED", XenditPayoutStatus.FAILED],
-    ["EXPIRED", XenditPayoutStatus.FAILED],
-    ["CANCELLED", XenditPayoutStatus.FAILED],
-    ["CANCELED", XenditPayoutStatus.FAILED],
-    ["DECLINED", XenditPayoutStatus.FAILED],
-    ["PROCESSING", XenditPayoutStatus.PROCESSING],
-    ["QUEUED", XenditPayoutStatus.PROCESSING],
-    ["PENDING", XenditPayoutStatus.PENDING],
-    ["", XenditPayoutStatus.PENDING],
-    [undefined, XenditPayoutStatus.PENDING],
-    ["SOMETHING_NEW", XenditPayoutStatus.PENDING],
+    ["COMPLETED", ProviderPayoutStatus.COMPLETED],
+    ["completed", ProviderPayoutStatus.COMPLETED],
+    ["PAID", ProviderPayoutStatus.COMPLETED],
+    ["SUCCEEDED", ProviderPayoutStatus.COMPLETED],
+    ["FAILED", ProviderPayoutStatus.FAILED],
+    ["EXPIRED", ProviderPayoutStatus.FAILED],
+    ["CANCELLED", ProviderPayoutStatus.FAILED],
+    ["CANCELED", ProviderPayoutStatus.FAILED],
+    ["DECLINED", ProviderPayoutStatus.FAILED],
+    ["PROCESSING", ProviderPayoutStatus.PROCESSING],
+    ["QUEUED", ProviderPayoutStatus.PROCESSING],
+    ["PENDING", ProviderPayoutStatus.PENDING],
+    ["", ProviderPayoutStatus.PENDING],
+    [undefined, ProviderPayoutStatus.PENDING],
+    ["SOMETHING_NEW", ProviderPayoutStatus.PENDING],
   ])("maps %p → %s", (input, expected) => {
     expect(mapXenditCallbackStatus(input as any)).toBe(expected);
   });

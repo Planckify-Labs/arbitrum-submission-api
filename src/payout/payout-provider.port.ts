@@ -1,5 +1,5 @@
 import type { Merchant, PaymentIntent } from "@generated/prisma";
-import type { TPayoutReceipt, TProviderStatus } from "./types";
+import type { TPayoutReceipt, TProviderStatusResult } from "./types";
 
 /**
  * The space-docking port for the UMKM fiat payout rail.
@@ -32,7 +32,7 @@ export interface IPayoutProviderAdapter {
    * @param intent   The settled `PaymentIntent` that triggered this payout.
    * @param merchant The destination merchant row (has channel code +
    *                 encrypted account number on it).
-   * @returns        A receipt the service persists as a `XenditPayout` row.
+   * @returns        A receipt the service persists as a `ProviderPayout` row.
    */
   triggerPayout(
     intent: PaymentIntent,
@@ -40,12 +40,16 @@ export interface IPayoutProviderAdapter {
   ): Promise<TPayoutReceipt>;
 
   /**
-   * Reconcile a previously-requested payout. Consumed by the webhook
-   * handler (task 30) as a defence-in-depth double-check if the webhook
-   * payload is ambiguous. v1's XenditPayoutProvider implementation may
-   * stub this and defer to the webhook token check only.
+   * Reconcile a previously-requested payout by polling the provider.
+   *
+   * For Xendit this is effectively a stub — the callback is the source of
+   * truth. For Duitku RTOL it is **required**: RTOL has no callback, so
+   * ambiguous transfer response codes (`68`/`TO`) are resolved by calling
+   * `inquirystatus` here. The richer return shape carries the provider's
+   * raw response code + body so the reconcile job can update the
+   * `ProviderPayout` row without re-polling.
    */
-  getStatus(providerReferenceId: string): Promise<TProviderStatus>;
+  getStatus(providerReferenceId: string): Promise<TProviderStatusResult>;
 
   /**
    * Verify the provider's webhook signature. Xendit uses `x-callback-token`
@@ -69,3 +73,10 @@ export interface IPayoutProviderAdapter {
  * `payout.module.ts`.
  */
 export const PAYOUT_PROVIDER_XENDIT = Symbol("PAYOUT_PROVIDER_XENDIT");
+
+/**
+ * Injection token for the Duitku disbursement adapter (task 06).
+ * Bound to `DuitkuPayoutProvider` in `PayoutModule`; consumed by
+ * `PayoutService.resolveProvider` when `merchant.payoutProvider === "duitku"`.
+ */
+export const PAYOUT_PROVIDER_DUITKU = Symbol("PAYOUT_PROVIDER_DUITKU");

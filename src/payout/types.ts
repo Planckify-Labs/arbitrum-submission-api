@@ -14,7 +14,7 @@
 
 /**
  * Coarse status the port surfaces to `PayoutService`. Maps 1:1 onto the
- * `XenditPayoutStatus` Prisma enum today (§6.6), but is deliberately its
+ * `ProviderPayoutStatus` Prisma enum today (§6.6), but is deliberately its
  * own type so other adapters (Flip / Paymongo / etc.) aren't forced to
  * speak Xendit's vocabulary.
  */
@@ -36,7 +36,7 @@ export type TProviderStatus =
 export interface TPayoutReceipt {
   /** Our correlation id — always equals `intent.id` so retries dedupe. */
   referenceId: string;
-  /** Provider-side id, e.g. Xendit `disb-…`. Null when not yet assigned. */
+  /** Provider-side id, e.g. Xendit `disb-…` or Duitku `disburseId`. Null when not yet assigned. */
   providerPayoutId: string | null;
   /** Coarse provider-reported status at the moment of the response. */
   status: TProviderStatus;
@@ -49,7 +49,24 @@ export interface TPayoutReceipt {
   /** Wall-clock at which the adapter received the 2xx. */
   requestedAt: Date;
   /**
-   * Full raw response body — stored in `xendit_payouts.xenditResponseBody`
+   * Provider-specific response code. Null for providers (like Xendit) that
+   * don't use a discrete code to drive retry/reconcile logic. Duitku uses
+   * `"00" | "TO" | "68" | "-100" | ...`; the persistence layer writes it
+   * verbatim so the reconcile job can scan by indexed column.
+   */
+  providerResponseCode?: string | null;
+  /**
+   * Reconcile hint — the adapter has short-circuited because the response
+   * code warns "do not retransmit" (Duitku `TO`/`68`/`-100`). PayoutService
+   * reads this and enqueues an `inquiryStatus` poll keyed by the provider
+   * payout id. Absent for Xendit: its response is terminal-ish and the
+   * webhook drives transitions.
+   */
+  reconcile?: {
+    reason: string;
+  };
+  /**
+   * Full raw response body — stored in `ProviderPayout.providerResponseBody`
    * for dispute debugging. `unknown` because provider schemas drift; the
    * persistence layer writes it into Prisma's `Json` column as-is.
    */
@@ -57,9 +74,23 @@ export interface TPayoutReceipt {
 }
 
 /**
+ * Structured status response from `getStatus(providerReferenceId)`. Richer
+ * than a bare `TProviderStatus` enum so the reconcile job can persist the
+ * response code + body without re-polling. Xendit's stub returns
+ * `{ status: "PENDING" }` — it just ignores the optional fields.
+ */
+export interface TProviderStatusResult {
+  status: TProviderStatus;
+  providerResponseCode?: string | null;
+  providerResponseBody?: unknown;
+  /** `true` when the provider signals "escalate to support" (Duitku `-100`). */
+  operationalAlert?: boolean;
+}
+
+/**
  * Thrown by adapters on a terminal (non-retryable) provider error — e.g.
  * 4xx with a "duplicate reference id" or "channel not supported" payload.
- * The service layer persists this as a `FAILED` `XenditPayout` row and
+ * The service layer persists this as a `FAILED` `ProviderPayout` row and
  * leaves the intent in `SETTLED` for manual ops retry.
  */
 export class PayoutProviderError extends Error {

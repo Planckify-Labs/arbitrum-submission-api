@@ -9,7 +9,11 @@ import { PrismaModule } from "../prisma/prisma.module";
 // `forwardRef` to bind `IntentsService`'s optional injection.
 import { PAYOUT_PROVIDER } from "../pay/intents.service";
 import { PayoutService } from "./payout.service";
-import { PAYOUT_PROVIDER_XENDIT } from "./payout-provider.port";
+import {
+  PAYOUT_PROVIDER_DUITKU,
+  PAYOUT_PROVIDER_XENDIT,
+} from "./payout-provider.port";
+import { DuitkuPayoutProvider } from "./providers/duitku-payout.provider";
 import { XenditPayoutProvider } from "./providers/xendit-payout.provider";
 import { WebhookController } from "./webhook.controller";
 
@@ -37,6 +41,11 @@ import { WebhookController } from "./webhook.controller";
     {
       provide: PAYOUT_PROVIDER_XENDIT,
       useExisting: XenditPayoutProvider,
+    },
+    DuitkuPayoutProvider,
+    {
+      provide: PAYOUT_PROVIDER_DUITKU,
+      useExisting: DuitkuPayoutProvider,
     },
     PayoutService,
     {

@@ -14,7 +14,7 @@ import {
 import { ApiTags } from "@nestjs/swagger";
 import {
   PaymentIntentStatus,
-  XenditPayoutStatus,
+  ProviderPayoutStatus,
 } from "@generated/prisma";
 import { Public } from "../decorators/public.decorator";
 import { PrismaService } from "../prisma/prisma.service";
@@ -37,7 +37,7 @@ import {
  *   1. Guard: reject `401` if `x-callback-token` header is missing —
  *      fail-closed on absent credential.
  *   2. Guard: reject `403` if the token mismatches the configured value.
- *   3. Look up the `XenditPayout` row by the callback's `id` (Xendit's
+ *   3. Look up the `ProviderPayout` row by the callback's `id` (Xendit's
  *      provider-side id). `404` if unknown — either a replay against a
  *      deleted row or a spoofed payload that slipped the token check
  *      during rotation.
@@ -52,9 +52,9 @@ import {
  *      the same reference must be a no-op.
  *   6. Map the callback status → our enum and persist in a single
  *      transaction together with the intent transition:
- *        COMPLETED → XenditPayout.COMPLETED + PaymentIntent.PAID_OUT
+ *        COMPLETED → ProviderPayout.COMPLETED + PaymentIntent.PAID_OUT
  *                    + set `completedAt`.
- *        FAILED    → XenditPayout.FAILED. Intent stays SETTLED for the
+ *        FAILED    → ProviderPayout.FAILED. Intent stays SETTLED for the
  *                    ops runbook (task 49). Spec §12 Q5.
  *        other     → status update only, no intent transition.
  *   7. Respond `200` immediately. Any heavy work (push notifications)
@@ -82,7 +82,7 @@ export class WebhookController {
   async handleXenditCallback(
     @Headers() headers: Record<string, string | string[] | undefined>,
     @Body() body: unknown,
-  ): Promise<{ ok: true; status: XenditPayoutStatus }> {
+  ): Promise<{ ok: true; status: ProviderPayoutStatus }> {
     // 1. Fail-closed on missing token. We treat absent auth differently
     //    from wrong auth (401 vs 403) so ops dashboards can tell apart
     //    "Xendit misconfigured the callback" from "someone probed us".
@@ -116,7 +116,7 @@ export class WebhookController {
     // Everything else is informational / logged only.
     const payload =
       body && typeof body === "object" ? (body as Record<string, unknown>) : {};
-    const xenditPayoutId =
+    const providerPayoutId =
       typeof payload.id === "string" ? payload.id : undefined;
     const rawStatus =
       typeof payload.status === "string" ? payload.status : undefined;
@@ -125,7 +125,7 @@ export class WebhookController {
         ? payload.reference_id
         : undefined;
 
-    if (!xenditPayoutId) {
+    if (!providerPayoutId) {
       // Payload shape is off — treat as unknown row since we can't
       // correlate. 404 matches the "unknown id" branch so ops has a
       // single signal to alert on.
@@ -138,13 +138,13 @@ export class WebhookController {
       });
     }
 
-    // 3. Look up the XenditPayout row. Filter-at-source — a single query.
-    const payoutRow = await this.prisma.xenditPayout.findFirst({
-      where: { xenditPayoutId },
+    // 3. Look up the ProviderPayout row. Filter-at-source — a single query.
+    const payoutRow = await this.prisma.providerPayout.findFirst({
+      where: { providerPayoutId },
     });
     if (!payoutRow) {
       this.logger.warn(
-        `Xendit webhook: unknown xenditPayoutId=${xenditPayoutId}`,
+        `Xendit webhook: unknown providerPayoutId=${providerPayoutId}`,
       );
       throw new NotFoundException({
         message: "Unknown payout id in callback body.",
@@ -161,7 +161,7 @@ export class WebhookController {
       referenceIdFromBody !== payoutRow.referenceId
     ) {
       this.logger.warn(
-        `Xendit webhook: reference_id mismatch — body=${referenceIdFromBody} row=${payoutRow.referenceId} xenditPayoutId=${xenditPayoutId}`,
+        `Xendit webhook: reference_id mismatch — body=${referenceIdFromBody} row=${payoutRow.referenceId} providerPayoutId=${providerPayoutId}`,
       );
       throw new ForbiddenException({
         message: "reference_id does not match the recorded payout.",
@@ -177,32 +177,32 @@ export class WebhookController {
     // 5a. Idempotency — already in that status, nothing to do.
     if (payoutRow.status === nextStatus) {
       this.logger.log(
-        `Xendit webhook: idempotent no-op xenditPayoutId=${xenditPayoutId} status=${nextStatus}`,
+        `Xendit webhook: idempotent no-op providerPayoutId=${providerPayoutId} status=${nextStatus}`,
       );
       return { ok: true, status: nextStatus };
     }
 
-    // 6. Persist the transition atomically — the XenditPayout row and
+    // 6. Persist the transition atomically — the ProviderPayout row and
     //    (on COMPLETED) the PaymentIntent row must flip together. A
     //    partial write would leave mobile polling a SETTLED intent with
     //    a COMPLETED payout behind it.
     const now = new Date();
     await this.prisma.$transaction(async (tx) => {
-      await tx.xenditPayout.update({
+      await tx.providerPayout.update({
         where: { id: payoutRow.id },
         data: {
           status: nextStatus,
           webhookReceivedAt: now,
           completedAt:
-            nextStatus === XenditPayoutStatus.COMPLETED
+            nextStatus === ProviderPayoutStatus.COMPLETED
               ? now
               : payoutRow.completedAt,
           // Stash full callback for dispute debugging (§6.6 comment).
-          xenditResponseBody: (payload as object) ?? undefined,
+          providerResponseBody: (payload as object) ?? undefined,
         },
       });
 
-      if (nextStatus === XenditPayoutStatus.COMPLETED) {
+      if (nextStatus === ProviderPayoutStatus.COMPLETED) {
         // Intent → PAID_OUT. This is the sole transition that flips it.
         await tx.paymentIntent.update({
           where: { id: payoutRow.intentId },
@@ -211,19 +211,19 @@ export class WebhookController {
       }
       // On FAILED we deliberately leave PaymentIntent at SETTLED — ops
       // retries via the task 49 refund runbook. The failure banner on
-      // mobile comes from the XenditPayout.status, not the intent
+      // mobile comes from the ProviderPayout.status, not the intent
       // status.
     });
 
     this.logger.log(
-      `Xendit webhook applied xenditPayoutId=${xenditPayoutId} intentId=${payoutRow.intentId} status=${nextStatus}`,
+      `Xendit webhook applied providerPayoutId=${providerPayoutId} intentId=${payoutRow.intentId} status=${nextStatus}`,
     );
 
-    if (nextStatus === XenditPayoutStatus.FAILED) {
+    if (nextStatus === ProviderPayoutStatus.FAILED) {
       // Emit a structured log ops can grep — link to task 49 runbook
       // per the task file acceptance criterion.
       this.logger.error(
-        `XENDIT_PAYOUT_DECLINED intentId=${payoutRow.intentId} xenditPayoutId=${xenditPayoutId} — see task 49 refund runbook.`,
+        `XENDIT_PAYOUT_DECLINED intentId=${payoutRow.intentId} providerPayoutId=${providerPayoutId} — see task 49 refund runbook.`,
       );
     }
 
@@ -231,7 +231,7 @@ export class WebhookController {
     //    service may not exist yet — soft-link via dynamic import so a
     //    missing module is a logged no-op, not a 500. Kept off the hot
     //    path with `setImmediate` so Xendit gets its 200 in <50ms.
-    if (nextStatus === XenditPayoutStatus.COMPLETED) {
+    if (nextStatus === ProviderPayoutStatus.COMPLETED) {
       setImmediate(() => {
         void this.firePaidOutPush(payoutRow.intentId);
       });
@@ -275,7 +275,7 @@ export class WebhookController {
 }
 
 /**
- * Map Xendit's callback `status` onto our `XenditPayoutStatus` enum.
+ * Map Xendit's callback `status` onto our `ProviderPayoutStatus` enum.
  * Mirrors the mapping in `XenditPayoutProvider.mapXenditStatus` but
  * returns the Prisma enum directly (the provider returns our coarse
  * `TProviderStatus` which doesn't include PROCESSING as a Prisma value
@@ -286,24 +286,24 @@ export class WebhookController {
  */
 export function mapXenditCallbackStatus(
   raw: string | undefined,
-): XenditPayoutStatus {
+): ProviderPayoutStatus {
   switch ((raw ?? "").toUpperCase()) {
     case "COMPLETED":
     case "SUCCEEDED":
     case "PAID":
-      return XenditPayoutStatus.COMPLETED;
+      return ProviderPayoutStatus.COMPLETED;
     case "PROCESSING":
     case "QUEUED":
-      return XenditPayoutStatus.PROCESSING;
+      return ProviderPayoutStatus.PROCESSING;
     case "FAILED":
     case "EXPIRED":
     case "CANCELLED":
     case "CANCELED":
     case "DECLINED":
-      return XenditPayoutStatus.FAILED;
+      return ProviderPayoutStatus.FAILED;
     case "PENDING":
     case "":
     default:
-      return XenditPayoutStatus.PENDING;
+      return ProviderPayoutStatus.PENDING;
   }
 }

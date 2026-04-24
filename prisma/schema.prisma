@@ -806,7 +806,7 @@ enum GaslessMode {
   none
 }
 
-enum XenditPayoutStatus {
+enum ProviderPayoutStatus {
   PENDING
   PROCESSING
   COMPLETED
@@ -838,10 +838,10 @@ model Merchant {
   displayName             String
   contactPhone            String
   country                 String    @db.Char(2)
-  xenditChannelCode       String
+  payoutChannelCode       String
   // Encrypted at rest via the repo's existing envelope helper. BYTEA in Postgres.
-  xenditAccountNumber     Bytes
-  xenditAccountHolderName String
+  payoutAccountNumber     Bytes
+  payoutAccountHolderName String
   qrisPan                 String?
   qrisStickerPhotoKey     String?
   jwsQr                   String
@@ -885,7 +885,12 @@ model PaymentIntent {
   fxProvider            String
   fxQuotedAt            DateTime            @db.Timestamptz()
   feesNetworkUsdMicros  Int
-  feesXenditIdr         Int
+  // Payout-side fee snapshot at intent-creation time. Integer minor-units
+  // of the intent's `fiatCurrency` (IDR rupiah today; PHP centavos / THB
+  // satang when other countries land — currency lives on `fiatCurrency`,
+  // not in the column name). Was `feesXenditIdr` until the rename made
+  // the schema provider/currency-agnostic.
+  feesPayoutMinor       Int
   feesPlatformBps       Int
   path                  PaymentIntentPath
   nanopayNonce          Bytes               @unique
@@ -900,7 +905,7 @@ model PaymentIntent {
 
   nanopaySubmissions NanopaySubmission[]
   // payouts are audit-permanent; deleting an intent must NOT cascade to them.
-  xenditPayouts      XenditPayout[]
+  payouts            ProviderPayout[]
 
   @@index([status, expiresAt])
   @@index([merchantId, createdAt(sort: Desc)])
@@ -921,27 +926,34 @@ model NanopaySubmission {
   @@index([intentId])
 }
 
-model XenditPayout {
-  id                     String             @id @default(ulid())
+model ProviderPayout {
+  id                     String               @id @default(ulid())
   // onDelete: Restrict — payouts are audit-permanent; an intent must not be
   // deletable while a payout row references it (§6.6 audit guarantees).
-  intent                 PaymentIntent      @relation(fields: [intentId], references: [id], onDelete: Restrict)
+  intent                 PaymentIntent        @relation(fields: [intentId], references: [id], onDelete: Restrict)
   intentId               String
-  xenditPayoutId         String?
+  // Which provider handled this disbursement. Audit-permanent — stays correct
+  // even if the merchant later switches `payoutProvider`.
+  provider               String
+  providerPayoutId       String?
   referenceId            String
   channelCode            String
   accountNumberEncrypted Bytes
   amount                 Int
   currency               String
-  status                 XenditPayoutStatus @default(PENDING)
-  requestedAt            DateTime?          @db.Timestamptz()
-  completedAt            DateTime?          @db.Timestamptz()
-  webhookReceivedAt      DateTime?          @db.Timestamptz()
-  xenditResponseBody     Json?
-  createdAt              DateTime           @default(now()) @db.Timestamptz()
-  updatedAt              DateTime           @updatedAt @db.Timestamptz()
+  status                 ProviderPayoutStatus @default(PENDING)
+  // Provider-specific response code (e.g. Duitku "00" / "TO" / "68" / "-100").
+  // Null for Xendit rows. Drives retry/reconcile discipline for Duitku.
+  providerResponseCode   String?
+  requestedAt            DateTime?            @db.Timestamptz()
+  completedAt            DateTime?            @db.Timestamptz()
+  webhookReceivedAt      DateTime?            @db.Timestamptz()
+  providerResponseBody   Json?
+  createdAt              DateTime             @default(now()) @db.Timestamptz()
+  updatedAt              DateTime             @updatedAt @db.Timestamptz()
 
   @@index([intentId])
+  @@index([provider, status])
 }
 
 model GatewayDeposit {
@@ -963,22 +975,43 @@ model GatewayDeposit {
 }
 
 model Channel {
-  channelCode        String      @db.Text
-  country            String      @db.Char(2)
-  label              String
-  kind               ChannelKind
-  accountFormat      String
-  priority           Int
-  isActive           Boolean     @default(true)
-  iconUrl            String?
-  xenditMinAmountIdr Int?
-  xenditMaxAmountIdr Int?
-  xenditFeeIdr       Int
-  createdAt          DateTime    @default(now()) @db.Timestamptz()
-  updatedAt          DateTime    @updatedAt @db.Timestamptz()
+  channelCode   String      @db.Text
+  country       String      @db.Char(2)
+  label         String
+  kind          ChannelKind
+  accountFormat String
+  priority      Int
+  isActive      Boolean     @default(true)
+  iconUrl       String?
+  createdAt     DateTime    @default(now()) @db.Timestamptz()
+  updatedAt     DateTime    @updatedAt @db.Timestamptz()
+
+  providerChannels ProviderChannel[]
 
   @@id([channelCode, country])
   @@index([country, isActive, priority])
+}
+
+// Per-provider mapping + fee schedule for a canonical `Channel`. Adding a
+// new payout provider means inserting rows here (two per channel: "xendit"
+// + "<new>"), not adding columns on `Channel`. Adapters resolve the wire
+// code (e.g. Duitku "014" for BCA) via `providerChannelCode`.
+model ProviderChannel {
+  id                  String   @id @default(ulid())
+  channel             Channel  @relation(fields: [channelCode, country], references: [channelCode, country])
+  channelCode         String
+  country             String   @db.Char(2)
+  provider            String
+  providerChannelCode String
+  minAmountIdr        Int?
+  maxAmountIdr        Int?
+  feeIdr              Int
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now()) @db.Timestamptz()
+  updatedAt           DateTime @updatedAt @db.Timestamptz()
+
+  @@unique([channelCode, country, provider])
+  @@index([provider, isActive])
 }
 
 model MerchantQrisClaim {

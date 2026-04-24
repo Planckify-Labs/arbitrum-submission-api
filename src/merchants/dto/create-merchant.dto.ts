@@ -58,16 +58,17 @@ export class CreateMerchantDto {
   displayName!: string;
 
   @ApiProperty({
-    description: "ISO 3166-1 alpha-2 country code. v1 ships Indonesia only.",
+    description:
+      "ISO 3166-1 alpha-2 country code. Today only ID has seeded channels; unknown country+channel combinations fail with CHANNEL_UNKNOWN at the channel lookup, so the country allowlist is data-driven (the `Channel` table) rather than enum-locked here.",
     example: "ID",
   })
   @IsString()
-  @Matches(/^ID$/, { message: "country must be ID in v1" })
-  countryCode!: "ID";
+  @Matches(/^[A-Z]{2}$/, { message: "countryCode must be an ISO 3166-1 alpha-2 code (e.g. ID)" })
+  countryCode!: string;
 
   @ApiProperty({
     description:
-      "Xendit channel code — validated against the `Channel` table for the given country.",
+      "Canonical payout channel code — validated against the `Channel` table for the given country.",
     example: "GOPAY",
   })
   @IsString()

@@ -134,9 +134,9 @@ export class MerchantsService {
             displayName: dto.displayName,
             contactPhone: dto.contactPhone ?? "",
             country: dto.countryCode,
-            xenditChannelCode: dto.payoutChannel,
-            xenditAccountNumber: accountBytes,
-            xenditAccountHolderName: dto.payoutAccountHolderName,
+            payoutChannelCode: dto.payoutChannel,
+            payoutAccountNumber: accountBytes,
+            payoutAccountHolderName: dto.payoutAccountHolderName,
             qrisPan,
             qrisStickerPhotoKey: dto.qrisLink?.stickerPhotoKey ?? null,
             jwsQr: signed.wire,
@@ -213,7 +213,7 @@ export class MerchantsService {
       });
     }
 
-    const nextChannel = dto.payoutChannel ?? existing.xenditChannelCode;
+    const nextChannel = dto.payoutChannel ?? existing.payoutChannelCode;
     const nextAccount = dto.payoutAccountNumber ?? null;
 
     if (dto.payoutChannel || dto.payoutAccountNumber) {
@@ -254,12 +254,12 @@ export class MerchantsService {
       data: {
         displayName: dto.displayName ?? existing.displayName,
         contactPhone: dto.contactPhone ?? existing.contactPhone,
-        xenditChannelCode: nextChannel,
-        xenditAccountNumber: nextAccount
+        payoutChannelCode: nextChannel,
+        payoutAccountNumber: nextAccount
           ? Buffer.from(nextAccount, "utf8")
-          : existing.xenditAccountNumber,
-        xenditAccountHolderName:
-          dto.payoutAccountHolderName ?? existing.xenditAccountHolderName,
+          : existing.payoutAccountNumber,
+        payoutAccountHolderName:
+          dto.payoutAccountHolderName ?? existing.payoutAccountHolderName,
         jwsQr: newJwsWire,
         jwsIssuedAt: newJwsIat,
         jwsExpiresAt: null,
@@ -348,22 +348,37 @@ export class MerchantsService {
     // DB read. Composite sort: `priority ASC` is the display order ops
     // tunes; `channelCode ASC` is a stable tiebreaker so two channels
     // with identical priority always render in the same slot.
+    //
+    // Fees / limits are per-provider — live on `ProviderChannel`. The
+    // pre-signup picker has no merchant row yet, so we default to the
+    // same provider as `Merchant.payoutProvider @default("xendit")`.
+    // Per-merchant fee personalization (when a merchant is known) is a
+    // follow-up task.
     const rows = await this.prisma.channel.findMany({
       where: { country: normalized, isActive: true },
       orderBy: [{ priority: "asc" }, { channelCode: "asc" }],
+      include: {
+        providerChannels: {
+          where: { provider: "xendit", isActive: true },
+          take: 1,
+        },
+      },
     });
 
-    const dtos: ChannelResponseDto[] = rows.map((row) => ({
-      channelCode: row.channelCode,
-      label: row.label,
-      kind: row.kind as "ewallet" | "bank",
-      accountFormat: row.accountFormat,
-      priority: row.priority,
-      minAmountIdr: row.xenditMinAmountIdr ?? null,
-      maxAmountIdr: row.xenditMaxAmountIdr ?? null,
-      feeIdr: row.xenditFeeIdr,
-      iconUrl: row.iconUrl ?? null,
-    }));
+    const dtos: ChannelResponseDto[] = rows.map((row) => {
+      const pc = row.providerChannels[0] ?? null;
+      return {
+        channelCode: row.channelCode,
+        label: row.label,
+        kind: row.kind as "ewallet" | "bank",
+        accountFormat: row.accountFormat,
+        priority: row.priority,
+        minAmountIdr: pc?.minAmountIdr ?? null,
+        maxAmountIdr: pc?.maxAmountIdr ?? null,
+        feeIdr: pc?.feeIdr ?? 0,
+        iconUrl: row.iconUrl ?? null,
+      };
+    });
 
     // Fire-and-forget cache write. Empty-array responses are still
     // cached — unknown-but-well-formed countries (e.g. `PH` pre-launch)
@@ -433,9 +448,9 @@ export class MerchantsService {
     displayName: string;
     contactPhone: string;
     country: string;
-    xenditChannelCode: string;
-    xenditAccountNumber: Uint8Array | Buffer;
-    xenditAccountHolderName: string;
+    payoutChannelCode: string;
+    payoutAccountNumber: Uint8Array | Buffer;
+    payoutAccountHolderName: string;
     qrisPan: string | null;
     isActive: boolean;
     jwsQr: string;
@@ -444,15 +459,15 @@ export class MerchantsService {
     createdAt: Date;
     updatedAt: Date;
   }): MerchantResponseDto {
-    const accountUtf8 = Buffer.from(row.xenditAccountNumber).toString("utf8");
+    const accountUtf8 = Buffer.from(row.payoutAccountNumber).toString("utf8");
     const last4 = accountUtf8.slice(-4).padStart(4, "•");
     return {
       id: row.id,
       displayName: row.displayName,
       country: row.country,
-      payoutChannel: row.xenditChannelCode,
+      payoutChannel: row.payoutChannelCode,
       payoutAccountLast4: last4,
-      payoutAccountHolderName: row.xenditAccountHolderName,
+      payoutAccountHolderName: row.payoutAccountHolderName,
       contactPhone: row.contactPhone || undefined,
       qrisPan: row.qrisPan ?? undefined,
       isActive: row.isActive,

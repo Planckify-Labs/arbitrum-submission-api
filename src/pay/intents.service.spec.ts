@@ -371,7 +371,7 @@ describe("IntentsService.getIntent", () => {
         walletAddress: "0x1111111111111111111111111111111111111111",
       },
       nanopaySubmissions: [],
-      xenditPayouts: [],
+      payouts: [],
       ...overrides,
     };
   }
@@ -499,7 +499,7 @@ describe("IntentsService.getIntent", () => {
     const completedAt = new Date("2026-04-20T01:00:00Z");
     const row = intentRow({
       status: "PAID_OUT",
-      xenditPayouts: [
+      payouts: [
         {
           id: "po_1",
           referenceId: "takumi-payout-ref-01",
@@ -523,7 +523,7 @@ describe("IntentsService.getIntent", () => {
   it("omits payoutReferenceId + settledAt while the payout is still PROCESSING", async () => {
     const row = intentRow({
       status: "SETTLED",
-      xenditPayouts: [
+      payouts: [
         {
           id: "po_1",
           referenceId: "takumi-payout-ref-01",

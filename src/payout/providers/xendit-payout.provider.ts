@@ -8,6 +8,7 @@ import {
   PayoutProviderError,
   type TPayoutReceipt,
   type TProviderStatus,
+  type TProviderStatusResult,
 } from "../types";
 
 /**
@@ -77,7 +78,7 @@ export class XenditPayoutProvider implements IPayoutProviderAdapter {
 
     // Decrypt the merchant's account number just-in-time. NEVER logged in
     // plaintext — only via `redactAccountNumber` for trace readability.
-    const accountNumberPlaintext = decryptAccountNumber(merchant.xenditAccountNumber);
+    const accountNumberPlaintext = decryptAccountNumber(merchant.payoutAccountNumber);
     const redacted = redactAccountNumber(accountNumberPlaintext);
 
     // `external_id` / `reference_id` == intent.id. Xendit's
@@ -91,10 +92,10 @@ export class XenditPayoutProvider implements IPayoutProviderAdapter {
 
     const body = {
       reference_id: referenceId,
-      channel_code: merchant.xenditChannelCode,
+      channel_code: merchant.payoutChannelCode,
       channel_properties: {
         account_number: accountNumberPlaintext,
-        account_holder_name: merchant.xenditAccountHolderName,
+        account_holder_name: merchant.payoutAccountHolderName,
       },
       amount,
       currency: intent.fiatCurrency,
@@ -113,7 +114,7 @@ export class XenditPayoutProvider implements IPayoutProviderAdapter {
     };
 
     this.logger.log(
-      `Xendit payout attempt intentId=${intent.id} channel=${merchant.xenditChannelCode} amount=${amount} ${intent.fiatCurrency} account=${redacted}`,
+      `Xendit payout attempt intentId=${intent.id} channel=${merchant.payoutChannelCode} amount=${amount} ${intent.fiatCurrency} account=${redacted}`,
     );
 
     // Attempt loop with exponential backoff on transient failures only.
@@ -135,7 +136,7 @@ export class XenditPayoutProvider implements IPayoutProviderAdapter {
           status,
           amount,
           currency: intent.fiatCurrency,
-          channelCode: merchant.xenditChannelCode,
+          channelCode: merchant.payoutChannelCode,
           requestedAt: new Date(),
           rawResponse: result.body,
         };
@@ -175,12 +176,12 @@ export class XenditPayoutProvider implements IPayoutProviderAdapter {
     );
   }
 
-  async getStatus(_providerReferenceId: string): Promise<TProviderStatus> {
+  async getStatus(_providerReferenceId: string): Promise<TProviderStatusResult> {
     // v1 deliberately stubs this to PENDING — webhook (task 30) is the
     // source of truth for status transitions. Leaving a concrete reconcile
     // call for a future task (49 refund runbook) once Xendit's
     // `GET /v2/payouts/{id}` contract is locked.
-    return "PENDING";
+    return { status: "PENDING" };
   }
 
   verifyWebhookSignature(

@@ -11,6 +11,7 @@ import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 import * as argon2 from "argon2";
+import { DUITKU_CHANNEL_CODES } from "../../payout/duitku-channels";
 
 interface VCGamersProduct {
   key: string;
@@ -1202,20 +1203,17 @@ async function main() {
     }),
   );
 
-  // Xendit payout channels (spec §6.6 `channels`, task 26).
+  // Canonical payout channels (spec §6.6 `channels`, task 26).
   // Composite PK = (channelCode, country). Upsert → idempotent, ops
   // re-runs `pnpm prisma db seed` to tune fees/limits. country-keyed
   // (not namespace-keyed) so future MY/TH/VN expansion is data-only.
-  // xenditFeeIdr + xenditMin/MaxAmountIdr are ops-tunable placeholders;
-  // TODO: reconcile against Xendit's published fee card per channel.
-  // `iconUrl` values below point at a takumipay-hosted CDN path per
-  // channel. The path convention is `assets.takumipay.com/channels/
-  // <lowercase-channel-code>.png` — ops uploads the actual PNGs to
-  // that bucket out-of-band; we control the URL shape here so the
-  // mobile picker can display icons as soon as the bucket is populated
-  // without a schema or seed change. Leave any row's `iconUrl` NULL to
-  // skip an icon for that channel (mobile renders the kind-based
-  // fallback Wallet/Building2 glyph in that case).
+  // Per-provider codes + fees live in `ProviderChannel` (two rows per
+  // channel: xendit + duitku). Canonical `Channel` rows hold only the
+  // merchant-facing catalog (label, kind, icon, priority).
+  // DUITKU_CHANNEL_CODES below mirrors research §2.7 (duitku_payout_provider_research.md).
+  // Duitku wire-codes come from `DUITKU_CHANNEL_CODES` (src/payout/duitku-channels.ts)
+  // — single source of truth for both the seed and any future admin tooling.
+  // Channels without a Duitku mapping just skip the duitku ProviderChannel row.
   const seedChannels: Array<{
     channelCode: string;
     country: string;
@@ -1224,21 +1222,18 @@ async function main() {
     accountFormat: string;
     priority: number;
     iconUrl: string | null;
-    xenditMinAmountIdr: number;
-    xenditMaxAmountIdr: number;
-    xenditFeeIdr: number;
+    minAmountIdr: number;
+    maxAmountIdr: number;
+    feeIdr: number;
   }> = [
-    { channelCode: "GOPAY",     country: "ID", label: "GoPay",     kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 10, iconUrl: "https://assets.takumipay.com/channels/gopay.png",     xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 20_000_000, xenditFeeIdr: 2500 },
-    { channelCode: "OVO",       country: "ID", label: "OVO",       kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 11, iconUrl: "https://assets.takumipay.com/channels/ovo.png",       xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 10_000_000, xenditFeeIdr: 2500 },
-    { channelCode: "DANA",      country: "ID", label: "DANA",      kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 12, iconUrl: "https://assets.takumipay.com/channels/dana.png",      xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 10_000_000, xenditFeeIdr: 2500 },
-    { channelCode: "SHOPEEPAY", country: "ID", label: "ShopeePay", kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 13, iconUrl: "https://assets.takumipay.com/channels/shopeepay.png", xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 10_000_000, xenditFeeIdr: 2500 },
-    { channelCode: "BCA",       country: "ID", label: "BCA",       kind: ChannelKind.bank,    accountFormat: "digits:10", priority: 20, iconUrl: "https://assets.takumipay.com/channels/bca.png",       xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 50_000_000, xenditFeeIdr: 5000 },
-    { channelCode: "MANDIRI",   country: "ID", label: "Mandiri",   kind: ChannelKind.bank,    accountFormat: "digits:13", priority: 21, iconUrl: "https://assets.takumipay.com/channels/mandiri.png",   xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 50_000_000, xenditFeeIdr: 5000 },
-    { channelCode: "BNI",       country: "ID", label: "BNI",       kind: ChannelKind.bank,    accountFormat: "digits:10", priority: 22, iconUrl: "https://assets.takumipay.com/channels/bni.png",       xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 50_000_000, xenditFeeIdr: 5000 },
-    { channelCode: "BRI",       country: "ID", label: "BRI",       kind: ChannelKind.bank,    accountFormat: "digits:15", priority: 23, iconUrl: "https://assets.takumipay.com/channels/bri.png",       xenditMinAmountIdr: 10_000, xenditMaxAmountIdr: 50_000_000, xenditFeeIdr: 5000 },
-    // … verify each against Xendit Test Mode by dry-running POST /v2/payouts;
-    //   the API returns 400 on unknown channel_code, which is the right-sized
-    //   integration test for this seed.
+    { channelCode: "GOPAY",     country: "ID", label: "GoPay",     kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 10, iconUrl: "https://assets.takumipay.com/channels/gopay.png",     minAmountIdr: 10_000, maxAmountIdr: 20_000_000, feeIdr: 2500 },
+    { channelCode: "OVO",       country: "ID", label: "OVO",       kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 11, iconUrl: "https://assets.takumipay.com/channels/ovo.png",       minAmountIdr: 10_000, maxAmountIdr: 10_000_000, feeIdr: 2500 },
+    { channelCode: "DANA",      country: "ID", label: "DANA",      kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 12, iconUrl: "https://assets.takumipay.com/channels/dana.png",      minAmountIdr: 10_000, maxAmountIdr: 10_000_000, feeIdr: 2500 },
+    { channelCode: "SHOPEEPAY", country: "ID", label: "ShopeePay", kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 13, iconUrl: "https://assets.takumipay.com/channels/shopeepay.png", minAmountIdr: 10_000, maxAmountIdr: 10_000_000, feeIdr: 2500 },
+    { channelCode: "BCA",       country: "ID", label: "BCA",       kind: ChannelKind.bank,    accountFormat: "digits:10", priority: 20, iconUrl: "https://assets.takumipay.com/channels/bca.png",       minAmountIdr: 10_000, maxAmountIdr: 50_000_000, feeIdr: 5000 },
+    { channelCode: "MANDIRI",   country: "ID", label: "Mandiri",   kind: ChannelKind.bank,    accountFormat: "digits:13", priority: 21, iconUrl: "https://assets.takumipay.com/channels/mandiri.png",   minAmountIdr: 10_000, maxAmountIdr: 50_000_000, feeIdr: 5000 },
+    { channelCode: "BNI",       country: "ID", label: "BNI",       kind: ChannelKind.bank,    accountFormat: "digits:10", priority: 22, iconUrl: "https://assets.takumipay.com/channels/bni.png",       minAmountIdr: 10_000, maxAmountIdr: 50_000_000, feeIdr: 5000 },
+    { channelCode: "BRI",       country: "ID", label: "BRI",       kind: ChannelKind.bank,    accountFormat: "digits:15", priority: 23, iconUrl: "https://assets.takumipay.com/channels/bri.png",       minAmountIdr: 10_000, maxAmountIdr: 50_000_000, feeIdr: 5000 },
   ];
 
   for (const ch of seedChannels) {
@@ -1252,9 +1247,6 @@ async function main() {
         accountFormat: ch.accountFormat,
         priority: ch.priority,
         iconUrl: ch.iconUrl,
-        xenditMinAmountIdr: ch.xenditMinAmountIdr,
-        xenditMaxAmountIdr: ch.xenditMaxAmountIdr,
-        xenditFeeIdr: ch.xenditFeeIdr,
         isActive: true,
       },
       create: {
@@ -1265,12 +1257,77 @@ async function main() {
         accountFormat: ch.accountFormat,
         priority: ch.priority,
         iconUrl: ch.iconUrl,
-        xenditMinAmountIdr: ch.xenditMinAmountIdr,
-        xenditMaxAmountIdr: ch.xenditMaxAmountIdr,
-        xenditFeeIdr: ch.xenditFeeIdr,
         isActive: true,
       },
     });
+
+    // Xendit provider mapping — `providerChannelCode` == canonical today.
+    await prisma.providerChannel.upsert({
+      where: {
+        channelCode_country_provider: {
+          channelCode: ch.channelCode,
+          country: ch.country,
+          provider: "xendit",
+        },
+      },
+      update: {
+        providerChannelCode: ch.channelCode,
+        minAmountIdr: ch.minAmountIdr,
+        maxAmountIdr: ch.maxAmountIdr,
+        feeIdr: ch.feeIdr,
+        isActive: true,
+      },
+      create: {
+        channelCode: ch.channelCode,
+        country: ch.country,
+        provider: "xendit",
+        providerChannelCode: ch.channelCode,
+        minAmountIdr: ch.minAmountIdr,
+        maxAmountIdr: ch.maxAmountIdr,
+        feeIdr: ch.feeIdr,
+        isActive: true,
+      },
+    });
+
+    // Duitku provider mapping — wire-code resolved from the shared
+    // `DUITKU_CHANNEL_CODES` table (research §2.7). Channels without a
+    // Duitku equivalent (e.g. future non-IDR channels) just skip.
+    // Dev-default fees mirror Xendit; ops can tune in prod via admin tooling.
+    const duitkuCode = DUITKU_CHANNEL_CODES[ch.channelCode];
+    if (duitkuCode) {
+      await prisma.providerChannel.upsert({
+        where: {
+          channelCode_country_provider: {
+            channelCode: ch.channelCode,
+            country: ch.country,
+            provider: "duitku",
+          },
+        },
+        update: {
+          providerChannelCode: duitkuCode,
+          minAmountIdr: ch.minAmountIdr,
+          maxAmountIdr: ch.maxAmountIdr,
+          feeIdr: ch.feeIdr,
+          isActive: true,
+        },
+        create: {
+          channelCode: ch.channelCode,
+          country: ch.country,
+          provider: "duitku",
+          providerChannelCode: duitkuCode,
+          minAmountIdr: ch.minAmountIdr,
+          maxAmountIdr: ch.maxAmountIdr,
+          feeIdr: ch.feeIdr,
+          isActive: true,
+        },
+      });
+    } else {
+      // Task 11 rule: skip with a warn when no Duitku mapping exists —
+      // don't implicitly create a stub.
+      console.warn(
+        `seed: no Duitku channel code for canonical "${ch.channelCode}"; skipping duitku ProviderChannel row.`,
+      );
+    }
   }
 
   const users = await Promise.all([

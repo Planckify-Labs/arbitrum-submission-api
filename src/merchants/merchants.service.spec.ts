@@ -79,7 +79,7 @@ function buildPrismaStub(
           accountFormat: "^\\+62\\d{8,12}$",
           priority: 1,
           isActive: true,
-          xenditFeeIdr: 0,
+          feeIdr: 0,
           createdAt: new Date(),
           updatedAt: new Date(),
         }
@@ -90,9 +90,9 @@ function buildPrismaStub(
     displayName: "Warung Test",
     contactPhone: "",
     country: "ID",
-    xenditChannelCode: "GOPAY",
-    xenditAccountNumber: Buffer.from("+6281234567890", "utf8"),
-    xenditAccountHolderName: "Bu Sari",
+    payoutChannelCode: "GOPAY",
+    payoutAccountNumber: Buffer.from("+6281234567890", "utf8"),
+    payoutAccountHolderName: "Bu Sari",
     qrisPan: null,
     jwsQr: "takumipay:v1:PENDING",
     jwsIssuedAt: new Date("2026-04-20T00:00:00Z"),
@@ -320,9 +320,9 @@ describe("MerchantsService", () => {
         displayName: "Warung Profile",
         contactPhone: "+6289999",
         country: "ID",
-        xenditChannelCode: "BCA",
-        xenditAccountNumber: Buffer.from("1234567890", "utf8"),
-        xenditAccountHolderName: "Bu Profile",
+        payoutChannelCode: "BCA",
+        payoutAccountNumber: Buffer.from("1234567890", "utf8"),
+        payoutAccountHolderName: "Bu Profile",
         qrisPan: null,
         jwsQr: "takumipay:v1:AAA",
         jwsIssuedAt: new Date(1_700_000_000_000),
@@ -349,9 +349,9 @@ describe("MerchantsService", () => {
         displayName: "Warung Rot",
         contactPhone: "",
         country: "ID",
-        xenditChannelCode: "GOPAY",
-        xenditAccountNumber: Buffer.from("+6281234567890", "utf8"),
-        xenditAccountHolderName: "Bu Rot",
+        payoutChannelCode: "GOPAY",
+        payoutAccountNumber: Buffer.from("+6281234567890", "utf8"),
+        payoutAccountHolderName: "Bu Rot",
         qrisPan: null,
         jwsQr: "takumipay:v1:OLD",
         jwsIssuedAt: originalIat,
@@ -397,9 +397,9 @@ describe("MerchantsService", () => {
         accountFormat: "phone_id",
         priority: 10,
         isActive: true,
-        xenditMinAmountIdr: 10_000,
-        xenditMaxAmountIdr: 20_000_000,
-        xenditFeeIdr: 2500,
+        minAmountIdr: 10_000,
+        maxAmountIdr: 20_000_000,
+        feeIdr: 2500,
       },
       {
         channelCode: "OVO",
@@ -409,9 +409,9 @@ describe("MerchantsService", () => {
         accountFormat: "phone_id",
         priority: 11,
         isActive: true,
-        xenditMinAmountIdr: 10_000,
-        xenditMaxAmountIdr: 10_000_000,
-        xenditFeeIdr: 2500,
+        minAmountIdr: 10_000,
+        maxAmountIdr: 10_000_000,
+        feeIdr: 2500,
       },
       {
         channelCode: "DANA",
@@ -421,9 +421,9 @@ describe("MerchantsService", () => {
         accountFormat: "phone_id",
         priority: 12,
         isActive: true,
-        xenditMinAmountIdr: 10_000,
-        xenditMaxAmountIdr: 10_000_000,
-        xenditFeeIdr: 2500,
+        minAmountIdr: 10_000,
+        maxAmountIdr: 10_000_000,
+        feeIdr: 2500,
       },
       {
         channelCode: "SHOPEEPAY",
@@ -433,9 +433,9 @@ describe("MerchantsService", () => {
         accountFormat: "phone_id",
         priority: 13,
         isActive: true,
-        xenditMinAmountIdr: 10_000,
-        xenditMaxAmountIdr: 10_000_000,
-        xenditFeeIdr: 2500,
+        minAmountIdr: 10_000,
+        maxAmountIdr: 10_000_000,
+        feeIdr: 2500,
       },
       {
         channelCode: "BCA",
@@ -445,9 +445,9 @@ describe("MerchantsService", () => {
         accountFormat: "digits:10",
         priority: 20,
         isActive: true,
-        xenditMinAmountIdr: 10_000,
-        xenditMaxAmountIdr: 50_000_000,
-        xenditFeeIdr: 5000,
+        minAmountIdr: 10_000,
+        maxAmountIdr: 50_000_000,
+        feeIdr: 5000,
       },
       {
         channelCode: "MANDIRI",
@@ -457,9 +457,9 @@ describe("MerchantsService", () => {
         accountFormat: "digits:13",
         priority: 21,
         isActive: true,
-        xenditMinAmountIdr: 10_000,
-        xenditMaxAmountIdr: 50_000_000,
-        xenditFeeIdr: 5000,
+        minAmountIdr: 10_000,
+        maxAmountIdr: 50_000_000,
+        feeIdr: 5000,
       },
       {
         channelCode: "BNI",
@@ -469,9 +469,9 @@ describe("MerchantsService", () => {
         accountFormat: "digits:10",
         priority: 22,
         isActive: true,
-        xenditMinAmountIdr: 10_000,
-        xenditMaxAmountIdr: 50_000_000,
-        xenditFeeIdr: 5000,
+        minAmountIdr: 10_000,
+        maxAmountIdr: 50_000_000,
+        feeIdr: 5000,
       },
       {
         channelCode: "BRI",
@@ -481,9 +481,9 @@ describe("MerchantsService", () => {
         accountFormat: "digits:15",
         priority: 23,
         isActive: true,
-        xenditMinAmountIdr: 10_000,
-        xenditMaxAmountIdr: 50_000_000,
-        xenditFeeIdr: 5000,
+        minAmountIdr: 10_000,
+        maxAmountIdr: 50_000_000,
+        feeIdr: 5000,
       },
     ];
 
@@ -506,11 +506,29 @@ describe("MerchantsService", () => {
                 { channelCode: "asc" },
               ]);
               const rows = rowsByCountry[where.country] ?? [];
-              return [...rows].sort((a, b) =>
+              const sorted = [...rows].sort((a, b) =>
                 a.priority === b.priority
                   ? a.channelCode.localeCompare(b.channelCode)
                   : a.priority - b.priority,
               );
+              // Service uses `include: { providerChannels: { where: xendit } }`.
+              // Synthesize a single-row providerChannels array per channel so
+              // the DTO mapper picks up fees/limits.
+              return sorted.map((row) => ({
+                ...row,
+                providerChannels: [
+                  {
+                    channelCode: row.channelCode,
+                    country: row.country,
+                    provider: "xendit",
+                    providerChannelCode: row.channelCode,
+                    minAmountIdr: row.minAmountIdr,
+                    maxAmountIdr: row.maxAmountIdr,
+                    feeIdr: row.feeIdr,
+                    isActive: true,
+                  },
+                ],
+              }));
             },
           ),
         },

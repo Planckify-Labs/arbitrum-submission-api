@@ -2,13 +2,14 @@ import { Inject, Injectable, Logger } from "@nestjs/common";
 import type { Merchant, PaymentIntent } from "@generated/prisma";
 import { PrismaService } from "../prisma/prisma.service";
 import {
+  PAYOUT_PROVIDER_DUITKU,
   PAYOUT_PROVIDER_XENDIT,
   type IPayoutProviderAdapter,
 } from "./payout-provider.port";
 import {
   PayoutProviderError,
   type TPayoutReceipt,
-  type TProviderStatus,
+  type TProviderStatusResult,
 } from "./types";
 
 /**
@@ -21,7 +22,7 @@ import {
  *   1. Resolve the right provider from `merchant.payoutProvider`. v1 only
  *      knows `"xendit"`. Unknown values throw a typed error so ops sees it
  *      in the log pipe.
- *   2. Persist a `XenditPayout` row BEFORE returning — the row is the
+ *   2. Persist a `ProviderPayout` row BEFORE returning — the row is the
  *      audit trail; if the caller crashes afterward the row survives.
  *   3. On provider success → `PENDING`, intent → `SETTLED` stays as-is
  *      (task 30 webhook flips to `PAID_OUT`).
@@ -41,6 +42,8 @@ export class PayoutService {
     private readonly prisma: PrismaService,
     @Inject(PAYOUT_PROVIDER_XENDIT)
     private readonly xenditProvider: IPayoutProviderAdapter,
+    @Inject(PAYOUT_PROVIDER_DUITKU)
+    private readonly duitkuProvider: IPayoutProviderAdapter,
   ) {}
 
   /**
@@ -72,7 +75,7 @@ export class PayoutService {
       const receipt = await provider.triggerPayout(intent, merchant);
       await this.persistSuccess(intent, merchant, receipt);
       this.logger.log(
-        `Xendit payout dispatched intentId=${intent.id} xenditPayoutId=${receipt.providerPayoutId ?? "null"} status=${receipt.status}`,
+        `Xendit payout dispatched intentId=${intent.id} providerPayoutId=${receipt.providerPayoutId ?? "null"} status=${receipt.status}`,
       );
       return receipt;
     } catch (err) {
@@ -151,19 +154,24 @@ export class PayoutService {
   /**
    * Convenience for ops dashboards / reconciliation.
    */
-  async getXenditStatus(providerReferenceId: string): Promise<TProviderStatus> {
+  async getXenditStatus(
+    providerReferenceId: string,
+  ): Promise<TProviderStatusResult> {
     return this.xenditProvider.getStatus(providerReferenceId);
   }
 
   /**
-   * Provider factory. v1 only knows Xendit — adding Flip is a case-arm
-   * here and a new `@Inject(PAYOUT_PROVIDER_FLIP)` in the module. No
-   * branching in any caller.
+   * Provider factory. This is the **only** place in the codebase that
+   * branches on `merchant.payoutProvider` — see the port header rules.
+   * Adding a new provider is: (1) new adapter class; (2) new Symbol token
+   * in the port; (3) new case arm here + constructor @Inject above.
    */
   private resolveProvider(key: string): IPayoutProviderAdapter | null {
     switch (key) {
       case "xendit":
         return this.xenditProvider;
+      case "duitku":
+        return this.duitkuProvider;
       default:
         return null;
     }
@@ -174,40 +182,60 @@ export class PayoutService {
     merchant: Merchant,
     receipt: TPayoutReceipt,
   ): Promise<void> {
-    await this.prisma.xenditPayout.create({
+    await this.prisma.providerPayout.create({
       data: {
         intentId: intent.id,
-        xenditPayoutId: receipt.providerPayoutId,
+        provider: merchant.payoutProvider,
+        providerPayoutId: receipt.providerPayoutId,
+        providerResponseCode: receipt.providerResponseCode ?? null,
         referenceId: receipt.referenceId,
         channelCode: receipt.channelCode,
-        accountNumberEncrypted: merchant.xenditAccountNumber,
+        accountNumberEncrypted: merchant.payoutAccountNumber,
         amount: receipt.amount,
         currency: receipt.currency,
         status: receipt.status,
         requestedAt: receipt.requestedAt,
-        xenditResponseBody:
+        providerResponseBody:
           receipt.rawResponse === null ? undefined : (receipt.rawResponse as any),
       },
     });
+
+    // Queue a reconcile job for Duitku rows that landed in PENDING — the
+    // transfer response was ambiguous (TO/68/-100) and only `inquiryStatus`
+    // can settle the outcome. Xendit rows never reach here in PENDING (its
+    // 2xx is terminal-ish and the webhook handles transitions). Keeping the
+    // gate provider-agnostic: any provider that hands back a `reconcile`
+    // hint gets enqueued, and the handler reads `providerPayoutId` for the
+    // reconcile key.
+    if (receipt.reconcile && receipt.status === "PENDING") {
+      this.logger.log(
+        `Payout reconcile hint recorded intentId=${intent.id} provider=${merchant.payoutProvider} providerPayoutId=${receipt.providerPayoutId ?? "null"} reason=${receipt.reconcile.reason}`,
+      );
+      // The concrete enqueue lives on a queue service in a follow-up task
+      // (tests in task 14 assert the hint propagates — the queue binding
+      // is ops-facing plumbing, intentionally not wired here).
+    }
   }
 
   private async persistFailure(
     intent: PaymentIntent,
     merchant: Merchant,
-    failure: { message: string; rawResponse: unknown },
+    failure: { message: string; rawResponse: unknown; providerResponseCode?: string | null },
   ): Promise<void> {
-    await this.prisma.xenditPayout.create({
+    await this.prisma.providerPayout.create({
       data: {
         intentId: intent.id,
-        xenditPayoutId: null,
+        provider: merchant.payoutProvider,
+        providerPayoutId: null,
+        providerResponseCode: failure.providerResponseCode ?? null,
         referenceId: intent.id,
-        channelCode: merchant.xenditChannelCode,
-        accountNumberEncrypted: merchant.xenditAccountNumber,
+        channelCode: merchant.payoutChannelCode,
+        accountNumberEncrypted: merchant.payoutAccountNumber,
         amount: intent.fiatAmountMinor,
         currency: intent.fiatCurrency,
         status: "FAILED",
         requestedAt: new Date(),
-        xenditResponseBody:
+        providerResponseBody:
           failure.rawResponse === null
             ? { error: failure.message }
             : ({ error: failure.message, body: failure.rawResponse } as any),
