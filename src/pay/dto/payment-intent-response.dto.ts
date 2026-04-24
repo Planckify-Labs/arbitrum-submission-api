@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import { QuoteCommitmentResponseDto } from "./quote-commitment-response.dto";
 
 /**
  * Wire shape of the Nanopay authorization block inside
@@ -197,4 +198,22 @@ export class PaymentIntentResponseDto {
     nullable: true,
   })
   settledAt?: number | null;
+
+  // --- Onchain settlement quote fields (Phase 3, task 15) --------------------
+  // Populated when the intent targets an onchain settlement rail. The mobile
+  // app uses these to build the on-chain `payWithQuote(...)` transaction.
+
+  @ApiPropertyOptional({
+    description:
+      "EIP-712 quote commitment the backend signed. Present when the intent uses the onchain settlement rail.",
+    type: QuoteCommitmentResponseDto,
+  })
+  quoteCommitment?: QuoteCommitmentResponseDto;
+
+  @ApiPropertyOptional({
+    description:
+      "Hex-encoded EIP-712 signature over `quoteCommitment`, signed by the platform's quote signer key. " +
+      "Passed verbatim as the `signature` arg to the on-chain `payWithQuote` function.",
+  })
+  quoteSignature?: string;
 }
