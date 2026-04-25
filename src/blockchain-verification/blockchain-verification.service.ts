@@ -13,6 +13,7 @@ import {
 import { readContract } from "viem/actions";
 import { privateKeyToAccount } from "viem/accounts";
 import { ConfigService } from "@nestjs/config";
+import { PublicKey } from "@solana/web3.js";
 import { PrismaService } from "../prisma/prisma.service";
 import { addressesEqual } from "../auth/address-compare";
 import { TakumiWalletAbi } from "./abis/takumi-wallet.abi";
@@ -24,6 +25,9 @@ import {
 } from "./types/blockchain-verification.types";
 import { VerifyContractTransactionDto } from "./dto/verify-contract-transaction.dto";
 import { getBlockchainConfig } from "../config/app.config";
+import { SolanaVerificationService } from "./solana-verification.service";
+import { computeRefIdHash } from "./solana/takumi-pay/ref-id-hash";
+import { TAKUMI_PAY_PROGRAM_ID } from "./solana/takumi-pay/pda";
 
 @Injectable()
 export class BlockchainVerificationService {
@@ -36,6 +40,7 @@ export class BlockchainVerificationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
+    private readonly solanaVerification: SolanaVerificationService,
   ) {
     const blockchainConfig = getBlockchainConfig(this.configService);
     this.minConfirmations = blockchainConfig.minConfirmations;
@@ -383,8 +388,45 @@ export class BlockchainVerificationService {
 
   async verifyTransactionInContract(
     trxData: VerifyContractTransactionDto,
+    blockchainId?: string,
   ): Promise<TTakumiWalletTransaction> {
     try {
+      // Solana dispatch: if a blockchainId is provided, check whether the
+      // blockchain is non-EVM and route to the Solana verification service.
+      if (blockchainId) {
+        const blockchain = await this.prisma.blockchain.findUnique({
+          where: { id: blockchainId },
+        });
+        if (blockchain && !blockchain.isEVM) {
+          const programId = blockchain.takumiPayProgramId
+            ? new PublicKey(blockchain.takumiPayProgramId)
+            : TAKUMI_PAY_PROGRAM_ID;
+          const refIdHash = computeRefIdHash(trxData.refId);
+          const solanaRecord =
+            await this.solanaVerification.verifyTransactionRecord({
+              programId,
+              refId: trxData.refId,
+              refIdHash,
+              expectedWalletAddress: trxData.expectedWalletAddress,
+              expectedTokenMint: trxData.expectedTokenAddress,
+              expectedAmount: trxData.expectedAmount,
+              expectedBookingId: trxData.expectedBookingId,
+              expectedExchangeRateId: trxData.expectedExchangeRateId,
+              expectedProductVariantId: trxData.expectedProductVariantId,
+            });
+          return {
+            walletAddress: solanaRecord.walletAddress.toBase58(),
+            tokenAddress: solanaRecord.tokenMint.toBase58(),
+            bookingId: solanaRecord.bookingId,
+            exchangeRateId: BigInt(solanaRecord.exchangeRateId.toString()),
+            productVariantId: solanaRecord.productVariantId,
+            timestamp: BigInt(solanaRecord.timestamp.toString()),
+            refId: solanaRecord.refId,
+            amount: BigInt(solanaRecord.amount.toString()),
+          };
+        }
+      }
+
       this.logger.log(
         `Verifying transaction in contract ${trxData.contractAddress} for refId ${trxData.refId} on chain ${trxData.chainId}`,
       );
@@ -520,8 +562,35 @@ export class BlockchainVerificationService {
     expectedFiatAmountMinor: number;
     expectedFiatCurrency: string;
     expectedExchangeRateId: number;
+    blockchainId?: string;
   }): Promise<void> {
     try {
+      // Solana dispatch: route to Solana verification for non-EVM blockchains.
+      if (args.blockchainId) {
+        const blockchain = await this.prisma.blockchain.findUnique({
+          where: { id: args.blockchainId },
+        });
+        if (blockchain && !blockchain.isEVM) {
+          const programId = blockchain.takumiPayProgramId
+            ? new PublicKey(blockchain.takumiPayProgramId)
+            : TAKUMI_PAY_PROGRAM_ID;
+          const refIdHash = computeRefIdHash(args.refId);
+          await this.solanaVerification.verifyMerchantPayment({
+            programId,
+            refId: args.refId,
+            refIdHash,
+            expectedPayer: args.expectedPayer,
+            expectedMerchantId: args.expectedMerchantId,
+            expectedTokenMint: args.expectedTokenAddress,
+            expectedAmount: args.expectedAmount,
+            expectedFiatAmountMinor: args.expectedFiatAmountMinor,
+            expectedFiatCurrency: args.expectedFiatCurrency,
+            expectedExchangeRateId: args.expectedExchangeRateId,
+          });
+          return;
+        }
+      }
+
       this.logger.log(
         `Verifying merchant payment in contract ${args.contractAddress} for refId ${args.refId} on chain ${args.chainId}`,
       );
@@ -618,6 +687,7 @@ export class BlockchainVerificationService {
     expectedTokenAddress: string;
     expectedAmount: bigint;
     minConfirmations?: number;
+    blockchainId?: string;
   }): Promise<{ walletAddress: string; tokenAddress: string; amount: bigint }> {
     const {
       txHash,
@@ -629,6 +699,32 @@ export class BlockchainVerificationService {
       expectedAmount,
       minConfirmations = 12,
     } = params;
+
+    // Solana dispatch: route to Solana verification for non-EVM blockchains.
+    if (params.blockchainId) {
+      const blockchain = await this.prisma.blockchain.findUnique({
+        where: { id: params.blockchainId },
+      });
+      if (blockchain && !blockchain.isEVM) {
+        const programId = blockchain.takumiPayProgramId
+          ? new PublicKey(blockchain.takumiPayProgramId)
+          : TAKUMI_PAY_PROGRAM_ID;
+        const refIdHash = computeRefIdHash(refId);
+        const deposit = await this.solanaVerification.verifyPointDeposit({
+          programId,
+          refId,
+          refIdHash,
+          expectedWalletAddress,
+          expectedTokenMint: expectedTokenAddress,
+          expectedAmount,
+        });
+        return {
+          walletAddress: deposit.walletAddress.toBase58(),
+          tokenAddress: deposit.tokenMint.toBase58(),
+          amount: BigInt(deposit.amount.toString()),
+        };
+      }
+    }
 
     this.logger.log(
       `Verifying point deposit tx ${txHash} on chain ${chainId} for refId ${refId}`,

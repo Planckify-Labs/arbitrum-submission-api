@@ -180,6 +180,10 @@ model Blockchain {
   // `docs/security_review_needed.md §4` for the planned migration to split
   // the URL from the key and move the key to a secrets manager.
   bundlerUrl String?
+
+  // Solana-specific fields (Solana contract integration)
+  solanaCluster      String?
+  takumiPayProgramId String?
 }
 
 model Token {
@@ -1055,7 +1059,8 @@ model OnchainSettlement {
   intent         PaymentIntent @relation(fields: [intentId], references: [id], onDelete: Cascade)
   intentId       String
   txHash         String
-  chainId        Int
+  chainId        Int?
+  cluster        String?
   confirmations  Int?
   verifiedAt     DateTime?     @db.Timestamptz()
   failureCode    String?
