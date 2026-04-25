@@ -56,7 +56,7 @@ export class SolanaVerificationService implements OnModuleInit {
       this.config.get<string>("TAKUMI_PAY_PROGRAM_ID") ??
         TAKUMI_PAY_PROGRAM_ID.toBase58(),
     );
-    this.program = new Program(TAKUMI_PAY_IDL as any, programId, provider);
+    this.program = new Program(TAKUMI_PAY_IDL as any, provider as any);
 
     const signerKey = this.config.get<string>(
       "SOLANA_QUOTE_SIGNER_PRIVATE_KEY",
@@ -75,12 +75,12 @@ export class SolanaVerificationService implements OnModuleInit {
     signature: string,
     commitment: Commitment = "finalized",
   ): Promise<void> {
-    const { value } = await this.connection.getLatestBlockhash(commitment);
+    const bh = await this.connection.getLatestBlockhash(commitment);
     await this.connection.confirmTransaction(
       {
         signature,
-        blockhash: value.blockhash,
-        lastValidBlockHeight: value.lastValidBlockHeight,
+        blockhash: bh.blockhash,
+        lastValidBlockHeight: bh.lastValidBlockHeight,
       },
       commitment,
     );

@@ -29,6 +29,7 @@
     "db:setup:prod": "./scripts/setup-db-prod.sh"
   },
   "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
     "@nestjs/bullmq": "^11.0.3",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.2",
@@ -41,6 +42,7 @@
     "@prisma/client": "^7.2.0",
     "@solana/addresses": "^2.3.0",
     "@solana/keys": "^2.3.0",
+    "@solana/web3.js": "^1.98.4",
     "@valkey/valkey-glide": "^2.0.1",
     "argon2": "^0.43.1",
     "bullmq": "^5.58.5",
@@ -58,6 +60,7 @@
     "rxjs": "^7.8.1",
     "siwe": "^3.0.0",
     "swagger-ui-express": "^5.0.1",
+    "tweetnacl": "^1.0.3",
     "viem": "^2.37.5"
   },
   "devDependencies": {
