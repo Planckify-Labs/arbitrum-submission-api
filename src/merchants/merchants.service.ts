@@ -6,6 +6,7 @@ import {
   NotFoundException,
   Optional,
 } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { ValkeyService } from "../valkey/valkey.service";
 import type { ChannelResponseDto } from "./dto/channel-response.dto";
@@ -44,15 +45,17 @@ export const CHANNELS_CACHE_TTL_SECONDS = 3600;
 export class MerchantsService {
   private readonly logger = new Logger(MerchantsService.name);
 
+  private readonly defaultPayoutProvider: string;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly qrSigning: QrSigningService,
-    // `@Optional()` keeps the existing unit-test constructors (which
-    // don't wire Valkey) working — the cache layer is additive for the
-    // channels lookup and degrades cleanly to a DB-only read if the
-    // service isn't injected (or if Valkey is down at runtime).
+    @Optional() private readonly config?: ConfigService,
     @Optional() private readonly valkey?: ValkeyService,
-  ) {}
+  ) {
+    this.defaultPayoutProvider =
+      this.config?.get<string>("DEFAULT_PAYOUT_PROVIDER") ?? "duitku";
+  }
 
   /**
    * Create the merchant row for the authenticated user + sign its JWS.
@@ -142,7 +145,7 @@ export class MerchantsService {
             jwsQr: signed.wire,
             jwsIssuedAt: new Date(signed.iat * 1000),
             jwsExpiresAt: null,
-            payoutProvider: "xendit",
+            payoutProvider: this.defaultPayoutProvider,
           },
         });
 
@@ -349,17 +352,12 @@ export class MerchantsService {
     // tunes; `channelCode ASC` is a stable tiebreaker so two channels
     // with identical priority always render in the same slot.
     //
-    // Fees / limits are per-provider — live on `ProviderChannel`. The
-    // pre-signup picker has no merchant row yet, so we default to the
-    // same provider as `Merchant.payoutProvider @default("xendit")`.
-    // Per-merchant fee personalization (when a merchant is known) is a
-    // follow-up task.
     const rows = await this.prisma.channel.findMany({
       where: { country: normalized, isActive: true },
       orderBy: [{ priority: "asc" }, { channelCode: "asc" }],
       include: {
         providerChannels: {
-          where: { provider: "xendit", isActive: true },
+          where: { provider: this.defaultPayoutProvider, isActive: true },
           take: 1,
         },
       },

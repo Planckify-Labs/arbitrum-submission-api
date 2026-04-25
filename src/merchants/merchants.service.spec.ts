@@ -562,6 +562,7 @@ describe("MerchantsService", () => {
       const svc = new MerchantsService(
         prisma as unknown as PrismaService,
         qrSigning,
+        undefined,
         valkey,
       );
 
@@ -616,6 +617,7 @@ describe("MerchantsService", () => {
       const svc = new MerchantsService(
         prisma as unknown as PrismaService,
         qrSigning,
+        undefined,
         valkey,
       );
 
@@ -629,6 +631,7 @@ describe("MerchantsService", () => {
       const svc = new MerchantsService(
         prisma as unknown as PrismaService,
         qrSigning,
+        undefined,
         valkey,
       );
 
@@ -662,6 +665,7 @@ describe("MerchantsService", () => {
       const svc = new MerchantsService(
         prisma as unknown as PrismaService,
         qrSigning,
+        undefined,
         valkey,
       );
 
@@ -686,6 +690,7 @@ describe("MerchantsService", () => {
       const svc = new MerchantsService(
         prisma as unknown as PrismaService,
         qrSigning,
+        undefined,
         valkey,
       );
 
