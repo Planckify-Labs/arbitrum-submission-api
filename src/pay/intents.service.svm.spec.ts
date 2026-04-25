@@ -118,9 +118,9 @@ function svmPrismaStub(opts?: {
   const createdIntent = opts?.createdIntent ?? {
     id: "pi_svm_01",
     status: "QUOTED",
-    usdcAmountMicros: 941_294n,
-    usdcSourceChainId: SVM_MAINNET_SENTINEL,
-    usdcTreasuryAddress: SVM_TREASURY_PUBKEY,
+    nanopayUsdcAmountMicros: 941_294n,
+    nanopayUsdcSourceChainId: SVM_MAINNET_SENTINEL,
+    nanopayUsdcTreasuryAddress: SVM_TREASURY_PUBKEY,
     nanopayNonce: Buffer.alloc(32, 0x22),
     nanopayValidAfter: 1_700_000_000,
     nanopayValidBefore: 1_700_262_600,
@@ -262,19 +262,19 @@ describe("IntentsService.createIntent (SVM)", () => {
     const { svc } = buildSvmService({ prisma });
     const result = await svc.createIntent({ dto: svmDto, ...defaultArgs });
 
-    expect(result.usdcSourceChainId).toBe(SVM_MAINNET_SENTINEL);
-    expect(result.usdcTreasuryAddress).toBe(SVM_TREASURY_PUBKEY);
+    expect(result.nanopayUsdcSourceChainId).toBe(SVM_MAINNET_SENTINEL);
+    expect(result.nanopayUsdcTreasuryAddress).toBe(SVM_TREASURY_PUBKEY);
     expect(result.nanopay?.kind).toBe("svm_partial_tx");
     expect(result.nanopay?.cluster).toBe("mainnet-beta");
     expect(result.nanopay?.usdcMint).toBe(
       "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
     );
-    // Persisted row: usdcSourceChainId is the sentinel, NOT the EVM chainId.
+    // Persisted row: nanopayUsdcSourceChainId is the sentinel, NOT the EVM chainId.
     expect(prisma.paymentIntent.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          usdcSourceChainId: SVM_MAINNET_SENTINEL,
-          usdcTreasuryAddress: SVM_TREASURY_PUBKEY,
+          nanopayUsdcSourceChainId: SVM_MAINNET_SENTINEL,
+          nanopayUsdcTreasuryAddress: SVM_TREASURY_PUBKEY,
           requiresDeposit: false, // SVM intents don't require a Gateway deposit.
         }),
       }),
@@ -313,9 +313,9 @@ describe("IntentsService.createIntent (SVM)", () => {
       createdIntent: {
         id: "pi_evm_01",
         status: "QUOTED",
-        usdcAmountMicros: 941_294n,
-        usdcSourceChainId: 5042002,
-        usdcTreasuryAddress: "0x00000000000000000000000000000000abCDef01",
+        nanopayUsdcAmountMicros: 941_294n,
+        nanopayUsdcSourceChainId: 5042002,
+        nanopayUsdcTreasuryAddress: "0x00000000000000000000000000000000abCDef01",
         nanopayNonce: Buffer.alloc(32, 0x11),
         nanopayValidAfter: 1_700_000_000,
         nanopayValidBefore: 1_700_262_600,
@@ -331,7 +331,7 @@ describe("IntentsService.createIntent (SVM)", () => {
       rawBodyForHash:
         '{"currency":"IDR","fiatAmountMinor":15000,"merchantId":"mch_123"}',
     });
-    expect(result.usdcSourceChainId).toBe(5042002);
+    expect(result.nanopayUsdcSourceChainId).toBe(5042002);
     expect(result.nanopay?.kind).toBe("evm_eip3009");
   });
 });
@@ -345,9 +345,9 @@ describe("IntentsService.submitNanopaySvm", () => {
       merchantId: "mch_123",
       fiatAmountMinor: 15_000,
       fiatCurrency: "IDR",
-      usdcAmountMicros: 941_294n,
-      usdcSourceChainId: SVM_MAINNET_SENTINEL,
-      usdcTreasuryAddress: SVM_TREASURY_PUBKEY,
+      nanopayUsdcAmountMicros: 941_294n,
+      nanopayUsdcSourceChainId: SVM_MAINNET_SENTINEL,
+      nanopayUsdcTreasuryAddress: SVM_TREASURY_PUBKEY,
       nanopayNonce: Buffer.alloc(32, 0x22),
       nanopayValidAfter: 1_700_000_000,
       nanopayValidBefore: 1_700_262_600,
@@ -405,7 +405,7 @@ describe("IntentsService.submitNanopaySvm", () => {
   });
 
   it("400s when the intent is an EVM intent (wrong chain namespace)", async () => {
-    const intent = svmIntentRow({ usdcSourceChainId: 5042002 });
+    const intent = svmIntentRow({ nanopayUsdcSourceChainId: 5042002 });
     const prisma = svmPrismaStub({ intent });
     const svmSettle = {
       settle: jest.fn(),

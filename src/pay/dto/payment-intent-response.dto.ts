@@ -118,19 +118,19 @@ export class PaymentIntentResponseDto {
   @ApiProperty({
     description: "USDC atomic (6-decimal) amount. Decimal string to survive JSON bigint precision loss.",
   })
-  usdcAmountMicros!: string;
+  nanopayUsdcAmountMicros!: string;
 
   @ApiProperty({
     description:
       "Source chain the payer debits from — EVM chainId for EVM intents, or a negative sentinel for SVM intents (`-101` = solana-mainnet, `-102` = solana-devnet).",
   })
-  usdcSourceChainId!: number;
+  nanopayUsdcSourceChainId!: number;
 
   @ApiProperty({
     description:
       "Platform treasury address — EVM EOA (`0x…`) for EVM intents, Solana pubkey (base58) for SVM intents. Echoed from `nanopay.to` / `nanopay.feePayer` for convenience.",
   })
-  usdcTreasuryAddress!: string;
+  nanopayUsdcTreasuryAddress!: string;
 
   @ApiPropertyOptional({
     description:

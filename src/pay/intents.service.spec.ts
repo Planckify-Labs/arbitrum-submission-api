@@ -94,9 +94,9 @@ function prismaStub(opts?: {
   const createdIntent = opts?.createdIntent ?? {
     id: "pi_01HXYZ",
     status: "QUOTED",
-    usdcAmountMicros: 940924n,
-    usdcSourceChainId: 5042002,
-    usdcTreasuryAddress: "0x00000000000000000000000000000000abCDef01",
+    nanopayUsdcAmountMicros: 940924n,
+    nanopayUsdcSourceChainId: 5042002,
+    nanopayUsdcTreasuryAddress: "0x00000000000000000000000000000000abCDef01",
     nanopayNonce: Buffer.alloc(32, 0x11),
     nanopayValidAfter: 1_700_000_000,
     nanopayValidBefore: 1_700_262_600,
@@ -192,14 +192,14 @@ describe("IntentsService", () => {
 
     expect(prisma.paymentIntent.create).toHaveBeenCalledTimes(1);
     expect(result.status).toBe("pending");
-    expect(result.usdcSourceChainId).toBe(5042002);
+    expect(result.nanopayUsdcSourceChainId).toBe(5042002);
     expect(result.nanopay).not.toBeNull();
     expect(result.nanopay?.nonce).toMatch(/^0x[0-9a-f]{64}$/);
     expect(result.nanopay?.validBefore).toBeGreaterThanOrEqual(
       (result.nanopay?.validAfter ?? 0) + 259_200,
     );
     // 15000 IDR / (15700 × 1.015) = 0.941294... → 941294 micros (floor).
-    expect(result.usdcAmountMicros).toBe("941294");
+    expect(result.nanopayUsdcAmountMicros).toBe("941294");
   });
 
   it("404s when the merchant is missing", async () => {
@@ -249,9 +249,9 @@ describe("IntentsService", () => {
     const existing = {
       id: "pi_EXISTING",
       status: "QUOTED" as const,
-      usdcAmountMicros: 123_456n,
-      usdcSourceChainId: 5042002,
-      usdcTreasuryAddress: "0x00000000000000000000000000000000abCDef01",
+      nanopayUsdcAmountMicros: 123_456n,
+      nanopayUsdcSourceChainId: 5042002,
+      nanopayUsdcTreasuryAddress: "0x00000000000000000000000000000000abCDef01",
       nanopayNonce: Buffer.alloc(32, 0x22),
       nanopayValidAfter: 1,
       nanopayValidBefore: 2,
@@ -351,9 +351,9 @@ describe("IntentsService.getIntent", () => {
       fiatAmountMinor: 15_000,
       fiatCurrency: "IDR",
       fxRateSnapshot: { toString: () => "15700" },
-      usdcAmountMicros: 941_294n,
-      usdcSourceChainId: 5042002,
-      usdcTreasuryAddress: "0x00000000000000000000000000000000abCDef01",
+      nanopayUsdcAmountMicros: 941_294n,
+      nanopayUsdcSourceChainId: 5042002,
+      nanopayUsdcTreasuryAddress: "0x00000000000000000000000000000000abCDef01",
       nanopayNonce: Buffer.alloc(32, 0x11),
       nanopayValidAfter: 1_700_000_000,
       nanopayValidBefore: 1_700_262_600,
@@ -405,8 +405,8 @@ describe("IntentsService.getIntent", () => {
     expect(result.currency).toBe("IDR");
     expect(result.fxRate).toBe("15700");
     // BigInt → string (mobile contract); never leak the `n` suffix.
-    expect(result.usdcAmountMicros).toBe("941294");
-    expect(typeof result.usdcAmountMicros).toBe("string");
+    expect(result.nanopayUsdcAmountMicros).toBe("941294");
+    expect(typeof result.nanopayUsdcAmountMicros).toBe("string");
     // Pre-settle → nanopay block present for re-render of the sign modal.
     expect(result.nanopay).not.toBeNull();
     expect(result.nanopay?.from).toBe(
@@ -572,9 +572,9 @@ describe("IntentsService.submitNanopay", () => {
       merchantId: "mch_123",
       fiatAmountMinor: 15_000,
       fiatCurrency: "IDR",
-      usdcAmountMicros: 941_294n,
-      usdcSourceChainId: 5042002,
-      usdcTreasuryAddress: "0x00000000000000000000000000000000abcdef01",
+      nanopayUsdcAmountMicros: 941_294n,
+      nanopayUsdcSourceChainId: 5042002,
+      nanopayUsdcTreasuryAddress: "0x00000000000000000000000000000000abcdef01",
       nanopayNonce: Buffer.alloc(32, 0x11),
       nanopayValidAfter: 1_700_000_000,
       nanopayValidBefore: 1_700_262_600,
@@ -1019,9 +1019,9 @@ describe("IntentsService.recordDepositReceipt", () => {
       payerUserId: "user_payer",
       merchantId: "mch_123",
       requiresDeposit: true,
-      usdcAmountMicros: 1_000_000n,
-      usdcSourceChainId: 5042002,
-      usdcTreasuryAddress: "0x00000000000000000000000000000000abcdef01",
+      nanopayUsdcAmountMicros: 1_000_000n,
+      nanopayUsdcSourceChainId: 5042002,
+      nanopayUsdcTreasuryAddress: "0x00000000000000000000000000000000abcdef01",
       nanopayValidAfter: 1_700_000_000,
       nanopayValidBefore: 1_700_262_600,
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),

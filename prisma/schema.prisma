@@ -884,9 +884,9 @@ model PaymentIntent {
   merchantId            String
   fiatAmountMinor       Int
   fiatCurrency          String
-  tokenAmountMinor      BigInt              @map("usdcAmountMicros")
-  sourceChainId         Int                 @map("usdcSourceChainId")
-  usdcTreasuryAddress   String
+  nanopayUsdcAmountMicros   BigInt?
+  nanopayUsdcSourceChainId  Int?
+  nanopayUsdcTreasuryAddress String?
   // Onchain settlement — multi-token + fee fields (Phase 1)
   sourceToken                Token?              @relation(fields: [sourceTokenId], references: [id])
   sourceTokenId              String?

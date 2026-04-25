@@ -38,7 +38,7 @@ export class DepositReceiptDto {
 
   /**
    * EVM chain id the deposit landed on. We cross-check against the
-   * persisted intent's `usdcSourceChainId` and the BlockchainVerification
+   * persisted intent's `nanopayUsdcSourceChainId` and the BlockchainVerification
    * client map — if Circle Gateway isn't deployed there, the
    * BlockchainVerificationService rejects.
    */
