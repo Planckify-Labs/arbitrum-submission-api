@@ -100,17 +100,12 @@ export class PurchaseProcessor extends WorkerHost {
           "Contract address is required for transaction verification",
         );
       }
-      if (!booking.blockchain.isEVM || booking.blockchain.chainId == null) {
-        throw new Error(
-          `Purchases only supported on EVM chains (blockchain: ${booking.blockchain.name})`,
-        );
-      }
 
       await this.verifyBlockchainTransaction(
         transactionHash,
         walletAddress,
         contractAddress,
-        booking.blockchain.chainId,
+        booking.blockchain.chainId ?? 0,
         refId,
         contractAddress,
         booking.id,
@@ -119,6 +114,7 @@ export class PurchaseProcessor extends WorkerHost {
         )?.id?.toString() || "0",
         booking.productVariantId,
         booking.payment.amount,
+        booking.blockchain.id,
       );
 
       const transaction = await this.prisma.transactionHistory.update({
@@ -275,54 +271,39 @@ export class PurchaseProcessor extends WorkerHost {
       throw new Error(`Network ${blockchain?.name || networkId} is not active`);
     }
 
-    // Use cache for smart contract lookup (hot path optimization)
-    const smartContract = await this.contractCache.getByBlockchainAndAddress(
-      networkId,
-      contractAddress,
-      () =>
-        this.prisma.smartContract.findFirst({
-          where: {
-            blockchainId: networkId,
-            address: { equals: contractAddress, mode: "insensitive" },
-          },
-        }),
-    );
-
-    if (!smartContract || !smartContract.isActive) {
-      throw new Error(
-        `Smart contract with address ${contractAddress} not found or not active`,
+    if (blockchain.isEVM) {
+      const smartContract = await this.contractCache.getByBlockchainAndAddress(
+        networkId,
+        contractAddress,
+        () =>
+          this.prisma.smartContract.findFirst({
+            where: {
+              blockchainId: networkId,
+              address: { equals: contractAddress, mode: "insensitive" },
+            },
+          }),
       );
+
+      if (!smartContract || !smartContract.isActive) {
+        throw new Error(
+          `Smart contract with address ${contractAddress} not found or not active`,
+        );
+      }
+
+      return {
+        ...booking,
+        payment,
+        blockchain,
+        smartContract,
+      };
     }
 
     return {
       ...booking,
       payment,
       blockchain,
-      smartContract,
+      smartContract: null,
     };
-  }
-
-  private async createOrGetUser(walletAddress: string) {
-    // Purchase flow is EVM-only (smart-contract transactions via viem).
-    // If we ever support Solana purchases, this must switch to
-    // walletAddressLower with namespace-aware normalization.
-    const normalizedWalletAddress = walletAddress.toLowerCase();
-
-    let user = await this.prisma.user.findUnique({
-      where: { walletAddressLower: normalizedWalletAddress },
-    });
-
-    if (!user) {
-      user = await this.prisma.user.create({
-        data: {
-          walletAddress: normalizedWalletAddress,
-          walletAddressLower: normalizedWalletAddress,
-          authProvider: "WALLET",
-        },
-      });
-    }
-
-    return user;
   }
 
   private async validateToken(networkId: string, tokenAddress: string) {
@@ -361,6 +342,7 @@ export class PurchaseProcessor extends WorkerHost {
     expectedExchangeRateId: string,
     expectedProductVariantId: string,
     expectedAmount: string,
+    blockchainId: string,
   ) {
     const verificationResult =
       await this.blockchainVerificationService.verifyTransaction({
@@ -375,6 +357,7 @@ export class PurchaseProcessor extends WorkerHost {
         expectedExchangeRateId,
         expectedProductVariantId,
         expectedAmount,
+        blockchainId,
       });
 
     this.logger.log(`Transaction verification successful:`, {

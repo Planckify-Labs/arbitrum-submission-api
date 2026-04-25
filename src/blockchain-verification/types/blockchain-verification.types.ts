@@ -35,4 +35,5 @@ export interface TTransactionVerificationRequest {
   expectedExchangeRateId: string;
   expectedProductVariantId: string;
   expectedAmount: string;
+  blockchainId: string;
 }

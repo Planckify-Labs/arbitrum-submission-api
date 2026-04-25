@@ -28,11 +28,13 @@ export interface TBookingWithRelations {
     };
   };
   blockchain: {
-    chainId: number;
+    id: string;
+    chainId: number | null;
     name: string;
+    isEVM: boolean;
   };
   smartContract: {
     address: string;
     name: string;
-  };
+  } | null;
 }

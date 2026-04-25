@@ -24,7 +24,6 @@ import { VerifyContractTransactionDto } from "./dto/verify-contract-transaction.
 import { getBlockchainConfig } from "../config/app.config";
 import { SolanaVerificationService } from "./solana-verification.service";
 import { computeRefIdHash } from "./solana/takumi-pay/ref-id-hash";
-import { TAKUMI_PAY_PROGRAM_ID } from "./solana/takumi-pay/pda";
 
 @Injectable()
 export class BlockchainVerificationService {
@@ -145,6 +144,15 @@ export class BlockchainVerificationService {
     return this.getClient(chainId);
   }
 
+  private requireProgramId(blockchain: { id: string; name: string; takumiPayProgramId: string | null }): PublicKey {
+    if (!blockchain.takumiPayProgramId) {
+      throw new BadRequestException(
+        `Blockchain ${blockchain.name} (${blockchain.id}) has no takumiPayProgramId configured`,
+      );
+    }
+    return new PublicKey(blockchain.takumiPayProgramId);
+  }
+
 
   /**
    * Phase A — tx-receipt-level verification only.
@@ -240,6 +248,27 @@ export class BlockchainVerificationService {
     );
 
     try {
+      const blockchain = await this.prisma.blockchain.findUnique({
+        where: { id: request.blockchainId },
+      });
+      if (blockchain && !blockchain.isEVM) {
+        const programId = this.requireProgramId(blockchain);
+        const refIdHash = computeRefIdHash(request.refId);
+        return this.solanaVerification.verifyTransaction({
+          blockchainId: request.blockchainId,
+          programId,
+          transactionSignature: transactionHash,
+          refId: request.refId,
+          refIdHash,
+          expectedWalletAddress: expectedSender,
+          expectedTokenMint: expectedRecipient,
+          expectedAmount: request.expectedAmount,
+          expectedBookingId: request.expectedBookingId,
+          expectedExchangeRateId: request.expectedExchangeRateId,
+          expectedProductVariantId: request.expectedProductVariantId,
+        });
+      }
+
       // Phase A — tx-receipt checks (delegated to verifyTxReceiptOnly)
       const { receipt, transaction, confirmations } =
         await this.verifyTxReceiptOnly({
@@ -374,9 +403,7 @@ export class BlockchainVerificationService {
           where: { id: blockchainId },
         });
         if (blockchain && !blockchain.isEVM) {
-          const programId = blockchain.takumiPayProgramId
-            ? new PublicKey(blockchain.takumiPayProgramId)
-            : TAKUMI_PAY_PROGRAM_ID;
+          const programId = this.requireProgramId(blockchain);
           const refIdHash = computeRefIdHash(trxData.refId);
           const solanaRecord =
             await this.solanaVerification.verifyTransactionRecord({
@@ -548,9 +575,7 @@ export class BlockchainVerificationService {
           where: { id: args.blockchainId },
         });
         if (blockchain && !blockchain.isEVM) {
-          const programId = blockchain.takumiPayProgramId
-            ? new PublicKey(blockchain.takumiPayProgramId)
-            : TAKUMI_PAY_PROGRAM_ID;
+          const programId = this.requireProgramId(blockchain);
           const refIdHash = computeRefIdHash(args.refId);
           await this.solanaVerification.verifyMerchantPayment({
             blockchainId: args.blockchainId,
@@ -684,9 +709,7 @@ export class BlockchainVerificationService {
         where: { id: params.blockchainId },
       });
       if (blockchain && !blockchain.isEVM) {
-        const programId = blockchain.takumiPayProgramId
-          ? new PublicKey(blockchain.takumiPayProgramId)
-          : TAKUMI_PAY_PROGRAM_ID;
+        const programId = this.requireProgramId(blockchain);
         const refIdHash = computeRefIdHash(refId);
         const deposit = await this.solanaVerification.verifyPointDeposit({
           blockchainId: params.blockchainId,

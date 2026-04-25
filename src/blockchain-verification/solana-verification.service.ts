@@ -11,7 +11,6 @@ import {
   deriveMerchantPaymentPda,
   derivePointDepositPda,
   derivePointRefRecordPda,
-  TAKUMI_PAY_PROGRAM_ID,
 } from "./solana/takumi-pay/pda";
 import { computeRefIdHash } from "./solana/takumi-pay/ref-id-hash";
 import type {
@@ -20,6 +19,7 @@ import type {
   TakumiPayPointDepositRecord,
   MerchantQuoteParams,
 } from "./solana/takumi-pay/types";
+import type { TTransactionVerificationResult } from "./types/blockchain-verification.types";
 import * as nacl from "tweetnacl";
 
 interface SolanaClient {
@@ -116,6 +116,72 @@ export class SolanaVerificationService implements OnModuleInit {
       },
       commitment,
     );
+  }
+
+  async verifyTransaction(args: {
+    blockchainId: string;
+    programId: PublicKey;
+    transactionSignature: string;
+    refId: string;
+    refIdHash: Uint8Array;
+    expectedWalletAddress: string;
+    expectedTokenMint: string;
+    expectedAmount: string;
+    expectedBookingId: string;
+    expectedExchangeRateId: string;
+    expectedProductVariantId: string;
+  }): Promise<TTransactionVerificationResult> {
+    const { connection } = this.getClient(args.blockchainId);
+
+    await this.waitForConfirmation(
+      args.blockchainId,
+      args.transactionSignature,
+      "confirmed",
+    );
+
+    const txResponse = await connection.getTransaction(
+      args.transactionSignature,
+      { commitment: "confirmed", maxSupportedTransactionVersion: 0 },
+    );
+
+    if (!txResponse) {
+      throw new Error(
+        `Solana transaction ${args.transactionSignature} not found`,
+      );
+    }
+
+    if (txResponse.meta?.err) {
+      throw new Error(
+        `Solana transaction ${args.transactionSignature} failed: ${JSON.stringify(txResponse.meta.err)}`,
+      );
+    }
+
+    const txRecord = await this.verifyTransactionRecord({
+      blockchainId: args.blockchainId,
+      programId: args.programId,
+      refId: args.refId,
+      refIdHash: args.refIdHash,
+      expectedWalletAddress: args.expectedWalletAddress,
+      expectedTokenMint: args.expectedTokenMint,
+      expectedAmount: args.expectedAmount,
+      expectedBookingId: args.expectedBookingId,
+      expectedExchangeRateId: args.expectedExchangeRateId,
+      expectedProductVariantId: args.expectedProductVariantId,
+    });
+
+    return {
+      isValid: true,
+      transactionHash: args.transactionSignature,
+      blockNumber: (txResponse.slot).toString(),
+      confirmations: 1,
+      from: txRecord.walletAddress.toBase58(),
+      to: args.programId.toBase58(),
+      value: txRecord.amount.toString(),
+      status: "success",
+      gasUsed: (txResponse.meta?.fee ?? 0).toString(),
+      blockTimestamp: (txResponse.blockTime ?? 0).toString(),
+      chainId: 0,
+    };
   }
 
   async verifyTransactionRecord(args: {
