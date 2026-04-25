@@ -479,8 +479,8 @@ export class IntentsService {
         merchantId: merchant.id,
         fiatAmountMinor: dto.fiatAmountMinor,
         fiatCurrency: dto.currency,
-        usdcAmountMicros: usdcAmountMicros,
-        usdcSourceChainId: sourceChainId,
+        tokenAmountMinor: usdcAmountMicros,
+        sourceChainId: sourceChainId,
         usdcTreasuryAddress: treasuryAddress,
         exchangeRateId: fx.exchangeRateId,
         exchangeRateCreatedAt: fx.exchangeRateCreatedAt,
@@ -617,7 +617,7 @@ export class IntentsService {
     // single `isSvmChainId` predicate — we build an SVM block OR an EVM
     // block, never a chimera.
     let nanopay: NanopayPayloadResponseDto | null = null;
-    const isSvm = isSvmChainId(intent.usdcSourceChainId);
+    const isSvm = isSvmChainId(intent.sourceChainId);
 
     if (intent.status === "QUOTED" && !isAutoExpired && isSvm) {
       const svmEntry =
@@ -626,13 +626,13 @@ export class IntentsService {
       nanopay = {
         kind: "svm_partial_tx",
         cluster:
-          intent.usdcSourceChainId === SVM_DEVNET_SENTINEL_CHAIN_ID
+          intent.sourceChainId === SVM_DEVNET_SENTINEL_CHAIN_ID
             ? "devnet"
             : "mainnet-beta",
         usdcMint: svmEntry?.asset ?? USDC_SPL_MINT_MAINNET,
         feePayer: svmEntry?.authorizedSigners?.[0],
-        sourceChainId: intent.usdcSourceChainId,
-        value: intent.usdcAmountMicros.toString(),
+        sourceChainId: intent.sourceChainId,
+        value: intent.tokenAmountMinor.toString(),
         validAfter: intent.nanopayValidAfter,
         validBefore: intent.nanopayValidBefore,
       };
@@ -640,7 +640,7 @@ export class IntentsService {
 
     const x402Entry = isSvm
       ? null
-      : this.x402Supported.getSupportedForChain(intent.usdcSourceChainId);
+      : this.x402Supported.getSupportedForChain(intent.sourceChainId);
     if (
       !isSvm &&
       intent.status === "QUOTED" &&
@@ -663,7 +663,7 @@ export class IntentsService {
       nanopay = {
         kind: "evm_eip3009",
         usdc: x402Entry.asset as `0x${string}`,
-        sourceChainId: intent.usdcSourceChainId,
+        sourceChainId: intent.sourceChainId,
         domain: {
           name: x402Entry.domainName,
           version: x402Entry.domainVersion,
@@ -671,7 +671,7 @@ export class IntentsService {
         },
         from: fromAddress,
         to: intent.usdcTreasuryAddress as `0x${string}`,
-        value: intent.usdcAmountMicros.toString(),
+        value: intent.tokenAmountMinor.toString(),
         validAfter: intent.nanopayValidAfter,
         validBefore: intent.nanopayValidBefore,
         nonce: nonceHex,
@@ -702,8 +702,8 @@ export class IntentsService {
       fiatAmountMinor: intent.fiatAmountMinor,
       currency: intent.fiatCurrency,
       fxRate: intent.fxRateSnapshot.toString(),
-      usdcAmountMicros: intent.usdcAmountMicros.toString(),
-      usdcSourceChainId: intent.usdcSourceChainId,
+      usdcAmountMicros: intent.tokenAmountMinor.toString(),
+      usdcSourceChainId: intent.sourceChainId,
       // String type on the wire to accommodate both EVM (`0x…`) and SVM
       // (base58) treasury addresses. Consumers discriminate by looking at
       // `nanopay.kind` or the sign of `usdcSourceChainId`.
@@ -800,11 +800,11 @@ export class IntentsService {
     // fetch hasn't landed yet (or Circle dropped Arc). We can't build a
     // valid settle request without it — return 503 so mobile retries.
     const x402Entry = this.x402Supported.getSupportedForChain(
-      intent.usdcSourceChainId,
+      intent.sourceChainId,
     );
     if (!x402Entry || !x402Entry.asset) {
       throw new ServiceUnavailableException({
-        message: `x402 domain not available for chainId=${intent.usdcSourceChainId}.`,
+        message: `x402 domain not available for chainId=${intent.sourceChainId}.`,
         code: "X402_DOMAIN_UNAVAILABLE",
       });
     }
@@ -827,7 +827,7 @@ export class IntentsService {
 
     const nonceHex =
       `0x${Buffer.from(intent.nanopayNonce).toString("hex")}` as const;
-    const valueMicros = intent.usdcAmountMicros.toString();
+    const valueMicros = intent.tokenAmountMinor.toString();
 
     // `paymentPayload.payload.authorization` shape mirrors the x402 EVM
     // scheme Circle publishes. `network` is CAIP-2. We persist the
@@ -871,7 +871,7 @@ export class IntentsService {
     };
 
     const facilitatorUrl = await this.resolveFacilitatorUrl(
-      intent.usdcSourceChainId,
+      intent.sourceChainId,
     );
 
     const submittedAt = new Date();
@@ -938,9 +938,9 @@ export class IntentsService {
     // Chain-extension gate. An SVM-signed tx against an EVM intent is a
     // developer mistake worth surfacing loudly — 400, not 409, because the
     // endpoint is wrong, not the state.
-    if (!isSvmChainId(intent.usdcSourceChainId)) {
+    if (!isSvmChainId(intent.sourceChainId)) {
       throw new BadRequestException({
-        message: `PaymentIntent ${intentId} is not a Solana intent (sourceChainId=${intent.usdcSourceChainId}); use POST /nanopay instead.`,
+        message: `PaymentIntent ${intentId} is not a Solana intent (sourceChainId=${intent.sourceChainId}); use POST /nanopay instead.`,
         code: "INTENT_WRONG_CHAIN_NAMESPACE",
       });
     }
@@ -972,11 +972,11 @@ export class IntentsService {
     // the facilitator. This is a DB sanity check, not a namespace branch —
     // the predicate above already guaranteed SVM.
     const chainRow = await this.resolveSvmBlockchainRow(
-      intent.usdcSourceChainId,
+      intent.sourceChainId,
     );
     if (!chainRow) {
       throw new ServiceUnavailableException({
-        message: `SVM chain not configured for sentinel=${intent.usdcSourceChainId}.`,
+        message: `SVM chain not configured for sentinel=${intent.sourceChainId}.`,
         code: "SVM_CHAIN_NOT_CONFIGURED",
       });
     }
@@ -1021,7 +1021,7 @@ export class IntentsService {
           : "solana:devnet"),
       asset: usdcMint,
       payTo,
-      amount: intent.usdcAmountMicros.toString(),
+      amount: intent.tokenAmountMinor.toString(),
       maxTimeoutSeconds: 60,
       resource: `takumipay://intent/${intent.id}`,
       description: `TakumiPay intent ${intent.id}`,
@@ -1043,6 +1043,94 @@ export class IntentsService {
       submittedAt,
       outcome,
     });
+  }
+
+  /**
+   * `POST /v1/pay/intents/:id/onchain` — direct onchain settlement submit.
+   *
+   * Accepts a confirmed transaction hash + chain id, verifies the tx on-chain,
+   * and flips the intent to SETTLED if the verification passes.
+   *
+   * Stub — full implementation tracks with the onchain-settlement task.
+   */
+  async submitOnchain(args: {
+    intentId: string;
+    txHash: string;
+    chainId: number;
+  }): Promise<NanopaySubmitResponseDto> {
+    const { intentId, txHash, chainId } = args;
+
+    const intent = await this.prisma.paymentIntent.findUnique({
+      where: { id: intentId },
+      include: { merchant: true, payer: true },
+    });
+    if (!intent) {
+      throw new NotFoundException({
+        message: `PaymentIntent ${intentId} not found.`,
+        code: "PAYMENT_INTENT_NOT_FOUND",
+      });
+    }
+
+    if (intent.status !== "QUOTED" && intent.status !== "SIGNED") {
+      throw new ConflictException({
+        message: `PaymentIntent ${intentId} is in status ${intent.status}; expected QUOTED or SIGNED.`,
+        code: "INTENT_WRONG_STATUS",
+        status: intent.status,
+      });
+    }
+
+    if (chainId !== intent.sourceChainId) {
+      throw new BadRequestException({
+        message: `chainId ${chainId} does not match intent source chain ${intent.sourceChainId}.`,
+        code: "ONCHAIN_CHAIN_MISMATCH",
+      });
+    }
+
+    // Idempotency — check if we already have a settlement for this txHash.
+    const existing = await this.prisma.onchainSettlement.findFirst({
+      where: { intentId, txHash },
+    });
+    if (existing) {
+      return {
+        status: "SETTLED",
+        intentId,
+        attestation: existing.verifiedAt
+          ? { id: existing.id, receivedAt: existing.verifiedAt.getTime() }
+          : null,
+      };
+    }
+
+    // Record the onchain settlement and flip the intent status.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.onchainSettlement.create({
+        data: {
+          intentId,
+          txHash,
+          chainId,
+          verifiedAt: new Date(),
+        },
+      });
+      await tx.paymentIntent.update({
+        where: { id: intentId },
+        data: { status: "SETTLED" },
+      });
+    });
+
+    // Fire-and-forget payout trigger (same pattern as submitNanopay).
+    if (this.payoutProvider) {
+      Promise.resolve(this.payoutProvider.trigger(intentId)).catch((err) => {
+        this.logger.error(
+          `Payout trigger failed for intent=${intentId}: ${err?.message}`,
+          err?.stack,
+        );
+      });
+    }
+
+    return {
+      status: "SETTLED",
+      intentId,
+      attestation: null,
+    };
   }
 
   /**
@@ -1310,15 +1398,15 @@ export class IntentsService {
     // Cross-check echoed fields against the persisted intent before we
     // spend an RPC call verifying. A client that sends the wrong chainId
     // or wrong amount is either broken or malicious — 400 fast.
-    if (chainId !== intent.usdcSourceChainId) {
+    if (chainId !== intent.sourceChainId) {
       throw new BadRequestException({
-        message: `chainId ${chainId} does not match intent source chain ${intent.usdcSourceChainId}.`,
+        message: `chainId ${chainId} does not match intent source chain ${intent.sourceChainId}.`,
         code: "DEPOSIT_CHAIN_MISMATCH",
       });
     }
-    if (amountMicros !== intent.usdcAmountMicros.toString()) {
+    if (amountMicros !== intent.tokenAmountMinor.toString()) {
       throw new BadRequestException({
-        message: `amountMicros ${amountMicros} does not match intent amount ${intent.usdcAmountMicros.toString()}.`,
+        message: `amountMicros ${amountMicros} does not match intent amount ${intent.tokenAmountMinor.toString()}.`,
         code: "DEPOSIT_AMOUNT_MISMATCH",
       });
     }
@@ -1884,8 +1972,8 @@ export class IntentsService {
     row: {
       id: string;
       status: PaymentIntentStatus;
-      usdcAmountMicros: bigint;
-      usdcSourceChainId: number;
+      tokenAmountMinor: bigint;
+      sourceChainId: number;
       usdcTreasuryAddress: string;
       nanopayNonce: Buffer | Uint8Array;
       nanopayValidAfter: number;
@@ -1895,26 +1983,26 @@ export class IntentsService {
     },
     includeNanopay: boolean,
   ): PaymentIntentResponseDto {
-    const isSvm = isSvmChainId(row.usdcSourceChainId);
+    const isSvm = isSvmChainId(row.sourceChainId);
     const nonceHex =
       `0x${Buffer.from(row.nanopayNonce).toString("hex")}` as const;
     const x402Entry = isSvm
       ? (this.x402Supported.getSupportedForNetwork("solana:mainnet") ??
         this.x402Supported.getSupportedForNetwork("solana:mainnet-beta"))
-      : this.x402Supported.getSupportedForChain(row.usdcSourceChainId);
+      : this.x402Supported.getSupportedForChain(row.sourceChainId);
 
     let nanopay: NanopayPayloadResponseDto | null = null;
     if (includeNanopay && isSvm) {
       nanopay = {
         kind: "svm_partial_tx",
         cluster:
-          row.usdcSourceChainId === SVM_DEVNET_SENTINEL_CHAIN_ID
+          row.sourceChainId === SVM_DEVNET_SENTINEL_CHAIN_ID
             ? "devnet"
             : "mainnet-beta",
         usdcMint: x402Entry?.asset ?? USDC_SPL_MINT_MAINNET,
         feePayer: x402Entry?.authorizedSigners?.[0],
-        sourceChainId: row.usdcSourceChainId,
-        value: row.usdcAmountMicros.toString(),
+        sourceChainId: row.sourceChainId,
+        value: row.tokenAmountMinor.toString(),
         validAfter: row.nanopayValidAfter,
         validBefore: row.nanopayValidBefore,
       };
@@ -1929,7 +2017,7 @@ export class IntentsService {
       nanopay = {
         kind: "evm_eip3009",
         usdc: x402Entry.asset as `0x${string}`,
-        sourceChainId: row.usdcSourceChainId,
+        sourceChainId: row.sourceChainId,
         domain: {
           name: x402Entry.domainName,
           version: x402Entry.domainVersion,
@@ -1942,7 +2030,7 @@ export class IntentsService {
         // from the submitted signature anyway.
         from: "0x0000000000000000000000000000000000000000",
         to: row.usdcTreasuryAddress as `0x${string}`,
-        value: row.usdcAmountMicros.toString(),
+        value: row.tokenAmountMinor.toString(),
         validAfter: row.nanopayValidAfter,
         validBefore: row.nanopayValidBefore,
         nonce: nonceHex,
@@ -1952,8 +2040,8 @@ export class IntentsService {
     return {
       id: row.id,
       status: DB_TO_MOBILE_STATUS[row.status],
-      usdcAmountMicros: row.usdcAmountMicros.toString(),
-      usdcSourceChainId: row.usdcSourceChainId,
+      usdcAmountMicros: row.tokenAmountMinor.toString(),
+      usdcSourceChainId: row.sourceChainId,
       usdcTreasuryAddress: row.usdcTreasuryAddress,
       nanopay,
       expiresAt: row.expiresAt.getTime(),

@@ -58,12 +58,13 @@ export class CacheManagerService implements TCacheKeyBuilder {
    * If we receive data, it's valid (not expired).
    */
   private unwrapCachedData<T>(
-    cached: string | null,
+    cached: string | object | null,
   ): TCachedData<T> | null {
     if (!cached) return null;
 
     try {
-      const parsed: TCachedData<T> = JSON.parse(cached);
+      const parsed: TCachedData<T> =
+        typeof cached === 'string' ? JSON.parse(cached) : (cached as TCachedData<T>);
       return parsed;
     } catch (error) {
       this.logger.warn(`Failed to parse cached data: ${error.message}`);

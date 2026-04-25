@@ -25,7 +25,7 @@
  *   - DATABASE_URL: for resolving Blockchain.takumiWalletContract
  */
 
-async function main() {
+export async function main() {
   const args = process.argv.slice(2);
   const params = Object.fromEntries(
     args.map((a) => a.replace("--", "").split("=")),
