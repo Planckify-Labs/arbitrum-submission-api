@@ -37,7 +37,6 @@ export interface BookingConfig {
 }
 
 export interface BlockchainConfig {
-  adminWalletPrivateKey: string;
   chainId: number;
   minConfirmations: number;
 }
@@ -99,23 +98,7 @@ export function getBookingConfig(configService: ConfigService): BookingConfig {
 export function getBlockchainConfig(
   configService: ConfigService,
 ): BlockchainConfig {
-  const privateKey = configService.get<string>("ADMIN_WALLET_PRIVATE_KEY");
-
-  if (!privateKey) {
-    throw new Error(
-      "ADMIN_WALLET_PRIVATE_KEY is not defined in environment variables. " +
-        "Please set ADMIN_WALLET_PRIVATE_KEY in your .env file.",
-    );
-  }
-
-  if (!privateKey.startsWith("0x") || privateKey.length !== 66) {
-    throw new Error(
-      "ADMIN_WALLET_PRIVATE_KEY must be a valid Ethereum private key starting with '0x' and 64 hex characters.",
-    );
-  }
-
   return {
-    adminWalletPrivateKey: privateKey,
     chainId: toNumber(configService.get("CHAIN_ID"), 1),
     minConfirmations: toNumber(configService.get("MIN_CONFIRMATIONS"), 12),
   };

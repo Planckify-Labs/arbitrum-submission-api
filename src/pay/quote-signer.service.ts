@@ -42,8 +42,12 @@ export class QuoteSignerService {
   private readonly domainVersion: string;
 
   constructor(private readonly configService: ConfigService) {
-    const privateKey = (this.configService.get<string>("QUOTE_SIGNER_PRIVATE_KEY") ??
-      this.configService.get<string>("ADMIN_WALLET_PRIVATE_KEY")) as Hex;
+    const privateKey = this.configService.get<string>("EVM_QUOTE_SIGNER_PRIVATE_KEY") as Hex;
+    if (!privateKey) {
+      throw new Error(
+        "EVM_QUOTE_SIGNER_PRIVATE_KEY is not defined in environment variables.",
+      );
+    }
     this.account = privateKeyToAccount(privateKey);
     this.domainName = this.configService.get("QUOTE_SIGNATURE_DOMAIN_NAME", "TakumiPay");
     this.domainVersion = this.configService.get("QUOTE_SIGNATURE_DOMAIN_VERSION", "1");

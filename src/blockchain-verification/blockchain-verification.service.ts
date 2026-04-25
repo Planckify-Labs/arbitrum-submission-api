@@ -1,17 +1,14 @@
 import { Injectable, BadRequestException, Logger } from "@nestjs/common";
 import {
   createPublicClient,
-  createWalletClient,
   http,
   PublicClient,
-  WalletClient,
   Hash,
   Chain,
   Transaction,
   TransactionReceipt,
 } from "viem";
 import { readContract } from "viem/actions";
-import { privateKeyToAccount } from "viem/accounts";
 import { ConfigService } from "@nestjs/config";
 import { PublicKey } from "@solana/web3.js";
 import { PrismaService } from "../prisma/prisma.service";
@@ -33,9 +30,7 @@ import { TAKUMI_PAY_PROGRAM_ID } from "./solana/takumi-pay/pda";
 export class BlockchainVerificationService {
   private readonly logger = new Logger(BlockchainVerificationService.name);
   private readonly clients: Map<number, PublicClient> = new Map();
-  private readonly walletClients: Map<number, WalletClient> = new Map();
   private readonly minConfirmations: number;
-  private readonly adminAccount;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -44,9 +39,6 @@ export class BlockchainVerificationService {
   ) {
     const blockchainConfig = getBlockchainConfig(this.configService);
     this.minConfirmations = blockchainConfig.minConfirmations;
-    this.adminAccount = privateKeyToAccount(
-      blockchainConfig.adminWalletPrivateKey as `0x${string}`,
-    );
     this.initializeClients();
   }
 
@@ -125,13 +117,6 @@ export class BlockchainVerificationService {
 
           this.clients.set(blockchain.chainId, client);
 
-          const walletClient = createWalletClient({
-            account: this.adminAccount,
-            chain: dynamicChain,
-            transport: http(blockchain.rpcUrl),
-          });
-          this.walletClients.set(blockchain.chainId, walletClient);
-
           this.logger.log(
             `Initialized dynamic client for chain ${blockchain.chainId} (${blockchain.name}) with native currency ${nativeToken.symbol} (decimals=${nativeToken.decimals})`,
           );
@@ -160,15 +145,6 @@ export class BlockchainVerificationService {
     return this.getClient(chainId);
   }
 
-  private getWalletClient(chainId: number): WalletClient {
-    const client = this.walletClients.get(chainId);
-    if (!client) {
-      throw new BadRequestException(
-        `Unsupported chain ID for wallet client: ${chainId}`,
-      );
-    }
-    return client;
-  }
 
   /**
    * Phase A — tx-receipt-level verification only.
@@ -431,8 +407,8 @@ export class BlockchainVerificationService {
         `Verifying transaction in contract ${trxData.contractAddress} for refId ${trxData.refId} on chain ${trxData.chainId}`,
       );
 
-      const walletClient = this.getWalletClient(trxData.chainId);
-      const contractTransaction = await readContract(walletClient, {
+      const client = this.getClient(trxData.chainId);
+      const contractTransaction = await readContract(client, {
         address: trxData.contractAddress as `0x${string}`,
         abi: TakumiWalletAbi,
         functionName: "getTransactionByRef",
@@ -595,8 +571,8 @@ export class BlockchainVerificationService {
         `Verifying merchant payment in contract ${args.contractAddress} for refId ${args.refId} on chain ${args.chainId}`,
       );
 
-      const walletClient = this.getWalletClient(args.chainId);
-      const payment = await readContract(walletClient, {
+      const client = this.getClient(args.chainId);
+      const payment = await readContract(client, {
         address: args.contractAddress as `0x${string}`,
         abi: TakumiWalletMerchantAbi,
         functionName: "getMerchantPaymentByRef",
@@ -745,8 +721,7 @@ export class BlockchainVerificationService {
         );
       }
 
-      const walletClient = this.getWalletClient(chainId);
-      const contractTx = await readContract(walletClient, {
+      const contractTx = await readContract(client, {
         address: contractAddress as `0x${string}`,
         abi: TakumiWalletAbi,
         functionName: "getPointDepositByRef",
