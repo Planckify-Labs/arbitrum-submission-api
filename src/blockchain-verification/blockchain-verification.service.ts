@@ -380,6 +380,7 @@ export class BlockchainVerificationService {
           const refIdHash = computeRefIdHash(trxData.refId);
           const solanaRecord =
             await this.solanaVerification.verifyTransactionRecord({
+              blockchainId,
               programId,
               refId: trxData.refId,
               refIdHash,
@@ -552,6 +553,7 @@ export class BlockchainVerificationService {
             : TAKUMI_PAY_PROGRAM_ID;
           const refIdHash = computeRefIdHash(args.refId);
           await this.solanaVerification.verifyMerchantPayment({
+            blockchainId: args.blockchainId,
             programId,
             refId: args.refId,
             refIdHash,
@@ -687,6 +689,7 @@ export class BlockchainVerificationService {
           : TAKUMI_PAY_PROGRAM_ID;
         const refIdHash = computeRefIdHash(refId);
         const deposit = await this.solanaVerification.verifyPointDeposit({
+          blockchainId: params.blockchainId,
           programId,
           refId,
           refIdHash,

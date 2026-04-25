@@ -22,12 +22,18 @@ import type {
 } from "./solana/takumi-pay/types";
 import * as nacl from "tweetnacl";
 
+interface SolanaClient {
+  connection: Connection;
+  program: any;
+}
+
 @Injectable()
 export class SolanaVerificationService implements OnModuleInit {
   private readonly logger = new Logger(SolanaVerificationService.name);
-  private connection: Connection;
-  private program: any;
+  private readonly clients: Map<string, SolanaClient> = new Map();
   private signerKeypair: Keypair | null = null;
+
+  private static readonly SOLANA_SLUGS = ["solana-mainnet", "solana-devnet"];
 
   constructor(
     private readonly prisma: PrismaService,
@@ -35,28 +41,7 @@ export class SolanaVerificationService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    const rpcUrl = this.config.get<string>("SOLANA_RPC_URL");
-    if (!rpcUrl) {
-      this.logger.warn(
-        "SOLANA_RPC_URL not configured — Solana verification disabled",
-      );
-      return;
-    }
-    this.connection = new Connection(rpcUrl, "confirmed");
-
-    const dummyWallet = {
-      publicKey: PublicKey.default,
-      signTransaction: async (tx: any) => tx,
-      signAllTransactions: async (txs: any) => txs,
-    } as any;
-    const provider = new AnchorProvider(this.connection, dummyWallet, {
-      commitment: "confirmed",
-    });
-    const programId = new PublicKey(
-      this.config.get<string>("TAKUMI_PAY_PROGRAM_ID") ??
-        TAKUMI_PAY_PROGRAM_ID.toBase58(),
-    );
-    this.program = new Program(TAKUMI_PAY_IDL as any, provider as any);
+    await this.initializeClients();
 
     const signerKey = this.config.get<string>(
       "SOLANA_QUOTE_SIGNER_PRIVATE_KEY",
@@ -71,12 +56,59 @@ export class SolanaVerificationService implements OnModuleInit {
     }
   }
 
+  private async initializeClients() {
+    const chains = await this.prisma.blockchain.findMany({
+      where: {
+        chainSlug: { in: SolanaVerificationService.SOLANA_SLUGS },
+        isActive: true,
+      },
+    });
+
+    if (chains.length === 0) {
+      const msg =
+        "No active Solana blockchain rows found (chainSlug in [solana-mainnet, solana-devnet]). " +
+        "Seed the Blockchain table before starting the application.";
+      this.logger.error(msg);
+      throw new Error(msg);
+    }
+
+    for (const chain of chains) {
+      const connection = new Connection(chain.rpcUrl, "confirmed");
+      const dummyWallet = {
+        publicKey: PublicKey.default,
+        signTransaction: async (tx: any) => tx,
+        signAllTransactions: async (txs: any) => txs,
+      } as any;
+      const provider = new AnchorProvider(connection, dummyWallet, {
+        commitment: "confirmed",
+      });
+      const program = new Program(TAKUMI_PAY_IDL as any, provider as any);
+
+      this.clients.set(chain.id, { connection, program });
+      this.logger.log(
+        `Initialized Solana client for ${chain.name} (slug: ${chain.chainSlug})`,
+      );
+    }
+  }
+
+  private getClient(blockchainId: string): SolanaClient {
+    const client = this.clients.get(blockchainId);
+    if (!client) {
+      throw new Error(
+        `No Solana client initialized for blockchain ${blockchainId}`,
+      );
+    }
+    return client;
+  }
+
   async waitForConfirmation(
+    blockchainId: string,
     signature: string,
     commitment: Commitment = "finalized",
   ): Promise<void> {
-    const bh = await this.connection.getLatestBlockhash(commitment);
-    await this.connection.confirmTransaction(
+    const { connection } = this.getClient(blockchainId);
+    const bh = await connection.getLatestBlockhash(commitment);
+    await connection.confirmTransaction(
       {
         signature,
         blockhash: bh.blockhash,
@@ -87,6 +119,7 @@ export class SolanaVerificationService implements OnModuleInit {
   }
 
   async verifyTransactionRecord(args: {
+    blockchainId: string;
     programId: PublicKey;
     refId: string;
     refIdHash: Uint8Array;
@@ -97,6 +130,7 @@ export class SolanaVerificationService implements OnModuleInit {
     expectedExchangeRateId: string;
     expectedProductVariantId: string;
   }): Promise<TakumiPayTransactionRecord> {
+    const { program } = this.getClient(args.blockchainId);
     const [configPda] = deriveConfigPda(args.programId);
     const [refRecordPda] = deriveRefRecordPda(
       args.programId,
@@ -104,11 +138,11 @@ export class SolanaVerificationService implements OnModuleInit {
       args.refIdHash,
     );
 
-    const refRecord = await this.program.account.refRecord.fetch(refRecordPda);
+    const refRecord = await program.account.refRecord.fetch(refRecordPda);
     const txId = refRecord.recordId;
     const [txRecordPda] = deriveTxRecordPda(args.programId, configPda, txId);
     const txRecord =
-      await this.program.account.transactionRecord.fetch(txRecordPda);
+      await program.account.transactionRecord.fetch(txRecordPda);
 
     if (txRecord.walletAddress.toBase58() !== args.expectedWalletAddress) {
       throw new Error(
@@ -135,6 +169,7 @@ export class SolanaVerificationService implements OnModuleInit {
   }
 
   async verifyMerchantPayment(args: {
+    blockchainId: string;
     programId: PublicKey;
     refId: string;
     refIdHash: Uint8Array;
@@ -146,6 +181,7 @@ export class SolanaVerificationService implements OnModuleInit {
     expectedFiatCurrency: string;
     expectedExchangeRateId: number;
   }): Promise<TakumiPayMerchantPayment> {
+    const { program } = this.getClient(args.blockchainId);
     const [configPda] = deriveConfigPda(args.programId);
     const [merchantPaymentPda] = deriveMerchantPaymentPda(
       args.programId,
@@ -153,7 +189,7 @@ export class SolanaVerificationService implements OnModuleInit {
       args.refIdHash,
     );
     const mp =
-      await this.program.account.merchantPayment.fetch(merchantPaymentPda);
+      await program.account.merchantPayment.fetch(merchantPaymentPda);
 
     if (mp.payer.toBase58() !== args.expectedPayer)
       throw new Error("Payer mismatch");
@@ -172,6 +208,7 @@ export class SolanaVerificationService implements OnModuleInit {
   }
 
   async verifyPointDeposit(args: {
+    blockchainId: string;
     programId: PublicKey;
     refId: string;
     refIdHash: Uint8Array;
@@ -179,6 +216,7 @@ export class SolanaVerificationService implements OnModuleInit {
     expectedTokenMint: string;
     expectedAmount: bigint;
   }): Promise<TakumiPayPointDepositRecord> {
+    const { program } = this.getClient(args.blockchainId);
     const [configPda] = deriveConfigPda(args.programId);
     const [pointRefPda] = derivePointRefRecordPda(
       args.programId,
@@ -186,7 +224,7 @@ export class SolanaVerificationService implements OnModuleInit {
       args.refIdHash,
     );
     const refRecord =
-      await this.program.account.refRecord.fetch(pointRefPda);
+      await program.account.refRecord.fetch(pointRefPda);
     const depositId = refRecord.recordId;
     const [depositPda] = derivePointDepositPda(
       args.programId,
@@ -194,7 +232,7 @@ export class SolanaVerificationService implements OnModuleInit {
       depositId,
     );
     const deposit =
-      await this.program.account.pointDepositRecord.fetch(depositPda);
+      await program.account.pointDepositRecord.fetch(depositPda);
 
     if (deposit.walletAddress.toBase58() !== args.expectedWalletAddress)
       throw new Error("Wallet address mismatch");
