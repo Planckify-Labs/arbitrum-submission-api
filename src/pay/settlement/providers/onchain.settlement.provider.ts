@@ -8,7 +8,7 @@ import { SettlementRejectedError } from "../settlement.types";
 
 @Injectable()
 export class OnchainSettlementProvider implements IPaymentSettlementProvider {
-  readonly key = "onchain" as const;
+  readonly key = "takumipay" as const;
   private readonly logger = new Logger(OnchainSettlementProvider.name);
 
   constructor(

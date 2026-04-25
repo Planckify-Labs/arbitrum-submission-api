@@ -29,13 +29,13 @@ export class SettlementOrchestratorService {
     private readonly nanopayProvider: IPaymentSettlementProvider,
     @Inject(PAYMENT_SETTLEMENT_ONCHAIN)
     private readonly onchainProvider: IPaymentSettlementProvider,
-  ) {}
+  ) { }
 
   resolveProvider(key: string): IPaymentSettlementProvider {
     switch (key) {
       case "nanopay":
         return this.nanopayProvider;
-      case "onchain":
+      case "takumipay":
       case "direct_arc":
         return this.onchainProvider;
       default: {

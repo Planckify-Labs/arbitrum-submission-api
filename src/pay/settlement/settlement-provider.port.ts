@@ -22,7 +22,7 @@ import type { SettleArgs, SettleReceipt } from "./settlement.types";
  *   wrestling with module-scope globals.
  */
 export interface IPaymentSettlementProvider {
-  readonly key: "nanopay" | "onchain";
+  readonly key: "nanopay" | "takumipay";
   settle(args: SettleArgs): Promise<SettleReceipt>;
 }
 

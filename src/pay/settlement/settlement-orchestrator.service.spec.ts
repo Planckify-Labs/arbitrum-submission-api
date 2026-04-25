@@ -27,7 +27,7 @@ function makeNanopayAdapter(): IPaymentSettlementProvider {
 
 function makeOnchainAdapter(): IPaymentSettlementProvider {
   return {
-    key: "onchain",
+    key: "takumipay",
     settle: jest.fn(async () => ({
       settlementId: "onchain_result",
       status: "SETTLED" as const,
@@ -67,18 +67,18 @@ describe("SettlementOrchestratorService.resolveProvider routing", () => {
     expect(provider.key).toBe("nanopay");
   });
 
-  it('resolveProvider("onchain") returns the onchain adapter', () => {
+  it('resolveProvider("takumipay") returns the onchain adapter', () => {
     const { svc, onchain } = build();
-    const provider = svc.resolveProvider("onchain");
+    const provider = svc.resolveProvider("takumipay");
     expect(provider).toBe(onchain);
-    expect(provider.key).toBe("onchain");
+    expect(provider.key).toBe("takumipay");
   });
 
   it('resolveProvider("direct_arc") returns the onchain adapter (alias)', () => {
     const { svc, onchain } = build();
     const provider = svc.resolveProvider("direct_arc");
     expect(provider).toBe(onchain);
-    expect(provider.key).toBe("onchain");
+    expect(provider.key).toBe("takumipay");
   });
 
   it("resolveProvider(unknown) falls back to the env default (nanopay)", () => {
@@ -88,11 +88,11 @@ describe("SettlementOrchestratorService.resolveProvider routing", () => {
     expect(provider.key).toBe("nanopay");
   });
 
-  it("resolveProvider(unknown) falls back to onchain when env default is onchain", () => {
-    const { svc, onchain } = build("onchain");
+  it("resolveProvider(unknown) falls back to takumipay when env default is takumipay", () => {
+    const { svc, onchain } = build("takumipay");
     const provider = svc.resolveProvider("unknown_rail");
     expect(provider).toBe(onchain);
-    expect(provider.key).toBe("onchain");
+    expect(provider.key).toBe("takumipay");
   });
 });
 
