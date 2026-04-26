@@ -63,12 +63,17 @@ function build() {
     getStatus: jest.fn(async () => ({ status: "PENDING" as const })),
     verifyWebhookSignature: jest.fn(() => false),
   };
+  const flip: IPayoutProviderAdapter = {
+    triggerPayout: jest.fn(async () => buildReceipt("FLIP")),
+    getStatus: jest.fn(async () => ({ status: "PENDING" as const })),
+    verifyWebhookSignature: jest.fn(() => true),
+  };
   const prisma = {
     providerPayout: { create: jest.fn(async () => ({})) },
     paymentIntent: { findUnique: jest.fn() },
   } as unknown as PrismaService;
-  const svc = new PayoutService(prisma, xendit, duitku);
-  return { svc, xendit, duitku, prisma };
+  const svc = new PayoutService(prisma, xendit, duitku, flip);
+  return { svc, xendit, duitku, flip, prisma };
 }
 
 describe("PayoutService.resolveProvider routing", () => {
@@ -104,5 +109,30 @@ describe("PayoutService.resolveProvider routing", () => {
     const call = (prisma.providerPayout.create as jest.Mock).mock.calls[0][0];
     expect(call.data.status).toBe("FAILED");
     expect(call.data.provider).toBe("wirecard-2003");
+  });
+
+  it("merchant.payoutProvider = 'flip' routes to the Flip adapter; Xendit and Duitku untouched", async () => {
+    const { svc, xendit, duitku, flip } = build();
+    const receipt = await svc.triggerPayout(makeIntent(), makeMerchant("flip"));
+    expect(receipt?.providerPayoutId).toBe("FLIP");
+    expect(flip.triggerPayout).toHaveBeenCalledTimes(1);
+    expect(xendit.triggerPayout).not.toHaveBeenCalled();
+    expect(duitku.triggerPayout).not.toHaveBeenCalled();
+  });
+
+  it("all three providers coexist without interference", async () => {
+    const { svc, xendit, duitku, flip } = build();
+
+    const receiptXendit = await svc.triggerPayout(makeIntent(), makeMerchant("xendit"));
+    const receiptDuitku = await svc.triggerPayout(makeIntent(), makeMerchant("duitku"));
+    const receiptFlip = await svc.triggerPayout(makeIntent(), makeMerchant("flip"));
+
+    expect(receiptXendit?.providerPayoutId).toBe("XENDIT");
+    expect(receiptDuitku?.providerPayoutId).toBe("DUITKU");
+    expect(receiptFlip?.providerPayoutId).toBe("FLIP");
+
+    expect(xendit.triggerPayout).toHaveBeenCalledTimes(1);
+    expect(duitku.triggerPayout).toHaveBeenCalledTimes(1);
+    expect(flip.triggerPayout).toHaveBeenCalledTimes(1);
   });
 });

@@ -12,6 +12,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as argon2 from "argon2";
 import { DUITKU_CHANNEL_CODES } from "../../payout/duitku-channels";
+import { FLIP_CHANNEL_CODES } from "../../payout/flip-channels";
 
 interface VCGamersProduct {
   key: string;
@@ -1326,6 +1327,42 @@ async function main() {
       // don't implicitly create a stub.
       console.warn(
         `seed: no Duitku channel code for canonical "${ch.channelCode}"; skipping duitku ProviderChannel row.`,
+      );
+    }
+
+    // Flip provider mapping — wire-code resolved from the shared
+    // `FLIP_CHANNEL_CODES` table (flip_payout_provider_spec.md §4.7).
+    const flipCode = FLIP_CHANNEL_CODES[ch.channelCode];
+    if (flipCode) {
+      await prisma.providerChannel.upsert({
+        where: {
+          channelCode_country_provider: {
+            channelCode: ch.channelCode,
+            country: ch.country,
+            provider: "flip",
+          },
+        },
+        update: {
+          providerChannelCode: flipCode,
+          minAmountIdr: ch.minAmountIdr,
+          maxAmountIdr: ch.maxAmountIdr,
+          feeIdr: ch.feeIdr,
+          isActive: true,
+        },
+        create: {
+          channelCode: ch.channelCode,
+          country: ch.country,
+          provider: "flip",
+          providerChannelCode: flipCode,
+          minAmountIdr: ch.minAmountIdr,
+          maxAmountIdr: ch.maxAmountIdr,
+          feeIdr: ch.feeIdr,
+          isActive: true,
+        },
+      });
+    } else {
+      console.warn(
+        `seed: no Flip channel code for canonical "${ch.channelCode}"; skipping flip ProviderChannel row.`,
       );
     }
   }

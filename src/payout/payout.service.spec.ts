@@ -65,12 +65,14 @@ function build(
   // resolveProvider switch picks by `merchant.payoutProvider`, so tests
   // that don't flip to "duitku" never touch the Duitku stub.
   const duitkuProvider = providerStub();
+  const flipProvider = providerStub();
   const svc = new PayoutService(
     prisma as unknown as PrismaService,
     provider,
     duitkuProvider,
+    flipProvider,
   );
-  return { svc, prisma, provider, duitkuProvider };
+  return { svc, prisma, provider, duitkuProvider, flipProvider };
 }
 
 describe("PayoutService.triggerPayout", () => {

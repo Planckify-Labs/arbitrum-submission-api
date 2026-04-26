@@ -80,3 +80,10 @@ export const PAYOUT_PROVIDER_XENDIT = Symbol("PAYOUT_PROVIDER_XENDIT");
  * `PayoutService.resolveProvider` when `merchant.payoutProvider === "duitku"`.
  */
 export const PAYOUT_PROVIDER_DUITKU = Symbol("PAYOUT_PROVIDER_DUITKU");
+
+/**
+ * Injection token for the Flip disbursement adapter.
+ * Bound to `FlipPayoutProvider` in `PayoutModule`; consumed by
+ * `PayoutService.resolveProvider` when `merchant.payoutProvider === "flip"`.
+ */
+export const PAYOUT_PROVIDER_FLIP = Symbol("PAYOUT_PROVIDER_FLIP");

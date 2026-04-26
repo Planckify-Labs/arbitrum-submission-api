@@ -3,6 +3,7 @@ import type { Merchant, PaymentIntent } from "@generated/prisma";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   PAYOUT_PROVIDER_DUITKU,
+  PAYOUT_PROVIDER_FLIP,
   PAYOUT_PROVIDER_XENDIT,
   type IPayoutProviderAdapter,
 } from "./payout-provider.port";
@@ -44,6 +45,8 @@ export class PayoutService {
     private readonly xenditProvider: IPayoutProviderAdapter,
     @Inject(PAYOUT_PROVIDER_DUITKU)
     private readonly duitkuProvider: IPayoutProviderAdapter,
+    @Inject(PAYOUT_PROVIDER_FLIP)
+    private readonly flipProvider: IPayoutProviderAdapter,
   ) {}
 
   /**
@@ -172,6 +175,8 @@ export class PayoutService {
         return this.xenditProvider;
       case "duitku":
         return this.duitkuProvider;
+      case "flip":
+        return this.flipProvider;
       default:
         return null;
     }

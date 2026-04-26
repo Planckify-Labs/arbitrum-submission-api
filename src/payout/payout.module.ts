@@ -11,9 +11,11 @@ import { PAYOUT_PROVIDER } from "../pay/intents.service";
 import { PayoutService } from "./payout.service";
 import {
   PAYOUT_PROVIDER_DUITKU,
+  PAYOUT_PROVIDER_FLIP,
   PAYOUT_PROVIDER_XENDIT,
 } from "./payout-provider.port";
 import { DuitkuPayoutProvider } from "./providers/duitku-payout.provider";
+import { FlipPayoutProvider } from "./providers/flip-payout.provider";
 import { XenditPayoutProvider } from "./providers/xendit-payout.provider";
 import { WebhookController } from "./webhook.controller";
 
@@ -46,6 +48,11 @@ import { WebhookController } from "./webhook.controller";
     {
       provide: PAYOUT_PROVIDER_DUITKU,
       useExisting: DuitkuPayoutProvider,
+    },
+    FlipPayoutProvider,
+    {
+      provide: PAYOUT_PROVIDER_FLIP,
+      useExisting: FlipPayoutProvider,
     },
     PayoutService,
     {

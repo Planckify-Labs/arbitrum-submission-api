@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   NotFoundException,
   UnauthorizedException,
@@ -10,6 +11,7 @@ import {
 import type { IPayoutProviderAdapter } from "./payout-provider.port";
 import type { PrismaService } from "../prisma/prisma.service";
 import {
+  mapFlipCallbackStatus,
   mapXenditCallbackStatus,
   WebhookController,
 } from "./webhook.controller";
@@ -84,14 +86,17 @@ function prismaStub(opts: {
 function build(opts: {
   findRow?: PayoutRow | null;
   verifyImpl?: IPayoutProviderAdapter["verifyWebhookSignature"];
+  flipVerifyImpl?: IPayoutProviderAdapter["verifyWebhookSignature"];
 } = {}) {
   const { mock, findFirst, payoutUpdate, intentUpdate, $transaction } =
     prismaStub({ findRow: opts.findRow });
   const provider = providerStub(opts.verifyImpl);
-  const controller = new WebhookController(mock, provider);
+  const flipProvider = providerStub(opts.flipVerifyImpl);
+  const controller = new WebhookController(mock, provider, flipProvider);
   return {
     controller,
     provider,
+    flipProvider,
     prisma: mock,
     findFirst,
     payoutUpdate,
@@ -284,5 +289,214 @@ describe("mapXenditCallbackStatus", () => {
     ["SOMETHING_NEW", ProviderPayoutStatus.PENDING],
   ])("maps %p → %s", (input, expected) => {
     expect(mapXenditCallbackStatus(input as any)).toBe(expected);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Flip webhook tests
+// ---------------------------------------------------------------------------
+
+/** Helper: build a valid Flip callback body object. */
+function flipBody(
+  data: Record<string, unknown> = { id: 123, status: "DONE" },
+  token = "valid-token",
+): Record<string, string> {
+  return { data: JSON.stringify(data), token };
+}
+
+/** Payout row stub pre-configured for Flip lookups. */
+function flipPayoutRowStub(overrides: Partial<PayoutRow> = {}): PayoutRow {
+  return payoutRowStub({
+    providerPayoutId: "123",
+    ...overrides,
+  });
+}
+
+describe("WebhookController.handleFlipCallback — auth guards", () => {
+  it("throws 401 when the token field is missing from the body", async () => {
+    const { controller, flipProvider } = build();
+    await expect(
+      controller.handleFlipCallback(
+        {},
+        { data: JSON.stringify({ id: 123, status: "DONE" }) },
+      ),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+    // Should never reach the signature verifier.
+    expect(flipProvider.verifyWebhookSignature).not.toHaveBeenCalled();
+  });
+
+  it("throws 403 when verifyWebhookSignature returns false", async () => {
+    const { controller } = build({ flipVerifyImpl: () => false });
+    await expect(
+      controller.handleFlipCallback({}, flipBody()),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+});
+
+describe("WebhookController.handleFlipCallback — lookup", () => {
+  it("throws 404 when the disbursement id is unknown", async () => {
+    const { controller } = build({ findRow: null });
+    await expect(
+      controller.handleFlipCallback({}, flipBody({ id: 999, status: "DONE" })),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("throws 400 when `id` is missing from data", async () => {
+    const { controller } = build();
+    await expect(
+      controller.handleFlipCallback(
+        {},
+        flipBody({ status: "DONE" }),
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("throws 400 when the `data` field is missing from the body", async () => {
+    const { controller } = build();
+    await expect(
+      controller.handleFlipCallback({}, { token: "valid-token" }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("throws 400 when `data` contains malformed JSON", async () => {
+    const { controller } = build();
+    await expect(
+      controller.handleFlipCallback(
+        {},
+        { data: "not-json{{{", token: "valid-token" },
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe("WebhookController.handleFlipCallback — state transitions", () => {
+  it("DONE flips ProviderPayout → COMPLETED and PaymentIntent → PAID_OUT atomically", async () => {
+    const row = flipPayoutRowStub();
+    const { controller, payoutUpdate, intentUpdate, $transaction } = build({
+      findRow: row,
+    });
+    const result = await controller.handleFlipCallback(
+      {},
+      flipBody({ id: 123, status: "DONE" }),
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      status: ProviderPayoutStatus.COMPLETED,
+    });
+    expect($transaction).toHaveBeenCalledTimes(1);
+
+    // ProviderPayout row flipped to COMPLETED with completedAt set.
+    expect(payoutUpdate).toHaveBeenCalledTimes(1);
+    const payoutArgs = payoutUpdate.mock.calls[0][0];
+    expect(payoutArgs.where).toEqual({ id: row.id });
+    expect(payoutArgs.data.status).toBe(ProviderPayoutStatus.COMPLETED);
+    expect(payoutArgs.data.completedAt).toBeInstanceOf(Date);
+    expect(payoutArgs.data.webhookReceivedAt).toBeInstanceOf(Date);
+
+    // PaymentIntent row flipped to PAID_OUT.
+    expect(intentUpdate).toHaveBeenCalledTimes(1);
+    expect(intentUpdate.mock.calls[0][0]).toEqual({
+      where: { id: row.intentId },
+      data: { status: PaymentIntentStatus.PAID_OUT },
+    });
+  });
+
+  it("CANCELLED flips ProviderPayout → FAILED; intent is NOT updated", async () => {
+    const row = flipPayoutRowStub();
+    const { controller, payoutUpdate, intentUpdate } = build({
+      findRow: row,
+    });
+    const result = await controller.handleFlipCallback(
+      {},
+      flipBody({ id: 123, status: "CANCELLED" }),
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      status: ProviderPayoutStatus.FAILED,
+    });
+    expect(payoutUpdate).toHaveBeenCalledTimes(1);
+    expect(payoutUpdate.mock.calls[0][0].data.status).toBe(
+      ProviderPayoutStatus.FAILED,
+    );
+    expect(intentUpdate).not.toHaveBeenCalled();
+  });
+
+  it("PENDING callback returns 200 no-op (row already PENDING)", async () => {
+    const row = flipPayoutRowStub({ status: ProviderPayoutStatus.PENDING });
+    const { controller, payoutUpdate, intentUpdate, $transaction } = build({
+      findRow: row,
+    });
+    const result = await controller.handleFlipCallback(
+      {},
+      flipBody({ id: 123, status: "PENDING" }),
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      status: ProviderPayoutStatus.PENDING,
+    });
+    // Idempotent — no DB writes because the row is already PENDING.
+    expect($transaction).not.toHaveBeenCalled();
+    expect(payoutUpdate).not.toHaveBeenCalled();
+    expect(intentUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe("WebhookController.handleFlipCallback — idempotency", () => {
+  it("returns 200 no-op when the ProviderPayout is already terminal (COMPLETED)", async () => {
+    const row = flipPayoutRowStub({
+      status: ProviderPayoutStatus.COMPLETED,
+    });
+    const { controller, payoutUpdate, intentUpdate, $transaction } = build({
+      findRow: row,
+    });
+    const result = await controller.handleFlipCallback(
+      {},
+      flipBody({ id: 123, status: "DONE" }),
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      status: ProviderPayoutStatus.COMPLETED,
+    });
+    expect($transaction).not.toHaveBeenCalled();
+    expect(payoutUpdate).not.toHaveBeenCalled();
+    expect(intentUpdate).not.toHaveBeenCalled();
+  });
+
+  it("returns 200 no-op when the ProviderPayout is already terminal (FAILED)", async () => {
+    const row = flipPayoutRowStub({
+      status: ProviderPayoutStatus.FAILED,
+    });
+    const { controller, payoutUpdate, intentUpdate, $transaction } = build({
+      findRow: row,
+    });
+    const result = await controller.handleFlipCallback(
+      {},
+      flipBody({ id: 123, status: "CANCELLED" }),
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      status: ProviderPayoutStatus.FAILED,
+    });
+    expect($transaction).not.toHaveBeenCalled();
+    expect(payoutUpdate).not.toHaveBeenCalled();
+    expect(intentUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe("mapFlipCallbackStatus", () => {
+  it.each([
+    ["DONE", ProviderPayoutStatus.COMPLETED],
+    ["done", ProviderPayoutStatus.COMPLETED],
+    ["CANCELLED", ProviderPayoutStatus.FAILED],
+    ["PENDING", ProviderPayoutStatus.PENDING],
+    [undefined, ProviderPayoutStatus.PENDING],
+    ["SOMETHING_UNKNOWN", ProviderPayoutStatus.PENDING],
+  ])("maps %p → %s", (input, expected) => {
+    expect(mapFlipCallbackStatus(input as any)).toBe(expected);
   });
 });

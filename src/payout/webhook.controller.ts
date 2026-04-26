@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   ForbiddenException,
@@ -19,6 +20,7 @@ import {
 import { Public } from "../decorators/public.decorator";
 import { PrismaService } from "../prisma/prisma.service";
 import {
+  PAYOUT_PROVIDER_FLIP,
   PAYOUT_PROVIDER_XENDIT,
   type IPayoutProviderAdapter,
 } from "./payout-provider.port";
@@ -74,6 +76,8 @@ export class WebhookController {
     private readonly prisma: PrismaService,
     @Inject(PAYOUT_PROVIDER_XENDIT)
     private readonly xenditProvider: IPayoutProviderAdapter,
+    @Inject(PAYOUT_PROVIDER_FLIP)
+    private readonly flipProvider: IPayoutProviderAdapter,
   ) {}
 
   @Post("xendit")
@@ -241,6 +245,169 @@ export class WebhookController {
   }
 
   /**
+   * `POST /webhooks/flip` — Flip disbursement callback handler.
+   *
+   * Flip sends `application/x-www-form-urlencoded` with two fields:
+   *   - `data` — JSON-encoded string containing the disbursement object
+   *   - `token` — validation token (static shared secret)
+   *
+   * Two-stage parsing: form-decode → JSON.parse(data).
+   */
+  @Post("flip")
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  async handleFlipCallback(
+    @Headers() headers: Record<string, string | string[] | undefined>,
+    @Body() body: Record<string, string> | string,
+  ): Promise<{ ok: true; status: ProviderPayoutStatus }> {
+    // Log optional Flip webhook security headers for debugging.
+    const webhookId = headers["webhook-id"];
+    const webhookTimestamp = headers["webhook-timestamp"];
+    if (webhookId || webhookTimestamp) {
+      this.logger.debug(
+        `Flip webhook headers: Webhook-Id=${webhookId ?? "n/a"} Webhook-Timestamp=${webhookTimestamp ?? "n/a"}`,
+      );
+    }
+
+    // Stage 1: Extract form fields. Body may arrive as parsed object
+    // (NestJS urlencoded parser) or raw string.
+    let dataStr: string | undefined;
+    let tokenStr: string | undefined;
+    if (typeof body === "string") {
+      const params = new URLSearchParams(body);
+      dataStr = params.get("data") ?? undefined;
+      tokenStr = params.get("token") ?? undefined;
+    } else if (body && typeof body === "object") {
+      dataStr = typeof body.data === "string" ? body.data : undefined;
+      tokenStr = typeof body.token === "string" ? body.token : undefined;
+    }
+
+    // Token verification (before any DB writes).
+    if (!tokenStr) {
+      this.logger.warn("Flip webhook: missing token field");
+      throw new UnauthorizedException({
+        message: "Missing token field in callback body.",
+        code: "WEBHOOK_TOKEN_MISSING",
+      });
+    }
+
+    // Build the raw form body for the signature verifier.
+    const rawBodyForSig =
+      typeof body === "string"
+        ? body
+        : new URLSearchParams(body as Record<string, string>).toString();
+    if (!this.flipProvider.verifyWebhookSignature(headers, rawBodyForSig)) {
+      this.logger.warn("Flip webhook: token mismatch — 403");
+      throw new ForbiddenException({
+        message: "Invalid token.",
+        code: "WEBHOOK_TOKEN_INVALID",
+      });
+    }
+
+    // Stage 2: Parse the JSON-encoded `data` field.
+    if (!dataStr) {
+      this.logger.warn("Flip webhook: missing data field");
+      throw new BadRequestException({
+        message: "Missing data field in callback body.",
+        code: "WEBHOOK_DATA_MISSING",
+      });
+    }
+
+    let disbursement: Record<string, unknown>;
+    try {
+      disbursement = JSON.parse(dataStr);
+    } catch {
+      this.logger.warn("Flip webhook: malformed JSON in data field");
+      throw new BadRequestException({
+        message: "Malformed JSON in data field.",
+        code: "WEBHOOK_DATA_INVALID",
+      });
+    }
+
+    const flipId = disbursement.id;
+    const rawStatus =
+      typeof disbursement.status === "string"
+        ? disbursement.status
+        : undefined;
+
+    if (flipId == null) {
+      this.logger.warn("Flip webhook: data missing id field");
+      throw new BadRequestException({
+        message: "Missing id in data.",
+        code: "WEBHOOK_DATA_INVALID",
+      });
+    }
+
+    const providerPayoutId = String(flipId);
+
+    // Look up the ProviderPayout row.
+    const payoutRow = await this.prisma.providerPayout.findFirst({
+      where: { providerPayoutId, provider: "flip" },
+    });
+    if (!payoutRow) {
+      this.logger.warn(
+        `Flip webhook: unknown providerPayoutId=${providerPayoutId}`,
+      );
+      throw new NotFoundException({
+        message: "Unknown payout id in callback data.",
+        code: "PAYOUT_NOT_FOUND",
+      });
+    }
+
+    const nextStatus = mapFlipCallbackStatus(rawStatus);
+
+    // Idempotency — already in that status, nothing to do.
+    if (payoutRow.status === nextStatus) {
+      this.logger.log(
+        `Flip webhook: idempotent no-op providerPayoutId=${providerPayoutId} status=${nextStatus}`,
+      );
+      return { ok: true, status: nextStatus };
+    }
+
+    // Persist the transition atomically.
+    const now = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      await tx.providerPayout.update({
+        where: { id: payoutRow.id },
+        data: {
+          status: nextStatus,
+          webhookReceivedAt: now,
+          completedAt:
+            nextStatus === ProviderPayoutStatus.COMPLETED
+              ? now
+              : payoutRow.completedAt,
+          providerResponseBody: (disbursement as object) ?? undefined,
+        },
+      });
+
+      if (nextStatus === ProviderPayoutStatus.COMPLETED) {
+        await tx.paymentIntent.update({
+          where: { id: payoutRow.intentId },
+          data: { status: PaymentIntentStatus.PAID_OUT },
+        });
+      }
+    });
+
+    this.logger.log(
+      `Flip webhook applied providerPayoutId=${providerPayoutId} intentId=${payoutRow.intentId} status=${nextStatus}`,
+    );
+
+    if (nextStatus === ProviderPayoutStatus.FAILED) {
+      this.logger.error(
+        `FLIP_PAYOUT_DECLINED intentId=${payoutRow.intentId} providerPayoutId=${providerPayoutId}`,
+      );
+    }
+
+    if (nextStatus === ProviderPayoutStatus.COMPLETED) {
+      setImmediate(() => {
+        void this.firePaidOutPush(payoutRow.intentId);
+      });
+    }
+
+    return { ok: true, status: nextStatus };
+  }
+
+  /**
    * Soft-linked push — task 32 owns the real implementation. We never
    * import its module directly because task 32 may land after this one
    * and we don't want a compile-time coupling. Any failure is swallowed
@@ -300,6 +467,27 @@ export function mapXenditCallbackStatus(
     case "CANCELLED":
     case "CANCELED":
     case "DECLINED":
+      return ProviderPayoutStatus.FAILED;
+    case "PENDING":
+    case "":
+    default:
+      return ProviderPayoutStatus.PENDING;
+  }
+}
+
+/**
+ * Map Flip's callback `status` onto `ProviderPayoutStatus`.
+ * Flip has three states: PENDING, DONE, CANCELLED.
+ *
+ * Exported for tests.
+ */
+export function mapFlipCallbackStatus(
+  raw: string | undefined,
+): ProviderPayoutStatus {
+  switch ((raw ?? "").toUpperCase()) {
+    case "DONE":
+      return ProviderPayoutStatus.COMPLETED;
+    case "CANCELLED":
       return ProviderPayoutStatus.FAILED;
     case "PENDING":
     case "":
