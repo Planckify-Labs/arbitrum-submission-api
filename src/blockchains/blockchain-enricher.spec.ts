@@ -19,6 +19,15 @@ describe("blockchain-enricher", () => {
   const arcGatewayMinter = "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B";
   const arcUsdcAddress = "0x3600000000000000000000000000000000000000";
 
+  const tokenDefaults = {
+    id: "tok-default",
+    name: "Token",
+    blockchainId: "01ARC...",
+    logoUrl: null,
+    createdAt: new Date("2025-01-01T00:00:00.000Z"),
+    updatedAt: new Date("2025-01-01T00:00:00.000Z"),
+  };
+
   const arcRow: TBlockchainRow = {
     id: "01ARC...",
     name: "Arc Testnet",
@@ -38,6 +47,9 @@ describe("blockchain-enricher", () => {
     x402FacilitatorUrl: null,
     tokens: [
       {
+        ...tokenDefaults,
+        id: "tok-usdc-arc",
+        name: "USD Coin",
         symbol: "USDC",
         decimals: 6,
         contractAddress: arcUsdcAddress,
@@ -195,6 +207,10 @@ describe("blockchain-enricher", () => {
         ...bareRow,
         tokens: [
           {
+            ...tokenDefaults,
+            id: "tok-eth",
+            name: "Ether",
+            blockchainId: "01BARE...",
             symbol: "ETH",
             decimals: 18,
             contractAddress: null,
@@ -203,6 +219,10 @@ describe("blockchain-enricher", () => {
             isNativeCurrency: true,
           },
           {
+            ...tokenDefaults,
+            id: "tok-usdc-eth",
+            name: "USD Coin",
+            blockchainId: "01BARE...",
             symbol: "USDC",
             decimals: 6,
             contractAddress: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",

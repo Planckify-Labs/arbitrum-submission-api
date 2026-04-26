@@ -76,6 +76,7 @@ export class TokensService {
           symbol: "asc",
         },
       }),
+      take,
     );
   }
 
@@ -195,16 +196,6 @@ export class TokensService {
       isNativeCurrency,
     } = searchParams;
 
-    console.log('Search params:', {
-      symbol,
-      name,
-      blockchainId,
-      contractAddress,
-      isStablecoin,
-      isActive,
-      isNativeCurrency,
-    });
-
     const where: Prisma.TokenWhereInput = {};
 
     if (symbol) {
@@ -252,7 +243,6 @@ export class TokensService {
       },
     });
 
-    console.log(`Found ${result.length} tokens`);
     return result;
   }
 }

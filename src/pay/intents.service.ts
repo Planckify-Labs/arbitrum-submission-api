@@ -100,12 +100,10 @@ const SVM_SENTINEL_TO_CHAIN_SLUG: Record<number, string> = {
 };
 
 /**
- * USDC SPL mint on Solana mainnet-beta (spec §5.2.1). Devnet USDC is a
- * different mint; when M6 lands a devnet flow, thread the right mint through
- * via the blockchain row's `tokens[].contractAddress` instead of hard-coding
- * here.
+ * USDC SPL mint fallback — only used if the Token table lookup fails.
+ * Prefer {@link IntentsService.resolveSvmUsdcMint} which reads from the DB.
  */
-const USDC_SPL_MINT_MAINNET = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+const USDC_SPL_MINT_MAINNET_FALLBACK = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 /**
  * Return true iff the chain-id is a SVM sentinel. Single predicate so
@@ -251,7 +249,7 @@ export class IntentsService {
         include: { merchant: true },
       });
       if (existing) {
-        return this.toResponseDto(existing, /* includeNanopay */ true);
+        return await this.toResponseDto(existing, /* includeNanopay */ true);
       }
       // Cache points at a vanished row (prune + cold-read fell through race).
       // Treat as a fresh request — re-creating the intent is safer than 500ing.
@@ -314,6 +312,7 @@ export class IntentsService {
     let treasuryAddress: string;
     let x402Entry: ReturnType<X402SupportedService["getSupportedForChain"]> | null;
     let payerAddressForPersistence: string;
+    let svmBlockchainRow: { id: string; chainSlug: string; x402FacilitatorUrl: string | null } | null = null;
 
     if (namespace === "solana") {
       // SVM intent (task 43). Treasury comes from the SVM env; x402 domain
@@ -335,17 +334,15 @@ export class IntentsService {
       // Facilitator URL is the second half of the same gate — the intent
       // is useless if we can't forward it later. Check at quote time so
       // mobile gets the 503 up front rather than after signing.
-      {
-        const svmRow = await this.resolveSvmBlockchainRow(
-          SVM_MAINNET_SENTINEL_CHAIN_ID,
-        );
-        if (!svmRow?.x402FacilitatorUrl) {
-          throw new ServiceUnavailableException({
-            message:
-              "x402FacilitatorUrl not configured for SVM chain; SVM intents are disabled.",
-            code: "SVM_FACILITATOR_NOT_CONFIGURED",
-          });
-        }
+      svmBlockchainRow = await this.resolveSvmBlockchainRow(
+        SVM_MAINNET_SENTINEL_CHAIN_ID,
+      );
+      if (!svmBlockchainRow?.x402FacilitatorUrl) {
+        throw new ServiceUnavailableException({
+          message:
+            "x402FacilitatorUrl not configured for SVM chain; SVM intents are disabled.",
+          code: "SVM_FACILITATOR_NOT_CONFIGURED",
+        });
       }
 
       // Default to mainnet-beta for the sentinel. Devnet is reachable via
@@ -441,7 +438,7 @@ export class IntentsService {
       nanopayBlock = {
         kind: "svm_partial_tx",
         cluster: "mainnet-beta",
-        usdcMint: x402Entry?.asset ?? USDC_SPL_MINT_MAINNET,
+        usdcMint: x402Entry?.asset ?? await this.resolveSvmUsdcMint(svmBlockchainRow!.id),
         // Backend does NOT pre-build the Solana tx here (task 43 Constraints:
         // "if @solana/web3.js isn't in backend, skip parsing the signed tx
         // on backend"). Mobile's task-42 signer builds + signs; we forward
@@ -624,13 +621,14 @@ export class IntentsService {
       const svmEntry =
         this.x402Supported.getSupportedForNetwork("solana:mainnet") ??
         this.x402Supported.getSupportedForNetwork("solana:mainnet-beta");
+      const svmRow = await this.resolveSvmBlockchainRow(sourceChainId);
       nanopay = {
         kind: "svm_partial_tx",
         cluster:
           sourceChainId === SVM_DEVNET_SENTINEL_CHAIN_ID
             ? "devnet"
             : "mainnet-beta",
-        usdcMint: svmEntry?.asset ?? USDC_SPL_MINT_MAINNET,
+        usdcMint: svmEntry?.asset ?? (svmRow ? await this.resolveSvmUsdcMint(svmRow.id) : USDC_SPL_MINT_MAINNET_FALLBACK),
         feePayer: svmEntry?.authorizedSigners?.[0],
         sourceChainId,
         value: (intent.nanopayUsdcAmountMicros ?? 0n).toString(),
@@ -1034,10 +1032,7 @@ export class IntentsService {
     // on every call because the overhead is a few hundred bytes.
     const payTo = intent.nanopayUsdcTreasuryAddress;
     const usdcMint =
-      x402Entry?.asset ??
-      (chainRow.chainSlug === "solana-mainnet"
-        ? USDC_SPL_MINT_MAINNET
-        : undefined);
+      x402Entry?.asset ?? await this.resolveSvmUsdcMint(chainRow.id);
 
     const paymentRequirements = {
       scheme: "exact",
@@ -1158,6 +1153,24 @@ export class IntentsService {
       intentId,
       attestation: null,
     };
+  }
+
+  /**
+   * Resolve the USDC SPL mint address for a given Solana blockchain row.
+   * Reads from the Token table (symbol=USDC, isStablecoin, peggedCurrency=USD).
+   * Falls back to the mainnet constant only if the DB lookup fails.
+   */
+  private async resolveSvmUsdcMint(blockchainId: string): Promise<string> {
+    const token = await this.prisma.token.findFirst({
+      where: {
+        blockchainId,
+        symbol: "USDC",
+        isStablecoin: true,
+        isActive: true,
+      },
+      select: { contractAddress: true },
+    });
+    return token?.contractAddress ?? USDC_SPL_MINT_MAINNET_FALLBACK;
   }
 
   /**
@@ -2007,7 +2020,7 @@ export class IntentsService {
    * Kept here so the same projection can be reused by the idempotent-hit
    * branch without re-reading the merchant on every retry.
    */
-  private toResponseDto(
+  private async toResponseDto(
     row: {
       id: string;
       status: PaymentIntentStatus;
@@ -2021,7 +2034,7 @@ export class IntentsService {
       fiatCurrency: string;
     },
     includeNanopay: boolean,
-  ): PaymentIntentResponseDto {
+  ): Promise<PaymentIntentResponseDto> {
     const chainId = row.nanopayUsdcSourceChainId ?? 0;
     const isSvm = isSvmChainId(chainId);
     const nonceHex =
@@ -2033,13 +2046,20 @@ export class IntentsService {
 
     let nanopay: NanopayPayloadResponseDto | null = null;
     if (includeNanopay && isSvm) {
+      let usdcMint = x402Entry?.asset;
+      if (!usdcMint) {
+        const svmRow = await this.resolveSvmBlockchainRow(chainId);
+        usdcMint = svmRow
+          ? await this.resolveSvmUsdcMint(svmRow.id)
+          : USDC_SPL_MINT_MAINNET_FALLBACK;
+      }
       nanopay = {
         kind: "svm_partial_tx",
         cluster:
           chainId === SVM_DEVNET_SENTINEL_CHAIN_ID
             ? "devnet"
             : "mainnet-beta",
-        usdcMint: x402Entry?.asset ?? USDC_SPL_MINT_MAINNET,
+        usdcMint,
         feePayer: x402Entry?.authorizedSigners?.[0],
         sourceChainId: chainId,
         value: (row.nanopayUsdcAmountMicros ?? 0n).toString(),

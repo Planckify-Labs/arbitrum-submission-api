@@ -104,10 +104,12 @@ export class TokenCacheService {
   async getAllTokens<T>(
     cursor: string | number | undefined,
     fallback: () => Promise<T>,
+    take?: number,
   ): Promise<T> {
     const key = this.cacheManager.buildKey(
       'tokens',
       'all',
+      `take-${take ?? 10}`,
       'page',
       cursor ?? 'first',
     );

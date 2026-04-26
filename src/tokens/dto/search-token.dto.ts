@@ -2,6 +2,13 @@ import { ApiProperty } from "@nestjs/swagger";
 import { IsBoolean, IsOptional, IsString } from "class-validator";
 import { Transform } from "class-transformer";
 
+function toBool({ obj, key }: { obj: Record<string, unknown>; key: string }) {
+  const raw = obj[key];
+  if (raw === "true" || raw === true) return true;
+  if (raw === "false" || raw === false) return false;
+  return undefined;
+}
+
 export class SearchTokenDto {
   @ApiProperty({ example: "USDT", required: false })
   @IsOptional()
@@ -29,30 +36,18 @@ export class SearchTokenDto {
   @ApiProperty({ example: true, required: false })
   @IsOptional()
   @IsBoolean()
-  @Transform(({ value }) => {
-    if (value === 'true') return true;
-    if (value === 'false') return false;
-    return value;
-  })
+  @Transform(toBool)
   isStablecoin?: boolean;
 
   @ApiProperty({ example: true, required: false })
   @IsOptional()
   @IsBoolean()
-  @Transform(({ value }) => {
-    if (value === 'true') return true;
-    if (value === 'false') return false;
-    return value;
-  })
+  @Transform(toBool)
   isActive?: boolean;
 
   @ApiProperty({ example: true, required: false })
   @IsOptional()
   @IsBoolean()
-  @Transform(({ value }) => {
-    if (value === 'true') return true;
-    if (value === 'false') return false;
-    return value;
-  })
+  @Transform(toBool)
   isNativeCurrency?: boolean;
 }

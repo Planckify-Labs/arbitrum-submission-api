@@ -2,6 +2,13 @@ import { ApiProperty } from "@nestjs/swagger";
 import { IsString, IsInt, IsBoolean, IsOptional } from "class-validator";
 import { Transform } from "class-transformer";
 
+function toBool({ obj, key }: { obj: Record<string, unknown>; key: string }) {
+  const raw = obj[key];
+  if (raw === "true" || raw === true) return true;
+  if (raw === "false" || raw === false) return false;
+  return undefined;
+}
+
 export class SearchBlockchainDto {
   @ApiProperty({
     description: "Search by blockchain name",
@@ -29,11 +36,7 @@ export class SearchBlockchainDto {
   })
   @IsBoolean()
   @IsOptional()
-  @Transform(({ value }) => {
-    if (value === "true") return true;
-    if (value === "false") return false;
-    return value;
-  })
+  @Transform(toBool)
   isEVM?: boolean;
 
   @ApiProperty({
@@ -43,11 +46,7 @@ export class SearchBlockchainDto {
   })
   @IsBoolean()
   @IsOptional()
-  @Transform(({ value }) => {
-    if (value === "true") return true;
-    if (value === "false") return false;
-    return value;
-  })
+  @Transform(toBool)
   isActive?: boolean;
 
   @ApiProperty({
@@ -57,10 +56,6 @@ export class SearchBlockchainDto {
   })
   @IsBoolean()
   @IsOptional()
-  @Transform(({ value }) => {
-    if (value === "true") return true;
-    if (value === "false") return false;
-    return value;
-  })
+  @Transform(toBool)
   isTestnet?: boolean;
 }

@@ -121,6 +121,21 @@ export class UsdcTokenDto {
   isNativeCurrency: boolean;
 }
 
+export class BlockchainTokenDto {
+  @ApiProperty() id: string;
+  @ApiProperty() name: string;
+  @ApiProperty() symbol: string;
+  @ApiProperty() decimals: number;
+  @ApiProperty() blockchainId: string;
+  @ApiProperty({ nullable: true, required: false }) contractAddress: string | null;
+  @ApiProperty({ nullable: true, required: false }) logoUrl: string | null;
+  @ApiProperty() isStablecoin: boolean;
+  @ApiProperty() isNativeCurrency: boolean;
+  @ApiProperty() isActive: boolean;
+  @ApiProperty() createdAt: Date;
+  @ApiProperty() updatedAt: Date;
+}
+
 export class EnrichedBlockchainResponseDto {
   @ApiProperty({ description: "Internal blockchain row ID (ULID).", example: "01H1G5V..." })
   id: string;
@@ -206,6 +221,14 @@ export class EnrichedBlockchainResponseDto {
     required: false,
   })
   usdc: UsdcTokenDto | null;
+
+  @ApiProperty({
+    description:
+      "Included token rows (native currency + USDC stablecoin). Preserves backward compatibility with consumers that read `tokens[0]` for symbol/icon.",
+    type: [BlockchainTokenDto],
+    required: false,
+  })
+  tokens: BlockchainTokenDto[];
 
   @ApiProperty({ description: "Row-level updated timestamp (for ETag debugging).", example: "2024-03-19T12:00:00.000Z" })
   updatedAt: Date;

@@ -50,12 +50,18 @@ export interface TBlockchainRow {
 }
 
 export interface TTokenRow {
+  id: string;
+  name: string;
   symbol: string;
   decimals: number;
+  blockchainId: string;
   contractAddress: string | null;
+  logoUrl: string | null;
   isStablecoin: boolean;
   isNativeCurrency: boolean;
   isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export function buildCaip2Id(row: TBlockchainRow): string | null {
@@ -185,6 +191,7 @@ export function enrichBlockchain(
     paymaster: buildPaymaster(row),
     x402: buildX402(row, x402Svc),
     usdc: buildUsdc(row),
+    tokens: (row.tokens ?? []).filter((t) => t.isActive),
     updatedAt: row.updatedAt,
   };
 }

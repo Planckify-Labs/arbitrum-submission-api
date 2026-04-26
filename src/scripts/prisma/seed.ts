@@ -1114,6 +1114,50 @@ async function main() {
         isActive: true,
       },
     }),
+    // Mock USDC on Solana Devnet — deployed via devnet-setup.ts for merchant payment testing
+    prisma.token.upsert({
+      where: {
+        blockchainId_contractAddress: {
+          blockchainId: blockchains[7].id,
+          contractAddress: "4qFejVSp46Q4SZCGDrXbkFJC1qw5uo1JBnbXLnKZurey",
+        },
+      },
+      update: {},
+      create: {
+        name: "USD Coin (Devnet)",
+        symbol: "USDC",
+        decimals: 6,
+        blockchainId: blockchains[7].id, // Solana Devnet
+        contractAddress: "4qFejVSp46Q4SZCGDrXbkFJC1qw5uo1JBnbXLnKZurey",
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
+        isStablecoin: true,
+        isActive: true,
+        peggedCurrency: "USD",
+      },
+    }),
+    // USDC-SPL on Solana Mainnet — canonical Circle USDC mint
+    prisma.token.upsert({
+      where: {
+        blockchainId_contractAddress: {
+          blockchainId: blockchains[6].id,
+          contractAddress: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        },
+      },
+      update: {},
+      create: {
+        name: "USD Coin",
+        symbol: "USDC",
+        decimals: 6,
+        blockchainId: blockchains[6].id, // Solana Mainnet
+        contractAddress: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
+        isStablecoin: true,
+        isActive: true,
+        peggedCurrency: "USD",
+      },
+    }),
     // USDC on Arc Testnet — spec §7, task 26. On Arc USDC is the
     // native gas token; decimals=18 matches the native-gas view used
     // by the existing EVM balance/transfer pipeline (no dual-view
