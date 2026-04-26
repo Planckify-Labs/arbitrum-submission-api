@@ -5,6 +5,7 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import type { ConfigService } from "@nestjs/config";
+import type { QrSigningService } from "../merchants/qr-signing.service";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { ValkeyService } from "../valkey/valkey.service";
 import type { X402SupportedService } from "../x402/x402-supported.service";
@@ -237,6 +238,7 @@ function buildSvmService(overrides: {
     null,
     null,
     svmSettle,
+    {} as unknown as QrSigningService,
   );
   return { svc, prisma, svmSettle };
 }

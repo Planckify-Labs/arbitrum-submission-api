@@ -618,11 +618,14 @@ async function main() {
         isTestnet: false,
       },
     }),
-    // Solana mainnet — no EIP-155 chainId; keyed by chainSlug (cluster name)
+    // Solana mainnet — no EIP-155 chainId; keyed by chainSlug (cluster name).
+    // `solanaCluster` maps to the sentinel chain IDs used by the intents
+    // service (-101 mainnet, -102 devnet).
     prisma.blockchain.upsert({
       where: { chainSlug: "solana-mainnet" },
       update: {
         rpcUrl: "https://solana-mainnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        solanaCluster: "mainnet-beta",
       },
       create: {
         name: "Solana",
@@ -632,12 +635,15 @@ async function main() {
         isEVM: false,
         isActive: true,
         isTestnet: false,
+        solanaCluster: "mainnet-beta",
       },
     }),
     prisma.blockchain.upsert({
       where: { chainSlug: "solana-devnet" },
       update: {
         rpcUrl: "https://solana-devnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        solanaCluster: "devnet",
+        takumiPayProgramId: "6CCTEtYrk8unNhjYQ7npiLUf1iKQQJU88JSYn8EJLNYy",
       },
       create: {
         name: "Solana Devnet",
@@ -647,6 +653,8 @@ async function main() {
         isEVM: false,
         isActive: true,
         isTestnet: true,
+        solanaCluster: "devnet",
+        takumiPayProgramId: "6CCTEtYrk8unNhjYQ7npiLUf1iKQQJU88JSYn8EJLNYy",
       },
     }),
     // Arc Testnet — UMKM USDC payout settlement chain (spec §7 / task 26).
@@ -703,35 +711,6 @@ async function main() {
     }),
   ]);
 
-  const contractABIs = await Promise.all([
-    prisma.contractABI.upsert({
-      where: { name: "ERC20" },
-      update: {},
-      create: {
-        name: "ERC20",
-        description: "Standard ERC20 token interface",
-        version: "1.0.0",
-        abi: JSON.parse(
-          `[{"constant":true,"inputs":[],"name":"name","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"}]`,
-        ),
-        isVerified: true,
-      },
-    }),
-    prisma.contractABI.upsert({
-      where: { name: "PaymentProcessor" },
-      update: {},
-      create: {
-        name: "PaymentProcessor",
-        description: "Payment processor contract",
-        version: "1.0.0",
-        abi: JSON.parse(
-          `[{"inputs":[{"internalType":"address","name":"_token","type":"address"}],"stateMutability":"nonpayable","type":"constructor"}]`,
-        ),
-        isVerified: true,
-      },
-    }),
-  ]);
-
   await Promise.all([
     // Payment Processor on Polygon
     prisma.smartContract.upsert({
@@ -742,7 +721,6 @@ async function main() {
         name: "Payment Processor",
         blockchainId: blockchains[1].id, // Polygon
         address: "0x1234567890123456789012345678901234567890",
-        abiId: contractABIs[1].id,
         isActive: true,
       },
     }),
@@ -755,7 +733,6 @@ async function main() {
         name: "Payment Processor Sepolia",
         blockchainId: blockchains[2].id, // Ethereum Sepolia
         address: "0xf64BA8EEBD3f9e268bC1989Af0dde77ab2418779",
-        abiId: contractABIs[1].id,
         isActive: true,
       },
     }),
@@ -768,7 +745,6 @@ async function main() {
         name: "Payment Processor",
         blockchainId: blockchains[4].id, // Lisk
         address: "0x39EDabDd022C39B6cfeB3161Ac77c439F325D6a0",
-        abiId: contractABIs[1].id,
         isActive: true,
       },
     }),
@@ -781,7 +757,6 @@ async function main() {
         name: "Payment Processor",
         blockchainId: blockchains[3].id, // Base
         address: "0x479B0843C3e0627f36551660506dEd5b349Fa968",
-        abiId: contractABIs[1].id,
         isActive: true,
       },
     }),
@@ -794,7 +769,20 @@ async function main() {
         name: "Payment Processor",
         blockchainId: blockchains[5].id, // Arbitrum
         address: "0x479B0843C3e0627f36551660506dEd5b349Fa968",
-        abiId: contractABIs[1].id,
+        isActive: true,
+      },
+    }),
+    // TakumiPay on Solana Devnet — Anchor program deployed via `anchor deploy`
+    prisma.smartContract.upsert({
+      where: { id: "smart-contract-payment-solana-devnet" },
+      update: {
+        address: "6CCTEtYrk8unNhjYQ7npiLUf1iKQQJU88JSYn8EJLNYy",
+      },
+      create: {
+        id: "smart-contract-payment-solana-devnet",
+        name: "TakumiPay Solana",
+        blockchainId: blockchains[7].id, // Solana Devnet
+        address: "6CCTEtYrk8unNhjYQ7npiLUf1iKQQJU88JSYn8EJLNYy",
         isActive: true,
       },
     }),
@@ -1122,7 +1110,9 @@ async function main() {
           contractAddress: "4qFejVSp46Q4SZCGDrXbkFJC1qw5uo1JBnbXLnKZurey",
         },
       },
-      update: {},
+      update: {
+        isPaymentEnabled: true,
+      },
       create: {
         name: "USD Coin (Devnet)",
         symbol: "USDC",
@@ -1133,6 +1123,7 @@ async function main() {
           "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
         isStablecoin: true,
         isActive: true,
+        isPaymentEnabled: true,
         peggedCurrency: "USD",
       },
     }),

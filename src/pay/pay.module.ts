@@ -1,6 +1,7 @@
 import { Module, forwardRef } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { BlockchainVerificationModule } from "../blockchain-verification/blockchain-verification.module";
+import { MerchantsModule } from "../merchants/merchants.module";
 import { PayoutModule } from "../payout/payout.module";
 import { PrismaModule } from "../prisma/prisma.module";
 import { ValkeyModule } from "../valkey/valkey.module";
@@ -52,6 +53,7 @@ import { IntentsService } from "./intents.service";
     // `BlockchainVerificationService` is `@Optional()` inside
     // `IntentsService` so unit tests can build the service without it.
     BlockchainVerificationModule,
+    MerchantsModule,
     forwardRef(() => PayoutModule),
   ],
   controllers: [IntentsController],

@@ -296,7 +296,7 @@ export class IntentsController {
     return await this.intentsService.submitOnchain({
       intentId,
       txHash: dto.txHash,
-      chainId: dto.chainId,
+      blockchainId: dto.blockchainId,
     });
   }
 

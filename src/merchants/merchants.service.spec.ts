@@ -163,7 +163,7 @@ describe("MerchantsService", () => {
         qrSigning,
       );
 
-      const result = await svc.signup("user_1", {
+      const result = await svc.signup({
         displayName: "Warung Test",
         countryCode: "ID",
         payoutChannel: "GOPAY",
@@ -210,7 +210,7 @@ describe("MerchantsService", () => {
       );
 
       await expect(
-        svc.signup("user_2", {
+        svc.signup({
           displayName: "Other",
           countryCode: "ID",
           payoutChannel: "GOPAY",
@@ -234,7 +234,7 @@ describe("MerchantsService", () => {
       );
 
       await expect(
-        svc.signup("user_3", {
+        svc.signup({
           displayName: "Racey",
           countryCode: "ID",
           payoutChannel: "GOPAY",
@@ -253,7 +253,7 @@ describe("MerchantsService", () => {
       );
 
       await expect(
-        svc.signup("user_4", {
+        svc.signup({
           displayName: "Unknown",
           countryCode: "ID",
           payoutChannel: "NOT_A_THING",
@@ -271,7 +271,7 @@ describe("MerchantsService", () => {
       );
 
       await expect(
-        svc.signup("user_5", {
+        svc.signup({
           displayName: "BadNum",
           countryCode: "ID",
           payoutChannel: "GOPAY",
@@ -281,25 +281,6 @@ describe("MerchantsService", () => {
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
-    it("rejects signup when a merchant already exists for this user", async () => {
-      const { prisma } = buildPrismaStub({
-        existingMerchantForUser: { id: "mch_EXISTING" },
-      });
-      const svc = new MerchantsService(
-        prisma as unknown as PrismaService,
-        qrSigning,
-      );
-
-      await expect(
-        svc.signup("user_6", {
-          displayName: "Dupe",
-          countryCode: "ID",
-          payoutChannel: "GOPAY",
-          payoutAccountNumber: "+6281234567890",
-          payoutAccountHolderName: "Bu Dupe",
-        }),
-      ).rejects.toBeInstanceOf(ConflictException);
-    });
   });
 
   describe("findMeOrThrow", () => {

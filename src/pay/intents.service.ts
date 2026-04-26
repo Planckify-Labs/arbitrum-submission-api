@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { BN } from "@coral-xyz/anchor";
 import type {
   GatewayDepositStatus,
   PaymentIntentStatus,
@@ -18,6 +19,8 @@ import {
 import { ConfigService } from "@nestjs/config";
 import type { Hash } from "viem";
 import { BlockchainVerificationService } from "../blockchain-verification/blockchain-verification.service";
+import * as nacl from "tweetnacl";
+import { QrSigningService } from "../merchants/qr-signing.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { BlockchainCacheService } from "../valkey/services/blockchain-cache.service";
 import { ValkeyService } from "../valkey/valkey.service";
@@ -33,6 +36,7 @@ import {
   type ICircleSettleSvmClient,
 } from "./circle-settle-svm.client";
 import type { CreateIntentDto } from "./dto/create-intent.dto";
+import { computePlatformFee } from "./platform-fee.util";
 import type { DepositReceiptResponseDto } from "./dto/deposit-receipt.dto";
 import type {
   NanopayFailureCode,
@@ -194,6 +198,7 @@ interface ResolvedFx {
 @Injectable()
 export class IntentsService {
   private readonly logger = new Logger(IntentsService.name);
+  private svmSignerKeypair: { secretKey: Uint8Array; publicKey: Uint8Array; publicKeyBase58: string } | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -211,7 +216,28 @@ export class IntentsService {
     @Optional()
     @Inject(CIRCLE_SETTLE_SVM_CLIENT)
     private readonly circleSettleSvm: ICircleSettleSvmClient | null = null,
-  ) {}
+    private readonly qrSigning: QrSigningService,
+  ) {
+    const raw = this.config.get<string>("SOLANA_QUOTE_SIGNER_PRIVATE_KEY");
+    if (raw) {
+      try {
+        const decoded = new Uint8Array(JSON.parse(raw));
+        const pubBytes = decoded.slice(32);
+        const bs58Chars = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+        let num = BigInt(0);
+        for (const b of pubBytes) num = num * 256n + BigInt(b);
+        let b58 = "";
+        while (num > 0n) { b58 = bs58Chars[Number(num % 58n)] + b58; num /= 58n; }
+        for (const b of pubBytes) { if (b === 0) b58 = "1" + b58; else break; }
+        this.svmSignerKeypair = { secretKey: decoded, publicKey: pubBytes, publicKeyBase58: b58 };
+        this.logger.log(`[quote-signer] SVM loaded: ${b58}`);
+      } catch {
+        this.logger.warn("[quote-signer] Failed to parse SOLANA_QUOTE_SIGNER_PRIVATE_KEY");
+      }
+    } else {
+      this.logger.warn("[quote-signer] SOLANA_QUOTE_SIGNER_PRIVATE_KEY not set");
+    }
+  }
 
   async createIntent(args: {
     dto: CreateIntentDto;
@@ -258,22 +284,34 @@ export class IntentsService {
       );
     }
 
-    // Merchant lookup. M2 only supports the `merchantId` path; `scannedPayload`
-    // parsing is M3 (task file §2) — fail fast with a typed code so mobile
-    // can surface the correct user-facing message.
-    if (!dto.merchantId) {
-      throw new BadRequestException({
-        message:
-          "scannedPayload resolution is not implemented yet (M3). Provide merchantId.",
-        code: "SCANNED_PAYLOAD_NOT_SUPPORTED",
+    let merchant: Awaited<
+      ReturnType<typeof this.prisma.merchant.findUnique>
+    > = null;
+
+    if (dto.merchantId) {
+      merchant = await this.prisma.merchant.findUnique({
+        where: { id: dto.merchantId },
       });
+    } else if (dto.scannedPayload) {
+      if (dto.scannedPayload.startsWith("takumipay:v1:")) {
+        const resolvedId =
+          await this.qrSigning.verifyAndExtractMerchantId(dto.scannedPayload);
+        merchant = await this.prisma.merchant.findUnique({
+          where: { id: resolvedId },
+        });
+      } else {
+        const qrisPan = extractQrisPan(dto.scannedPayload);
+        if (qrisPan) {
+          merchant = await this.prisma.merchant.findFirst({
+            where: { qrisPan },
+          });
+        }
+      }
     }
-    const merchant = await this.prisma.merchant.findUnique({
-      where: { id: dto.merchantId },
-    });
+
     if (!merchant) {
       throw new NotFoundException({
-        message: `Merchant ${dto.merchantId} not found.`,
+        message: "Merchant not found for the provided payload.",
         code: "MERCHANT_NOT_FOUND",
       });
     }
@@ -293,6 +331,22 @@ export class IntentsService {
       throw new ServiceUnavailableException({
         message: `FX rate unavailable for USDC→${dto.currency}.`,
         code: "FX_UNAVAILABLE",
+      });
+    }
+
+    const settlementRail = this.config.get<string>(
+      "PAYMENT_SETTLEMENT_RAIL",
+      "nanopay",
+    );
+
+    if (settlementRail === "takumipay" || settlementRail === "direct_arc") {
+      return this.createOnchainIntent({
+        dto,
+        merchant,
+        fx,
+        idempotencyKey,
+        bodyHash,
+        payerUserId,
       });
     }
 
@@ -523,6 +577,229 @@ export class IntentsService {
     };
   }
 
+  private buildSvmQuoteMessage(p: {
+    refId: string;
+    merchantId: string;
+    tokenMint: string;
+    amount: bigint;
+    platformFeeAmount: bigint;
+    fiatAmountMinor: bigint;
+    fiatCurrency: string;
+    exchangeRateId: bigint;
+    expiresAt: bigint;
+  }): Uint8Array {
+    const parts: Uint8Array[] = [];
+    const enc = new TextEncoder();
+    const u32le = (n: number) => { const b = new ArrayBuffer(4); new DataView(b).setUint32(0, n, true); return new Uint8Array(b); };
+    const u64le = (n: bigint) => { const b = new ArrayBuffer(8); new DataView(b).setBigUint64(0, n, true); return new Uint8Array(b); };
+    const i64le = (n: bigint) => { const b = new ArrayBuffer(8); new DataView(b).setBigInt64(0, n, true); return new Uint8Array(b); };
+
+    const refIdBytes = enc.encode(p.refId);
+    parts.push(u32le(refIdBytes.length), refIdBytes);
+
+    const merchantIdBytes = enc.encode(p.merchantId);
+    parts.push(u32le(merchantIdBytes.length), merchantIdBytes);
+
+    // token_mint: 32 bytes (zeros for native SOL, or decoded base58 mint)
+    if (p.tokenMint === "native") {
+      parts.push(new Uint8Array(32));
+    } else {
+      const bs58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+      let num = BigInt(0);
+      for (const ch of p.tokenMint) { const i = bs58.indexOf(ch); if (i < 0) break; num = num * 58n + BigInt(i); }
+      const bytes = new Uint8Array(32);
+      for (let i = 31; i >= 0 && num > 0n; i--) { bytes[i] = Number(num & 0xffn); num >>= 8n; }
+      parts.push(bytes);
+    }
+
+    parts.push(u64le(p.amount));
+    parts.push(u64le(p.platformFeeAmount));
+    parts.push(u64le(p.fiatAmountMinor));
+
+    const currBytes = new Uint8Array(3);
+    for (let i = 0; i < Math.min(p.fiatCurrency.length, 3); i++) currBytes[i] = p.fiatCurrency.charCodeAt(i);
+    parts.push(currBytes);
+
+    parts.push(u64le(p.exchangeRateId));
+    parts.push(i64le(p.expiresAt));
+
+    const totalLen = parts.reduce((a, b) => a + b.length, 0);
+    const msg = new Uint8Array(totalLen);
+    let off = 0;
+    for (const p of parts) { msg.set(p, off); off += p.length; }
+    return msg;
+  }
+
+  private async createOnchainIntent(args: {
+    dto: CreateIntentDto;
+    merchant: { id: string; displayName: string; isActive: boolean };
+    fx: ResolvedFx;
+    idempotencyKey: string;
+    bodyHash: string;
+    payerUserId: string | null;
+  }): Promise<PaymentIntentResponseDto> {
+    const { dto, merchant, fx, idempotencyKey, bodyHash, payerUserId } = args;
+
+    const markupMultiplier = addMarkup(fx.fxMarkup);
+    const usdcMicros = computeUsdcMicros({
+      fiatAmountMinor: BigInt(dto.fiatAmountMinor),
+      fxRate: fx.fxRate,
+      markupMultiplier,
+    });
+    if (usdcMicros <= 0n) {
+      throw new BadRequestException({
+        message: "Computed USDC amount is zero — fiat amount too small for current rate.",
+        code: "USDC_AMOUNT_TOO_SMALL",
+      });
+    }
+
+    const tokenRow = dto.sourceTokenId
+      ? await this.prisma.token.findUnique({
+          where: { id: dto.sourceTokenId },
+          include: { blockchain: true },
+        })
+      : await this.prisma.token.findFirst({
+          where: {
+            isPaymentEnabled: true,
+            isStablecoin: true,
+            isActive: true,
+          },
+          include: { blockchain: true },
+        });
+    if (!tokenRow?.blockchain) {
+      throw new BadRequestException({
+        message: "No payment-enabled token available. Provide sourceTokenId.",
+        code: "SOURCE_TOKEN_INVALID",
+      });
+    }
+    const bc = tokenRow.blockchain;
+    let sourceChainId: number;
+    if (bc.chainId != null) {
+      sourceChainId = bc.chainId;
+    } else if (bc.solanaCluster === "mainnet-beta" || bc.chainSlug?.includes("mainnet")) {
+      sourceChainId = SVM_MAINNET_SENTINEL_CHAIN_ID;
+    } else {
+      sourceChainId = SVM_DEVNET_SENTINEL_CHAIN_ID;
+    }
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const expiresAt = new Date((nowSec + 900) * 1000);
+
+    const platformFeeBps = this.config.get<number>("PLATFORM_FEE_BPS", 0);
+    const { totalAmount, platformFeeAmount, merchantBackingAmount } =
+      computePlatformFee(usdcMicros, platformFeeBps);
+
+    const created = await this.prisma.paymentIntent.create({
+      data: {
+        payerUserId,
+        merchantId: merchant.id,
+        fiatAmountMinor: dto.fiatAmountMinor,
+        fiatCurrency: dto.currency,
+        nanopayUsdcAmountMicros: totalAmount,
+        nanopayUsdcSourceChainId: sourceChainId,
+        nanopayUsdcTreasuryAddress: "",
+        sourceTokenId: tokenRow.id,
+        platformFeeAmountMinor: platformFeeAmount,
+        merchantBackingAmountMinor: merchantBackingAmount,
+        platformFeeBpsSnapshot: platformFeeBps,
+        exchangeRateId: fx.exchangeRateId,
+        exchangeRateCreatedAt: fx.exchangeRateCreatedAt,
+        fxRateSnapshot: fx.fxRate,
+        fxMarkupSnapshot: fx.fxMarkup,
+        fxFromCurrency: fx.fxFromCurrency,
+        fxToCurrency: fx.fxToCurrency,
+        fxProvider: fx.fxProvider,
+        fxQuotedAt: fx.fxQuotedAt,
+        feesNetworkUsdMicros: 0,
+        feesPayoutMinor: 0,
+        feesPlatformBps: platformFeeBps,
+        path: "takumipay",
+        nanopayNonce: randomBytes(32),
+        nanopayValidAfter: nowSec,
+        nanopayValidBefore: nowSec + 900,
+        gaslessMode: "none",
+        requiresDeposit: false,
+        status: "QUOTED",
+        expiresAt,
+      },
+      include: { merchant: true },
+    });
+
+    await this.persistIdempotent(idempotencyKey, {
+      bodyHash,
+      intentId: created.id,
+      createdAt: Date.now(),
+    });
+
+    // Build SVM quote commitment + signature for Solana intents
+    let quoteCommitmentSvm: Record<string, string> | undefined;
+    let quoteSignatureSvm: string | undefined;
+    let backendSignerPubkey: string | undefined;
+
+    const isSvm = isSvmChainId(sourceChainId);
+    if (isSvm && this.svmSignerKeypair) {
+      const refId = created.id;
+      const tokenMint = tokenRow.contractAddress ?? "native";
+      const expiresAtSec = Math.floor(expiresAt.getTime() / 1000);
+
+      const message = this.buildSvmQuoteMessage({
+        refId,
+        merchantId: merchant.id,
+        tokenMint,
+        amount: totalAmount,
+        platformFeeAmount,
+        fiatAmountMinor: BigInt(dto.fiatAmountMinor),
+        fiatCurrency: dto.currency,
+        exchangeRateId: BigInt(fx.exchangeRateId),
+        expiresAt: BigInt(expiresAtSec),
+      });
+
+      const sigBytes = nacl.sign.detached(message, this.svmSignerKeypair.secretKey);
+
+      quoteCommitmentSvm = {
+        refId,
+        merchantId: merchant.id,
+        tokenMint,
+        amount: totalAmount.toString(),
+        platformFeeAmount: platformFeeAmount.toString(),
+        fiatAmountMinor: dto.fiatAmountMinor.toString(),
+        fiatCurrency: dto.currency,
+        exchangeRateId: fx.exchangeRateId.toString(),
+        expiresAt: expiresAtSec.toString(),
+      };
+      quoteSignatureSvm = Buffer.from(sigBytes).toString("base64");
+      backendSignerPubkey = this.svmSignerKeypair.publicKeyBase58;
+
+      await this.prisma.paymentIntent.update({
+        where: { id: created.id },
+        data: { quoteSignature: Buffer.from(sigBytes) },
+      });
+    } else if (isSvm) {
+      this.logger.warn("[createOnchainIntent] SVM intent but no signer keypair — quote unsigned");
+    }
+
+    return {
+      id: created.id,
+      status: DB_TO_MOBILE_STATUS[created.status],
+      path: "takumipay",
+      merchantId: merchant.id,
+      merchantDisplayName: merchant.displayName,
+      fiatAmountMinor: dto.fiatAmountMinor,
+      currency: dto.currency,
+      fxRate: fx.fxRate,
+      nanopayUsdcAmountMicros: totalAmount.toString(),
+      nanopayUsdcSourceChainId: sourceChainId,
+      nanopayUsdcTreasuryAddress: "",
+      nanopay: null,
+      expiresAt: expiresAt.getTime(),
+      createdAt: created.createdAt.getTime(),
+      blockchainId: bc.id,
+      quoteCommitmentSvm,
+      quoteSignatureSvm,
+      backendSignerPubkey,
+    };
+  }
+
   /**
    * `GET /v1/pay/intents/:id` — polling read for the receipt / progress UI.
    *
@@ -557,6 +834,7 @@ export class IntentsService {
         nanopaySubmissions: { orderBy: { submittedAt: "desc" } },
         payouts: { orderBy: { createdAt: "desc" } },
         payer: true,
+        sourceToken: { include: { blockchain: true } },
       },
     });
     if (!intent) {
@@ -693,9 +971,21 @@ export class IntentsService {
         ? latestPayout.completedAt.getTime()
         : undefined;
 
+    // Surface the smart-contract address / Solana program ID from the
+    // source token's blockchain so the mobile OnchainCard can dispatch
+    // without a second lookup.
+    const blockchain = intent.sourceToken?.blockchain;
+    const smartContract = blockchain
+      ? await this.prisma.smartContract.findFirst({
+          where: { blockchainId: blockchain.id, isActive: true },
+          orderBy: { createdAt: "desc" },
+        })
+      : null;
+
     return {
       id: intent.id,
       status: mobileStatus,
+      path: intent.path ?? undefined,
       merchantId: intent.merchantId,
       merchantDisplayName: intent.merchant.displayName,
       fiatAmountMinor: intent.fiatAmountMinor,
@@ -703,15 +993,32 @@ export class IntentsService {
       fxRate: intent.fxRateSnapshot.toString(),
       nanopayUsdcAmountMicros: (intent.nanopayUsdcAmountMicros ?? 0n).toString(),
       nanopayUsdcSourceChainId: sourceChainId,
-      // String type on the wire to accommodate both EVM (`0x…`) and SVM
-      // (base58) treasury addresses. Consumers discriminate by looking at
-      // `nanopay.kind` or the sign of `nanopayUsdcSourceChainId`.
       nanopayUsdcTreasuryAddress: intent.nanopayUsdcTreasuryAddress ?? "",
       nanopay,
       expiresAt: intent.expiresAt.getTime(),
       createdAt: intent.createdAt.getTime(),
       payoutReferenceId,
       settledAt,
+      contractAddress: smartContract?.address,
+      programId: blockchain?.takumiPayProgramId ?? undefined,
+      blockchainId: blockchain?.id,
+      ...(isSvm && intent.quoteSignature && intent.sourceToken
+        ? {
+            quoteCommitmentSvm: {
+              refId: intent.id,
+              merchantId: intent.merchantId,
+              tokenMint: intent.sourceToken.contractAddress ?? "native",
+              amount: (intent.nanopayUsdcAmountMicros ?? 0n).toString(),
+              platformFeeAmount: (intent.platformFeeAmountMinor ?? 0n).toString(),
+              fiatAmountMinor: intent.fiatAmountMinor.toString(),
+              fiatCurrency: intent.fiatCurrency,
+              exchangeRateId: intent.exchangeRateId.toString(),
+              expiresAt: Math.floor(intent.expiresAt.getTime() / 1000).toString(),
+            },
+            quoteSignatureSvm: Buffer.from(intent.quoteSignature).toString("base64"),
+            backendSignerPubkey: this.svmSignerKeypair?.publicKeyBase58,
+          }
+        : {}),
     };
   }
 
@@ -1078,9 +1385,9 @@ export class IntentsService {
   async submitOnchain(args: {
     intentId: string;
     txHash: string;
-    chainId: number;
+    blockchainId: string;
   }): Promise<NanopaySubmitResponseDto> {
-    const { intentId, txHash, chainId } = args;
+    const { intentId, txHash, blockchainId } = args;
 
     const intent = await this.prisma.paymentIntent.findUnique({
       where: { id: intentId },
@@ -1101,10 +1408,13 @@ export class IntentsService {
       });
     }
 
-    if (intent.nanopayUsdcSourceChainId === null || chainId !== intent.nanopayUsdcSourceChainId) {
+    const blockchain = await this.prisma.blockchain.findUnique({
+      where: { id: blockchainId },
+    });
+    if (!blockchain) {
       throw new BadRequestException({
-        message: `chainId ${chainId} does not match intent source chain ${intent.nanopayUsdcSourceChainId ?? "null"}.`,
-        code: "ONCHAIN_CHAIN_MISMATCH",
+        message: `Blockchain ${blockchainId} not found.`,
+        code: "ONCHAIN_BLOCKCHAIN_NOT_FOUND",
       });
     }
 
@@ -1128,7 +1438,8 @@ export class IntentsService {
         data: {
           intentId,
           txHash,
-          chainId,
+          chainId: blockchain.chainId,
+          cluster: blockchain.solanaCluster,
           verifiedAt: new Date(),
         },
       });
@@ -2024,6 +2335,7 @@ export class IntentsService {
     row: {
       id: string;
       status: PaymentIntentStatus;
+      path: string;
       nanopayUsdcAmountMicros: bigint | null;
       nanopayUsdcSourceChainId: number | null;
       nanopayUsdcTreasuryAddress: string | null;
@@ -2100,6 +2412,7 @@ export class IntentsService {
     return {
       id: row.id,
       status: DB_TO_MOBILE_STATUS[row.status],
+      path: row.path,
       nanopayUsdcAmountMicros: (row.nanopayUsdcAmountMicros ?? 0n).toString(),
       nanopayUsdcSourceChainId: chainId,
       nanopayUsdcTreasuryAddress: row.nanopayUsdcTreasuryAddress ?? "",
@@ -2290,4 +2603,36 @@ function hexToBytes(hex: string): Uint8Array {
 function truncateMessage(message: string | undefined): string | null {
   if (!message) return null;
   return message.length > 500 ? `${message.slice(0, 497)}…` : message;
+}
+
+function extractQrisPan(payload: string): string | null {
+  if (!payload.startsWith("000201")) return null;
+  let i = 0;
+  while (i + 4 <= payload.length) {
+    const tag = payload.slice(i, i + 2);
+    const lenStr = payload.slice(i + 2, i + 4);
+    if (!/^\d{2}$/.test(tag) || !/^\d{2}$/.test(lenStr)) return null;
+    const len = Number.parseInt(lenStr, 10);
+    const start = i + 4;
+    const end = start + len;
+    if (end > payload.length) return null;
+    const tagNum = Number.parseInt(tag, 10);
+    if (tagNum >= 26 && tagNum <= 51) {
+      let j = 0;
+      const sub = payload.slice(start, end);
+      while (j + 4 <= sub.length) {
+        const subTag = sub.slice(j, j + 2);
+        const subLenStr = sub.slice(j + 2, j + 4);
+        if (!/^\d{2}$/.test(subTag) || !/^\d{2}$/.test(subLenStr)) break;
+        const subLen = Number.parseInt(subLenStr, 10);
+        const subStart = j + 4;
+        const subEnd = subStart + subLen;
+        if (subEnd > sub.length) break;
+        if (subTag === "01") return sub.slice(subStart, subEnd);
+        j = subEnd;
+      }
+    }
+    i = end;
+  }
+  return null;
 }

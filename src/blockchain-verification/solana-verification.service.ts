@@ -310,6 +310,10 @@ export class SolanaVerificationService implements OnModuleInit {
     return deposit;
   }
 
+  getSignerPublicKey(): string | null {
+    return this.signerKeypair?.publicKey.toBase58() ?? null;
+  }
+
   signMerchantQuote(params: MerchantQuoteParams): Uint8Array {
     if (!this.signerKeypair)
       throw new Error("Solana quote signer not configured");

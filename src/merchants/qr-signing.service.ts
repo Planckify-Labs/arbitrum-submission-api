@@ -1,11 +1,12 @@
-import { type KeyObject, createPrivateKey } from "node:crypto";
+import { type KeyObject, createPrivateKey, createPublicKey } from "node:crypto";
 import {
+  BadRequestException,
   Injectable,
   Logger,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { type JWK, SignJWT } from "jose";
+import { type JWK, SignJWT, importSPKI, jwtVerify } from "jose";
 
 /**
  * JWS-signing pipeline for TakumiPay merchant QRs (§4.4).
@@ -103,6 +104,46 @@ export class QrSigningService {
    */
   setTestPrivateKey(key: KeyObject): void {
     this.cachedKey = key;
+  }
+
+  async verifyAndExtractMerchantId(scannedPayload: string): Promise<string> {
+    const prefix = "takumipay:v1:";
+    if (!scannedPayload.startsWith(prefix)) {
+      throw new BadRequestException({
+        message: "scannedPayload must start with 'takumipay:v1:'.",
+        code: "INVALID_QR_FORMAT",
+      });
+    }
+    const jws = scannedPayload.slice(prefix.length);
+    const publicKey = this.loadPublicKey();
+    const publicPem = publicKey
+      .export({ format: "pem", type: "spki" })
+      .toString();
+    const key = await importSPKI(publicPem, "ES256");
+    try {
+      const { payload } = await jwtVerify(jws, key, {
+        algorithms: ["ES256"],
+      });
+      const merchantId = payload.merchantId;
+      if (typeof merchantId !== "string") {
+        throw new BadRequestException({
+          message: "JWS payload missing merchantId claim.",
+          code: "INVALID_QR_CLAIMS",
+        });
+      }
+      return merchantId;
+    } catch (err) {
+      if (err instanceof BadRequestException) throw err;
+      throw new BadRequestException({
+        message: "QR signature verification failed.",
+        code: "QR_SIGNATURE_INVALID",
+      });
+    }
+  }
+
+  private loadPublicKey(): KeyObject {
+    const privateKey = this.loadPrivateKey();
+    return createPublicKey(privateKey);
   }
 
   /**

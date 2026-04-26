@@ -10,7 +10,7 @@ export class SmartContractResponseDto {
 
   @ApiProperty({
     description: "The name of the smart contract",
-    example: "USDT Token Contract",
+    example: "Payment Processor",
   })
   name: string;
 
@@ -26,16 +26,10 @@ export class SmartContractResponseDto {
   blockchainId: string;
 
   @ApiProperty({
-    description: "The contract address on the blockchain",
-    example: "0x...",
+    description: "The contract address or program ID on the blockchain",
+    example: "0x... or Base58 program ID",
   })
   address: string;
-
-  @ApiProperty({
-    description: "The ABI ID for the contract",
-    example: "01H1G5V...",
-  })
-  abiId: string;
 
   @ApiProperty({
     description: "Whether the contract is active",

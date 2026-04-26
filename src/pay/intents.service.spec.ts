@@ -10,6 +10,7 @@ import type { X402SupportedService } from "../x402/x402-supported.service";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { ValkeyService } from "../valkey/valkey.service";
 import type { ConfigService } from "@nestjs/config";
+import type { QrSigningService } from "../merchants/qr-signing.service";
 
 /**
  * Stub for `X402SupportedService`. We inject a ready-to-go Arc entry so
@@ -169,6 +170,8 @@ function buildService(overrides: {
     circleSettle as any,
     null, // payoutProvider — optional, null is valid.
     blockchainVerification as any,
+    null, // circleSettleSvm
+    {} as unknown as QrSigningService,
   );
   return { svc, prisma, x402, valkey, config, circleSettle, blockchainVerification, bcCache };
 }

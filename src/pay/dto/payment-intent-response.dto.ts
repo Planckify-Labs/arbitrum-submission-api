@@ -115,6 +115,12 @@ export class PaymentIntentResponseDto {
   })
   status!: "pending" | "submitting" | "settling" | "paid" | "paid_out" | "failed" | "expired";
 
+  @ApiPropertyOptional({
+    description: "Settlement path. Drives the mobile pay-path selector.",
+    enum: ["nanopay", "x402", "takumipay"],
+  })
+  path?: string;
+
   @ApiProperty({
     description: "USDC atomic (6-decimal) amount. Decimal string to survive JSON bigint precision loss.",
   })
@@ -216,4 +222,40 @@ export class PaymentIntentResponseDto {
       "Passed verbatim as the `signature` arg to the on-chain `payWithQuote` function.",
   })
   quoteSignature?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "EVM smart contract address for onchain settlement. Populated from the active SmartContract on the source token's blockchain.",
+  })
+  contractAddress?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "Solana program ID (base58) for TakumiPay onchain settlement. Populated from `blockchain.takumiPayProgramId`.",
+  })
+  programId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "Source token's blockchain ULID. Mobile uses this to fetch the payment contract via `GET /smart-contracts/search?blockchainId=`.",
+  })
+  blockchainId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "Solana quote commitment struct for TakumiPay onchain settlement. Populated for SVM intents.",
+  })
+  quoteCommitmentSvm?: Record<string, string>;
+
+  @ApiPropertyOptional({
+    description:
+      "Base64-encoded Ed25519 signature over quoteCommitmentSvm, signed by the platform's Solana quote signer.",
+  })
+  quoteSignatureSvm?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "Base58 public key of the backend quote signer. The on-chain program verifies signatures against this key.",
+  })
+  backendSignerPubkey?: string;
 }

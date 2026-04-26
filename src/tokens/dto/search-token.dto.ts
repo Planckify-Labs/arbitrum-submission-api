@@ -50,4 +50,10 @@ export class SearchTokenDto {
   @IsBoolean()
   @Transform(toBool)
   isNativeCurrency?: boolean;
+
+  @ApiProperty({ example: true, required: false })
+  @IsOptional()
+  @IsBoolean()
+  @Transform(toBool)
+  isPaymentEnabled?: boolean;
 }

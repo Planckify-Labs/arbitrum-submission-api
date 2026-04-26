@@ -3,7 +3,6 @@ import {
   IsString,
   IsBoolean,
   IsOptional,
-  IsEthereumAddress,
   IsInt,
 } from "class-validator";
 import { Transform } from "class-transformer";
@@ -61,22 +60,13 @@ export class SearchSmartContractDto {
   isBlockchainEVM?: boolean;
 
   @ApiProperty({
-    description: "Search by contract address",
-    example: "0x...",
-    required: false,
-  })
-  @IsEthereumAddress()
-  @IsOptional()
-  address?: string;
-
-  @ApiProperty({
-    description: "Filter by ABI ID",
-    example: "01H1G5V...",
+    description: "Search by contract address or program ID",
+    example: "0x... or Base58 program ID",
     required: false,
   })
   @IsString()
   @IsOptional()
-  abiId?: string;
+  address?: string;
 
   @ApiProperty({
     description: "Filter by active status",

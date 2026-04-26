@@ -13,6 +13,7 @@ import {
 } from "@nestjs/common";
 import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { ApiKey } from "../decorators/api-key.decorator";
 import { Public } from "../decorators/public.decorator";
 import { ChannelResponseDto } from "./dto/channel-response.dto";
 import { CreateMerchantDto } from "./dto/create-merchant.dto";
@@ -76,15 +77,15 @@ export class MerchantsController {
   }
 
   @Post("signup")
+  @Public()
+  @ApiKey()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: "Create merchant profile + sign JWS QR." })
   @ApiResponse({ status: 201, type: MerchantWithQrResponseDto })
   async signup(
     @Body() dto: CreateMerchantDto,
-    @Request() req: AuthedRequest,
   ): Promise<MerchantWithQrResponseDto> {
-    const userId = this.requireUserId(req);
-    return this.merchantsService.signup(userId, dto);
+    return this.merchantsService.signup(dto);
   }
 
   @Get("me")

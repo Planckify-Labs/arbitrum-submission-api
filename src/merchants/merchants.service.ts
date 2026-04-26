@@ -57,39 +57,12 @@ export class MerchantsService {
       this.config?.get<string>("DEFAULT_PAYOUT_PROVIDER") ?? "duitku";
   }
 
-  /**
-   * Create the merchant row for the authenticated user + sign its JWS.
-   * 409 if the QRIS PAN is already claimed. 400 on unknown channel code.
-   */
-  async signup(
-    userId: string,
-    dto: CreateMerchantDto,
-  ): Promise<MerchantWithQrResponseDto> {
-    // Channel validation first — if the code is bogus we fail before
-    // touching the DB or the signer. Filter-at-source (memory
-    // `feedback_filter_at_source.md`): the channel whitelist is the
-    // `Channel` table join, not a duplicated constant.
+  async signup(dto: CreateMerchantDto): Promise<MerchantWithQrResponseDto> {
     const channel = await this.findActiveChannel(
       dto.payoutChannel,
       dto.countryCode,
     );
     this.validateAccountFormat(dto.payoutAccountNumber, channel.accountFormat);
-
-    // Fail-fast duplicate guards so we return sharp errors instead of
-    // relying on P2002 surfaces (which are harder to map to pointer-rich
-    // error bodies). The DB still has the authoritative unique, so the
-    // transaction below is race-safe.
-    const existingForUser = await this.prisma.merchant.findUnique({
-      where: { userId },
-      select: { id: true },
-    });
-    if (existingForUser) {
-      throw new ConflictException({
-        message:
-          "Merchant profile already exists for this user. Use PATCH /v1/merchants/me to update.",
-        code: "MERCHANT_ALREADY_EXISTS",
-      });
-    }
 
     if (dto.qrisLink?.qrisPan) {
       const claimed = await this.prisma.merchant.findFirst({
@@ -133,7 +106,6 @@ export class MerchantsService {
         const merchant = await tx.merchant.create({
           data: {
             id: merchantId,
-            userId,
             displayName: dto.displayName,
             contactPhone: dto.contactPhone ?? "",
             country: dto.countryCode,
@@ -414,26 +386,33 @@ export class MerchantsService {
     return row;
   }
 
-  /**
-   * Validate the account number against the channel's `accountFormat`
-   * regex (stored as a string — anchors are expected inside the regex).
-   */
   private validateAccountFormat(account: string, format: string): void {
-    let re: RegExp;
-    try {
-      re = new RegExp(format);
-    } catch {
-      this.logger.warn(
-        `Channel accountFormat is not a valid regex: '${format}'`,
-      );
-      return; // Don't block the merchant for a malformed seed row.
-    }
+    const re = this.formatToRegex(format);
+    if (!re) return;
     if (!re.test(account)) {
       throw new BadRequestException({
         message:
           "Payout account number doesn't match the expected format for this channel.",
         code: "PAYOUT_ACCOUNT_FORMAT_INVALID",
       });
+    }
+  }
+
+  private formatToRegex(format: string): RegExp | null {
+    if (format === "phone_id") {
+      return /^(\+62\d{8,12}|08\d{8,11})$/;
+    }
+    const digitsMatch = format.match(/^digits:(\d+)$/);
+    if (digitsMatch) {
+      return new RegExp(`^\\d{${digitsMatch[1]}}$`);
+    }
+    try {
+      return new RegExp(format);
+    } catch {
+      this.logger.warn(
+        `Channel accountFormat is not a valid regex: '${format}'`,
+      );
+      return null;
     }
   }
 
@@ -510,6 +489,5 @@ function generateUlid(): string {
  */
 function isUniqueConstraintError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
-  const e = err as { code?: string; name?: string };
-  return e.code === "P2002" || e.name === "PrismaClientKnownRequestError";
+  return (err as { code?: string }).code === "P2002";
 }

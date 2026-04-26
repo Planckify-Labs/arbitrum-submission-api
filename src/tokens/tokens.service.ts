@@ -194,6 +194,7 @@ export class TokensService {
       isStablecoin,
       isActive,
       isNativeCurrency,
+      isPaymentEnabled,
     } = searchParams;
 
     const where: Prisma.TokenWhereInput = {};
@@ -227,6 +228,10 @@ export class TokensService {
 
     if (typeof isNativeCurrency !== "undefined") {
       where.isNativeCurrency = isNativeCurrency;
+    }
+
+    if (typeof isPaymentEnabled !== "undefined") {
+      where.isPaymentEnabled = isPaymentEnabled;
     }
 
     const result = await this.prisma.token.findMany({

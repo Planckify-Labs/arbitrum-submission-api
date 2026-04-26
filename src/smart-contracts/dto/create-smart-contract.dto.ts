@@ -1,15 +1,10 @@
 import { ApiProperty } from "@nestjs/swagger";
-import {
-  IsString,
-  IsBoolean,
-  IsOptional,
-  IsEthereumAddress,
-} from "class-validator";
+import { IsString, IsBoolean, IsOptional } from "class-validator";
 
 export class CreateSmartContractDto {
   @ApiProperty({
     description: "The name of the smart contract",
-    example: "USDT Token Contract",
+    example: "Payment Processor",
   })
   @IsString()
   name: string;
@@ -22,18 +17,11 @@ export class CreateSmartContractDto {
   blockchainId: string;
 
   @ApiProperty({
-    description: "The contract address on the blockchain",
-    example: "0x...",
-  })
-  @IsEthereumAddress()
-  address: string;
-
-  @ApiProperty({
-    description: "The ABI ID for the contract",
-    example: "01H1G5V...",
+    description: "The contract address or program ID on the blockchain",
+    example: "0x... or Base58 program ID",
   })
   @IsString()
-  abiId: string;
+  address: string;
 
   @ApiProperty({
     description: "Whether the contract is active",

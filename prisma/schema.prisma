@@ -333,30 +333,16 @@ model VendorAPI {
 }
 
 model SmartContract {
-  id           String      @id @default(ulid())
+  id           String     @id @default(ulid())
   name         String
-  blockchain   Blockchain  @relation(fields: [blockchainId], references: [id])
+  blockchain   Blockchain @relation(fields: [blockchainId], references: [id])
   blockchainId String
   address      String
-  abi          ContractABI @relation(fields: [abiId], references: [id])
-  abiId        String
-  isActive     Boolean     @default(true)
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  isActive     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
 
   @@unique([blockchainId, address])
-}
-
-model ContractABI {
-  id          String          @id @default(ulid())
-  name        String          @unique
-  description String?
-  version     String?
-  abi         Json
-  isVerified  Boolean         @default(false)
-  contracts   SmartContract[]
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
 }
 
 enum TransactionType {
@@ -812,6 +798,7 @@ enum PaymentIntentPath {
   nanopay
   x402
   direct_arc
+  takumipay
 }
 
 enum GaslessMode {
@@ -848,8 +835,8 @@ enum QrisClaimDisputeStatus {
 
 model Merchant {
   id                      String    @id @default(ulid())
-  user                    User      @relation(fields: [userId], references: [id])
-  userId                  String    @unique
+  user                    User?     @relation(fields: [userId], references: [id])
+  userId                  String?   @unique
   displayName             String
   contactPhone            String
   country                 String    @db.Char(2)

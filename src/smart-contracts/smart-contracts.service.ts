@@ -1,7 +1,6 @@
 import {
   Injectable,
   NotFoundException,
-  ConflictException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateSmartContractDto } from "./dto/create-smart-contract.dto";
@@ -10,8 +9,6 @@ import { SearchSmartContractDto } from "./dto/search-smart-contract.dto";
 import { Prisma } from "@generated/prisma";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import { SmartContractCacheService } from "../valkey/services/smart-contract-cache.service";
-import { CreateContractAbiDto } from "./dto/contract-abi.dto";
-import { UpdateContractAbiDto } from "./dto/contract-abi.dto";
 
 @Injectable()
 export class SmartContractsService {
@@ -25,7 +22,6 @@ export class SmartContractsService {
       data: createSmartContractDto,
       include: {
         blockchain: true,
-        abi: true,
       },
     });
   }
@@ -40,7 +36,6 @@ export class SmartContractsService {
         cursor: cursor ? { id: cursor } : undefined,
         include: {
           blockchain: true,
-          abi: true,
         },
         orderBy: [
           {
@@ -68,7 +63,6 @@ export class SmartContractsService {
       chainId,
       isBlockchainEVM,
       address,
-      abiId,
       isActive,
     } = searchParams;
 
@@ -85,7 +79,6 @@ export class SmartContractsService {
       where.blockchainId = blockchainId;
     }
 
-    // Add blockchain-related filters
     const blockchainWhere: Prisma.BlockchainWhereInput = {};
     let hasBlockchainFilters = false;
 
@@ -115,10 +108,6 @@ export class SmartContractsService {
       where.address = address;
     }
 
-    if (abiId) {
-      where.abiId = abiId;
-    }
-
     if (isActive !== undefined) {
       where.isActive = isActive;
     }
@@ -130,7 +119,6 @@ export class SmartContractsService {
       where,
       include: {
         blockchain: true,
-        abi: true,
       },
       orderBy: [
         {
@@ -151,7 +139,6 @@ export class SmartContractsService {
         where: { id },
         include: {
           blockchain: true,
-          abi: true,
         },
       }),
     );
@@ -174,7 +161,6 @@ export class SmartContractsService {
         },
         include: {
           blockchain: true,
-          abi: true,
         },
         orderBy: {
           createdAt: 'desc',
@@ -196,10 +182,8 @@ export class SmartContractsService {
         data: updateSmartContractDto,
         include: {
           blockchain: true,
-          abi: true,
         },
       });
-      // Invalidate cache after update
       await this.contractCache.invalidateContract(id);
       return result;
     } catch (error) {
@@ -218,7 +202,6 @@ export class SmartContractsService {
       await this.prisma.smartContract.delete({
         where: { id },
       });
-      // Invalidate cache after delete
       await this.contractCache.invalidateContract(id);
     } catch (error) {
       if (
@@ -231,44 +214,6 @@ export class SmartContractsService {
     }
   }
 
-  async findAllAbis() {
-    return this.prisma.contractABI.findMany({
-      orderBy: { name: "asc" },
-    });
-  }
-
-  async findAbiById(id: string) {
-    const abi = await this.prisma.contractABI.findUnique({ where: { id } });
-    if (!abi) throw new NotFoundException(`Contract ABI ${id} not found`);
-    return abi;
-  }
-
-  async createAbi(dto: CreateContractAbiDto) {
-    return this.prisma.contractABI.create({ data: dto as any });
-  }
-
-  async updateAbi(id: string, dto: UpdateContractAbiDto) {
-    await this.findAbiById(id);
-    return this.prisma.contractABI.update({ where: { id }, data: dto as any });
-  }
-
-  async deleteAbi(id: string) {
-    await this.findAbiById(id);
-    const count = await this.prisma.smartContract.count({
-      where: { abiId: id },
-    });
-    if (count > 0) {
-      throw new ConflictException(
-        `Cannot delete ABI: ${count} smart contracts reference it`,
-      );
-    }
-    await this.prisma.contractABI.delete({ where: { id } });
-  }
-
-  /**
-   * Find smart contract by blockchain ID and address (hot path for purchase verification)
-   * Uses cache for optimal performance
-   */
   async findByBlockchainAndAddress(blockchainId: string, address: string) {
     return this.contractCache.getByBlockchainAndAddress(
       blockchainId,
@@ -281,7 +226,6 @@ export class SmartContractsService {
           },
           include: {
             blockchain: true,
-            abi: true,
           },
         }),
     );
