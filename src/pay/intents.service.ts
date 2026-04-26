@@ -22,6 +22,7 @@ import { BlockchainVerificationService } from "../blockchain-verification/blockc
 import * as nacl from "tweetnacl";
 import { QrSigningService } from "../merchants/qr-signing.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { TransactionsService } from "../transactions/transactions.service";
 import { BlockchainCacheService } from "../valkey/services/blockchain-cache.service";
 import { ValkeyService } from "../valkey/valkey.service";
 import { X402SupportedService } from "../x402/x402-supported.service";
@@ -217,6 +218,7 @@ export class IntentsService {
     @Inject(CIRCLE_SETTLE_SVM_CLIENT)
     private readonly circleSettleSvm: ICircleSettleSvmClient | null = null,
     private readonly qrSigning: QrSigningService,
+    private readonly transactionsService: TransactionsService,
   ) {
     const raw = this.config.get<string>("SOLANA_QUOTE_SIGNER_PRIVATE_KEY");
     if (raw) {
@@ -1459,6 +1461,8 @@ export class IntentsService {
       });
     }
 
+    this.recordMerchantPayment(intent, txHash);
+
     return {
       status: "SETTLED",
       intentId,
@@ -1525,7 +1529,18 @@ export class IntentsService {
    * symmetric with the EVM rail.
    */
   private async persistSvmOutcome(args: {
-    intent: { id: string; status: PaymentIntentStatus };
+    intent: {
+      id: string;
+      status: PaymentIntentStatus;
+      payerUserId: string | null;
+      sourceTokenId: string | null;
+      nanopayUsdcAmountMicros: bigint | null;
+      fiatAmountMinor: number;
+      fiatCurrency: string;
+      nanopayUsdcTreasuryAddress: string | null;
+      merchant: { displayName: string };
+      payer: { walletAddress: string | null } | null;
+    };
     fingerprint: Uint8Array;
     submittedAt: Date;
     outcome: CircleSettleSvmOutcome;
@@ -1557,6 +1572,7 @@ export class IntentsService {
       });
 
       this.kickPayout(intent.id);
+      this.recordMerchantPayment(intent);
       return this.toSubmissionResponse(intent.id, submission);
     }
 
@@ -2053,7 +2069,18 @@ export class IntentsService {
    * the worst thing that can happen to reconciliation.
    */
   private async persistOutcome(args: {
-    intent: { id: string; status: PaymentIntentStatus };
+    intent: {
+      id: string;
+      status: PaymentIntentStatus;
+      payerUserId: string | null;
+      sourceTokenId: string | null;
+      nanopayUsdcAmountMicros: bigint | null;
+      fiatAmountMinor: number;
+      fiatCurrency: string;
+      nanopayUsdcTreasuryAddress: string | null;
+      merchant: { displayName: string };
+      payer: { walletAddress: string | null } | null;
+    };
     signature: Uint8Array;
     submittedAt: Date;
     outcome: CircleSettleOutcome;
@@ -2079,11 +2106,8 @@ export class IntentsService {
         return created;
       });
 
-      // Fire-and-forget payout trigger. Task 29 (`XenditPayoutProvider`)
-      // lands this; until then the provider is null and we just log the
-      // TODO. Any throw from a present provider is swallowed — the intent
-      // is settled regardless (task 30's webhook flips PAID_OUT).
       this.kickPayout(intent.id);
+      this.recordMerchantPayment(intent);
 
       return this.toSubmissionResponse(intent.id, submission);
     }
@@ -2215,6 +2239,49 @@ export class IntentsService {
         `PayoutProvider.trigger threw synchronously for intent ${intentId}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
+  }
+
+  /**
+   * Fire-and-forget: write a `TransactionHistory` row for a settled
+   * merchant payment so the user sees it in their activity feed.
+   * Swallowed on failure — the intent settlement is already committed;
+   * a missing history row is recoverable via backfill, a rolled-back
+   * settlement is not.
+   */
+  private recordMerchantPayment(intent: {
+    id: string;
+    payerUserId: string | null;
+    sourceTokenId: string | null;
+    nanopayUsdcAmountMicros: bigint | null;
+    fiatAmountMinor: number;
+    fiatCurrency: string;
+    merchant: { displayName: string };
+    payer: { walletAddress: string | null } | null;
+    nanopayUsdcTreasuryAddress: string | null;
+  }, txHash?: string): void {
+    if (!intent.payerUserId || !intent.sourceTokenId) return;
+
+    const amount = intent.nanopayUsdcAmountMicros?.toString() ?? "0";
+
+    this.transactionsService
+      .create(intent.payerUserId, {
+        tokenId: intent.sourceTokenId,
+        type: "PAYMENT" as any,
+        status: "COMPLETED" as any,
+        amount,
+        amountInFiat: intent.fiatAmountMinor.toString(),
+        fiatCurrency: intent.fiatCurrency,
+        txHash: txHash ?? undefined,
+        fromAddress: intent.payer?.walletAddress ?? undefined,
+        toAddress: intent.nanopayUsdcTreasuryAddress ?? undefined,
+        merchantName: intent.merchant.displayName,
+        paymentIntentId: intent.id,
+      })
+      .catch((err) => {
+        this.logger.error(
+          `Failed to record transaction history for intent=${intent.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
   }
 
   /** Map a persisted NanopaySubmission row to the wire response. */

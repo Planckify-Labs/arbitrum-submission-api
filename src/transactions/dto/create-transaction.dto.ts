@@ -53,4 +53,14 @@ export class CreateTransactionDto {
   @IsOptional()
   @IsString()
   toAddress?: string;
+
+  @ApiProperty({ example: "Warung Pak Budi", required: false })
+  @IsOptional()
+  @IsString()
+  merchantName?: string;
+
+  @ApiProperty({ example: "01H1G5V...", required: false })
+  @IsOptional()
+  @IsString()
+  paymentIntentId?: string;
 }

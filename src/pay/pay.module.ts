@@ -4,6 +4,7 @@ import { BlockchainVerificationModule } from "../blockchain-verification/blockch
 import { MerchantsModule } from "../merchants/merchants.module";
 import { PayoutModule } from "../payout/payout.module";
 import { PrismaModule } from "../prisma/prisma.module";
+import { TransactionsModule } from "../transactions/transactions.module";
 import { ValkeyModule } from "../valkey/valkey.module";
 import { X402Module } from "../x402/x402.module";
 import {
@@ -54,6 +55,7 @@ import { IntentsService } from "./intents.service";
     // `IntentsService` so unit tests can build the service without it.
     BlockchainVerificationModule,
     MerchantsModule,
+    TransactionsModule,
     forwardRef(() => PayoutModule),
   ],
   controllers: [IntentsController],

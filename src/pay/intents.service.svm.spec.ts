@@ -239,6 +239,7 @@ function buildSvmService(overrides: {
     null,
     svmSettle,
     {} as unknown as QrSigningService,
+    { create: jest.fn().mockResolvedValue({}) } as any, // transactionsService
   );
   return { svc, prisma, svmSettle };
 }

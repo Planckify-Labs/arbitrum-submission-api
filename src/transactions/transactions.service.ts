@@ -23,6 +23,8 @@ export class TransactionsService {
         txHash: createTransactionDto.txHash,
         senderAddress: createTransactionDto.fromAddress,
         recipientAddress: createTransactionDto.toAddress,
+        merchantName: createTransactionDto.merchantName,
+        paymentIntentId: createTransactionDto.paymentIntentId,
       },
       include: {
         token: true,
@@ -91,6 +93,61 @@ export class TransactionsService {
     }
 
     return transaction;
+  }
+
+  async findPaymentDetail(id: string) {
+    const transaction = await this.prisma.transactionHistory.findFirst({
+      where: { id },
+      include: {
+        token: {
+          include: {
+            blockchain: true,
+          },
+        },
+      },
+    });
+
+    if (!transaction) {
+      throw new NotFoundException(`Transaction with ID ${id} not found`);
+    }
+
+    if (transaction.type !== "PAYMENT") {
+      throw new NotFoundException(
+        `Transaction ${id} is not a merchant payment`,
+      );
+    }
+
+    let intentDetail: {
+      fiatAmountMinor: number;
+      fiatCurrency: string;
+      merchant: { displayName: string; country: string } | null;
+      createdAt: Date;
+      expiresAt: Date;
+    } | null = null;
+
+    if (transaction.paymentIntentId) {
+      const intent = await this.prisma.paymentIntent.findUnique({
+        where: { id: transaction.paymentIntentId },
+        select: {
+          fiatAmountMinor: true,
+          fiatCurrency: true,
+          createdAt: true,
+          expiresAt: true,
+          merchant: {
+            select: {
+              displayName: true,
+              country: true,
+            },
+          },
+        },
+      });
+      intentDetail = intent;
+    }
+
+    return {
+      ...transaction,
+      intent: intentDetail,
+    };
   }
 
   async updateStatus(id: string, updateTransactionDto: UpdateTransactionDto) {

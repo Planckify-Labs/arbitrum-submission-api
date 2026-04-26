@@ -87,6 +87,12 @@ export class TransactionResponseDto {
   @ApiProperty({ type: () => PurchaseSummaryDto, required: false })
   purchase?: PurchaseSummaryDto;
 
+  @ApiProperty({ example: "Warung Pak Budi", required: false })
+  merchantName?: string;
+
+  @ApiProperty({ example: "01H1G5V...", required: false })
+  paymentIntentId?: string;
+
   @ApiProperty({ example: "2024-03-14T12:00:00.000Z" })
   createdAt: Date;
 

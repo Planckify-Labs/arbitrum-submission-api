@@ -80,6 +80,11 @@ export class TransactionsController {
     );
   }
 
+  @Get("payment/:id")
+  findPaymentDetail(@Param("id") id: string) {
+    return this.transactionsService.findPaymentDetail(id);
+  }
+
   @Get(":id")
   @ApiGetTransaction()
   findOne(@Param("id") id: string) {

@@ -172,6 +172,7 @@ function buildService(overrides: {
     blockchainVerification as any,
     null, // circleSettleSvm
     {} as unknown as QrSigningService,
+    { create: jest.fn().mockResolvedValue({}) } as any, // transactionsService
   );
   return { svc, prisma, x402, valkey, config, circleSettle, blockchainVerification, bcCache };
 }

@@ -254,6 +254,8 @@ model TransactionHistory {
   txHash           String?
   senderAddress    String?
   recipientAddress String?
+  merchantName     String?
+  paymentIntentId  String?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 
@@ -262,6 +264,7 @@ model TransactionHistory {
   @@index([userId, createdAt(sort: Desc)])
   @@index([status, createdAt(sort: Desc)])
   @@index([txHash])
+  @@index([paymentIntentId])
 }
 
 // Note: transactionId/transactionCreatedAt reference the TransactionHistory
