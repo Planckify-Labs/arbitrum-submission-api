@@ -388,9 +388,9 @@ export class IntentsService {
         "",
       );
       if (!treasuryAddress || treasuryAddress.trim().length === 0) {
+        this.logger.error("[createIntent] PLATFORM_TREASURY_ADDRESS_SVM is not set or empty — SVM intents disabled");
         throw new ServiceUnavailableException({
-          message:
-            "PLATFORM_TREASURY_ADDRESS_SVM is not configured; SVM intents are disabled pre-M6.",
+          message: "SVM payment rail is not available on this deployment.",
           code: "SVM_TREASURY_NOT_CONFIGURED",
         });
       }
@@ -402,9 +402,9 @@ export class IntentsService {
         SVM_MAINNET_SENTINEL_CHAIN_ID,
       );
       if (!svmBlockchainRow?.x402FacilitatorUrl) {
+        this.logger.error("[createIntent] x402FacilitatorUrl not set on SVM blockchain row (chainId=SVM_MAINNET_SENTINEL) — SVM intents disabled");
         throw new ServiceUnavailableException({
-          message:
-            "x402FacilitatorUrl not configured for SVM chain; SVM intents are disabled.",
+          message: "SVM payment rail is not available on this deployment.",
           code: "SVM_FACILITATOR_NOT_CONFIGURED",
         });
       }
@@ -438,8 +438,9 @@ export class IntentsService {
         !x402Entry.verifyingContract ||
         !x402Entry.asset
       ) {
+        this.logger.error(`[createIntent] x402 domain not available for chainId=${ARC_TESTNET_CHAIN_ID} — check CIRCLE_X402_SUPPORTED_URL and boot-time fetch`);
         throw new ServiceUnavailableException({
-          message: `x402 domain not available for chainId=${ARC_TESTNET_CHAIN_ID}.`,
+          message: "EVM payment rail is not available on this deployment.",
           code: "X402_DOMAIN_UNAVAILABLE",
         });
       }
@@ -448,8 +449,9 @@ export class IntentsService {
         "PLATFORM_TREASURY_ADDRESS_EVM",
       );
       if (!evmTreasury || !/^0x[0-9a-fA-F]{40}$/.test(evmTreasury)) {
+        this.logger.error("[createIntent] PLATFORM_TREASURY_ADDRESS_EVM is not set or invalid — EVM intents disabled");
         throw new ServiceUnavailableException({
-          message: "PLATFORM_TREASURY_ADDRESS_EVM is not configured.",
+          message: "EVM payment rail is not available on this deployment.",
           code: "TREASURY_NOT_CONFIGURED",
         });
       }
@@ -1147,8 +1149,9 @@ export class IntentsService {
       intent.nanopayUsdcSourceChainId,
     );
     if (!x402Entry || !x402Entry.asset) {
+      this.logger.error(`[submitNanopay] x402 domain not available for chainId=${intent.nanopayUsdcSourceChainId} — check CIRCLE_X402_SUPPORTED_URL and boot-time fetch`);
       throw new ServiceUnavailableException({
-        message: `x402 domain not available for chainId=${intent.nanopayUsdcSourceChainId}.`,
+        message: "Payment rail is not available on this deployment.",
         code: "X402_DOMAIN_UNAVAILABLE",
       });
     }
@@ -1268,8 +1271,9 @@ export class IntentsService {
     if (!this.circleSettleSvm) {
       // Pre-M6 posture — the client is `@Optional()` so the module boots
       // without it, and in that case the SVM rail is simply off.
+      this.logger.error("[submitNanopaySvm] circleSettleSvm client not injected — SVM_SETTLER_PRIVATE_KEY or facilitator URL likely missing");
       throw new ServiceUnavailableException({
-        message: "SVM facilitator is not configured on this deployment.",
+        message: "SVM payment rail is not available on this deployment.",
         code: "SVM_FACILITATOR_NOT_CONFIGURED",
       });
     }
@@ -1337,15 +1341,17 @@ export class IntentsService {
       intent.nanopayUsdcSourceChainId,
     );
     if (!chainRow) {
+      this.logger.error(`[submitNanopaySvm] SVM blockchain row missing for sentinel chainId=${intent.nanopayUsdcSourceChainId} — seed the Blockchain table`);
       throw new ServiceUnavailableException({
-        message: `SVM chain not configured for sentinel=${intent.nanopayUsdcSourceChainId}.`,
+        message: "SVM payment rail is not available on this deployment.",
         code: "SVM_CHAIN_NOT_CONFIGURED",
       });
     }
 
     if (!chainRow.x402FacilitatorUrl) {
+      this.logger.error(`[submitNanopaySvm] x402FacilitatorUrl not set on Blockchain row chainSlug=${chainRow.chainSlug} — update the DB seed`);
       throw new ServiceUnavailableException({
-        message: `x402FacilitatorUrl not configured for chain ${chainRow.chainSlug}.`,
+        message: "SVM payment rail is not available on this deployment.",
         code: "SVM_FACILITATOR_NOT_CONFIGURED",
       });
     }
@@ -1957,14 +1963,16 @@ export class IntentsService {
       }),
     );
     if (!row || !row.isActive) {
+      this.logger.error(`[resolveGatewayWalletContract] chainId=${chainId} not found or inactive in Blockchain table`);
       throw new ServiceUnavailableException({
-        message: `Chain ${chainId} is not configured or not active.`,
+        message: "Payment rail is not available on this deployment.",
         code: "CHAIN_NOT_CONFIGURED",
       });
     }
     if (!row.gatewayWalletContract) {
+      this.logger.error(`[resolveGatewayWalletContract] gatewayWalletContract not set for chainId=${chainId} — update DB seed`);
       throw new ServiceUnavailableException({
-        message: `Chain ${chainId} has no Gateway wallet contract configured.`,
+        message: "Payment rail is not available on this deployment.",
         code: "GATEWAY_WALLET_NOT_CONFIGURED",
       });
     }
@@ -1979,14 +1987,16 @@ export class IntentsService {
       }),
     );
     if (!row || !row.isActive) {
+      this.logger.error(`[resolveFacilitatorUrl] chainId=${chainId} not found or inactive in Blockchain table`);
       throw new ServiceUnavailableException({
-        message: `Chain ${chainId} is not configured or not active.`,
+        message: "Payment rail is not available on this deployment.",
         code: "CHAIN_NOT_CONFIGURED",
       });
     }
     if (!row.x402FacilitatorUrl) {
+      this.logger.error(`[resolveFacilitatorUrl] x402FacilitatorUrl not set for chainId=${chainId} — update DB seed`);
       throw new ServiceUnavailableException({
-        message: `x402FacilitatorUrl not configured for chainId=${chainId}.`,
+        message: "Payment rail is not available on this deployment.",
         code: "FACILITATOR_URL_NOT_CONFIGURED",
       });
     }
