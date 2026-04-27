@@ -41,6 +41,11 @@ services:
       CORE_PAYMENT_API_URL: ${CORE_PAYMENT_API_URL}
       CORE_PAYMENT_API_TIMEOUT: ${CORE_PAYMENT_API_TIMEOUT:-60000}
       CORE_PAYMENT_API_RETRY_COUNT: ${CORE_PAYMENT_API_RETRY_COUNT:-3}
+      # TakumiPay signed-QR private signing key (ES256 P-256). Single-line
+      # PEM with literal \n escapes — the loader normalizes them. Without
+      # this var the merchant signup endpoint returns 503.
+      TAKUMIPAY_QR_PRIVATE_KEY_PEM: ${TAKUMIPAY_QR_PRIVATE_KEY_PEM}
+      TAKUMIPAY_QR_KID: ${TAKUMIPAY_QR_KID:-2026-04-20}
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4000/health"]
       interval: 30s
