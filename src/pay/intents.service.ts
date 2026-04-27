@@ -259,6 +259,10 @@ export class IntentsService {
       });
     }
 
+    this.logger.log(
+      `[createIntent] payer=${payerAddress} merchantId=${dto.merchantId ?? "via-scan"} fiatAmount=${dto.fiatAmountMinor} currency=${dto.currency} chain=${dto.preferredChain ?? "eip155"} idem=${redactKey(idempotencyKey)}`,
+    );
+
     // Idempotency check before any DB writes. A retry that matches the
     // previous body returns the existing intent verbatim — never re-generates
     // the nonce (would break mobile's in-flight signature) and never makes
@@ -324,6 +328,8 @@ export class IntentsService {
       });
     }
 
+    this.logger.log(`[createIntent] merchant resolved id=${merchant.id} name="${merchant.displayName}"`);
+
     // FX snapshot — the spec directs us at USDC→IDR (region=ID). If no row
     // exists yet (task 26 seeds them in M3), we degrade gracefully with a
     // 503 rather than guess a rate or block forever. Mobile surfaces this
@@ -335,6 +341,8 @@ export class IntentsService {
         code: "FX_UNAVAILABLE",
       });
     }
+
+    this.logger.log(`[createIntent] FX snapshot rate=${fx.fxRate} markup=${fx.fxMarkup} from=${fx.fxFromCurrency} to=${fx.fxToCurrency} provider=${fx.fxProvider}`);
 
     const settlementRail = this.config.get<string>(
       "PAYMENT_SETTLEMENT_RAIL",
@@ -568,6 +576,10 @@ export class IntentsService {
       createdAt: Date.now(),
     });
 
+    this.logger.log(
+      `[createIntent] nanopay intent created id=${created.id} usdcMicros=${nanopayUsdcAmountMicros} chainId=${sourceChainId} merchant=${merchant.id} status=QUOTED`,
+    );
+
     return {
       id: created.id,
       status: DB_TO_MOBILE_STATUS[created.status],
@@ -641,6 +653,10 @@ export class IntentsService {
     payerUserId: string | null;
   }): Promise<PaymentIntentResponseDto> {
     const { dto, merchant, fx, idempotencyKey, bodyHash, payerUserId } = args;
+
+    this.logger.log(
+      `[createOnchainIntent] merchant=${merchant.id} fiatAmount=${dto.fiatAmountMinor} currency=${dto.currency} userId=${payerUserId ?? "anonymous"}`,
+    );
 
     const markupMultiplier = addMarkup(fx.fxMarkup);
     const usdcMicros = computeUsdcMicros({
@@ -732,6 +748,10 @@ export class IntentsService {
       intentId: created.id,
       createdAt: Date.now(),
     });
+
+    this.logger.log(
+      `[createOnchainIntent] intent created id=${created.id} usdcMicros=${totalAmount} chainId=${sourceChainId} merchant=${merchant.id} token=${tokenRow.id} status=QUOTED`,
+    );
 
     // Build SVM quote commitment + signature for Solana intents
     let quoteCommitmentSvm: Record<string, string> | undefined;
@@ -1061,6 +1081,8 @@ export class IntentsService {
   }): Promise<NanopaySubmitResponseDto> {
     const { intentId, signature } = args;
 
+    this.logger.log(`[submitNanopay] intentId=${intentId}`);
+
     const intent = await this.prisma.paymentIntent.findUnique({
       where: { id: intentId },
       include: { merchant: true, payer: true },
@@ -1197,7 +1219,11 @@ export class IntentsService {
     );
 
     const submittedAt = new Date();
+    this.logger.log(
+      `[submitNanopay] calling Circle settle for intent=${intentId} usdcMicros=${valueMicros} from=${fromAddress} facilitatorUrl=${facilitatorUrl}`,
+    );
     const outcome = await this.circleSettle.settle(facilitatorUrl, settleBody);
+    this.logger.log(`[submitNanopay] Circle settle returned kind=${outcome.kind} for intent=${intentId}`);
 
     return await this.persistOutcome({
       intent,
@@ -1236,6 +1262,8 @@ export class IntentsService {
     signedTransaction: string;
   }): Promise<NanopaySubmitResponseDto> {
     const { intentId, signedTransaction } = args;
+
+    this.logger.log(`[submitNanopaySvm] intentId=${intentId} txLen=${signedTransaction.length}`);
 
     if (!this.circleSettleSvm) {
       // Pre-M6 posture — the client is `@Optional()` so the module boots
@@ -1363,10 +1391,14 @@ export class IntentsService {
     };
 
     const submittedAt = new Date();
+    this.logger.log(
+      `[submitNanopaySvm] calling SVM facilitator for intent=${intentId} usdcMicros=${intent.nanopayUsdcAmountMicros?.toString()} facilitatorUrl=${chainRow.x402FacilitatorUrl}`,
+    );
     const outcome = await this.circleSettleSvm.settle(
       chainRow.x402FacilitatorUrl,
       { signedTransaction, paymentRequirements },
     );
+    this.logger.log(`[submitNanopaySvm] SVM facilitator returned kind=${outcome.kind} for intent=${intentId}`);
 
     return await this.persistSvmOutcome({
       intent,
@@ -1390,6 +1422,8 @@ export class IntentsService {
     blockchainId: string;
   }): Promise<NanopaySubmitResponseDto> {
     const { intentId, txHash, blockchainId } = args;
+
+    this.logger.log(`[submitOnchain] intentId=${intentId} txHash=${txHash} blockchainId=${blockchainId}`);
 
     const intent = await this.prisma.paymentIntent.findUnique({
       where: { id: intentId },
@@ -1434,6 +1468,7 @@ export class IntentsService {
       };
     }
 
+    this.logger.log(`[submitOnchain] verifying and settling intent=${intentId} txHash=${txHash}`);
     // Record the onchain settlement and flip the intent status.
     await this.prisma.$transaction(async (tx) => {
       await tx.onchainSettlement.create({
@@ -1450,6 +1485,8 @@ export class IntentsService {
         data: { status: "SETTLED" },
       });
     });
+
+    this.logger.log(`[submitOnchain] intent=${intentId} SETTLED txHash=${txHash}`);
 
     // Fire-and-forget payout trigger (same pattern as submitNanopay).
     if (this.payoutProvider) {
@@ -2106,6 +2143,9 @@ export class IntentsService {
         return created;
       });
 
+      this.logger.log(
+        `[persistOutcome] intent=${intent.id} SETTLED circleUuid=${outcome.response.transaction ?? "n/a"} merchant="${intent.merchant.displayName}" usdcMicros=${intent.nanopayUsdcAmountMicros?.toString()}`,
+      );
       this.kickPayout(intent.id);
       this.recordMerchantPayment(intent);
 
@@ -2259,7 +2299,16 @@ export class IntentsService {
     payer: { walletAddress: string | null } | null;
     nanopayUsdcTreasuryAddress: string | null;
   }, txHash?: string): void {
-    if (!intent.payerUserId || !intent.sourceTokenId) return;
+    if (!intent.payerUserId || !intent.sourceTokenId) {
+      this.logger.warn(
+        `[recordMerchantPayment] skipping intent=${intent.id} — missing payerUserId=${intent.payerUserId ?? "null"} or sourceTokenId=${intent.sourceTokenId ?? "null"}`,
+      );
+      return;
+    }
+
+    this.logger.log(
+      `[recordMerchantPayment] intent=${intent.id} userId=${intent.payerUserId} merchant="${intent.merchant.displayName}" usdcMicros=${intent.nanopayUsdcAmountMicros?.toString()} fiat=${intent.fiatAmountMinor}${intent.fiatCurrency} txHash=${txHash ?? "n/a"}`,
+    );
 
     const amount = intent.nanopayUsdcAmountMicros?.toString() ?? "0";
 
