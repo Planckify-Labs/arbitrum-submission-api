@@ -3,6 +3,7 @@ import {
   BadRequestException,
   Injectable,
   Logger,
+  type OnModuleInit,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -44,11 +45,40 @@ import { type JWK, SignJWT, importSPKI, jwtVerify } from "jose";
  * stickers — a fresh JWS can ship with the same merchantId payload.
  */
 @Injectable()
-export class QrSigningService {
+export class QrSigningService implements OnModuleInit {
   private readonly logger = new Logger(QrSigningService.name);
   private cachedKey: KeyObject | null = null;
 
   constructor(private readonly config: ConfigService) {}
+
+  /**
+   * Eagerly probe the signing key on boot so the deploy logs surface a
+   * loud, visible error if the env var is missing or malformed — without
+   * waiting for the first signup request to fail with a 503. We don't
+   * `throw` here because tests intentionally boot the module without a
+   * key and inject one via `setTestPrivateKey()`.
+   */
+  onModuleInit(): void {
+    const kid = this.config.get<string>("TAKUMIPAY_QR_KID") ?? "2026-04-20";
+    try {
+      const key = this.loadPrivateKey();
+      this.logger.log(
+        `\x1b[32m✓ TAKUMIPAY_QR_PRIVATE_KEY_PEM loaded (kid=${kid}, type=${key.asymmetricKeyType})\x1b[0m`,
+      );
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : "unknown";
+      const banner = "═".repeat(72);
+      // ANSI red + bold for visibility in deploy/dokploy log streams.
+      this.logger.error(
+        `\x1b[31m\x1b[1m\n${banner}\n` +
+          `✗ TAKUMIPAY_QR_PRIVATE_KEY_PEM NOT LOADED — merchant signup will 503!\n` +
+          `  reason: ${reason}\n` +
+          `  expected: ES256 P-256 PEM in env (literal newlines OR \\n escapes)\n` +
+          `  kid: ${kid}\n` +
+          `${banner}\x1b[0m`,
+      );
+    }
+  }
 
   /**
    * Sign a merchant-QR payload and return the full `takumipay:v1:...` wire
