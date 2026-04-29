@@ -32,6 +32,9 @@ import { PayModule } from "./pay/pay.module";
 import { PayoutModule } from "./payout/payout.module";
 import { MerchantsModule } from "./merchants/merchants.module";
 import { QrisDisputesModule } from "./admin/qris-disputes/qris-disputes.module";
+import { AdminMerchantsModule } from "./admin/merchants/admin-merchants.module";
+import { AdminPaymentIntentsModule } from "./admin/payment-intents/admin-payment-intents.module";
+import { AuditLogsModule } from "./admin/audit-logs/audit-logs.module";
 import { UserOpModule } from "./userop/userop.module";
 import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 import { JwtAuthGuard } from "./auth/guards/jwt-auth.guard";
@@ -74,6 +77,9 @@ import { InvalidateCacheInterceptor } from "./valkey/interceptors/invalidate-cac
     PayoutModule,
     MerchantsModule,
     QrisDisputesModule,
+    AdminMerchantsModule,
+    AdminPaymentIntentsModule,
+    AuditLogsModule,
     UserOpModule,
   ],
   controllers: [AppController],

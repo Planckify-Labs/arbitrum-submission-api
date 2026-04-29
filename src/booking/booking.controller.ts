@@ -9,7 +9,9 @@ import {
   UseGuards,
   Request,
   ForbiddenException,
+  Res,
 } from "@nestjs/common";
+import type { Response } from "express";
 import { ApiTags } from "@nestjs/swagger";
 import { BookingService } from "./booking.service";
 import { CreateBookingDto } from "./dto/booking.dto";
@@ -38,8 +40,13 @@ export class BookingController {
   @UseGuards(JwtAuthGuard)
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @ApiOperation({ summary: "List all bookings (Admin only)" })
-  findAllAdmin(@Query() query: BookingQueryDto) {
-    return this.bookingService.findAllAdmin(query);
+  async findAllAdmin(
+    @Query() query: BookingQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { items, total } = await this.bookingService.findAllAdmin(query);
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Post()

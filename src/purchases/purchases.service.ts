@@ -316,23 +316,33 @@ export class PurchasesService {
   }
 
   async findAll(paginationDto: CursorPaginationDto) {
-    const { cursor, take = 10 } = paginationDto;
+    const { cursor, take = 10, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
 
-    return await this.prisma.purchase.findMany({
+    const findArgs = {
       take,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
-      include: {
-        productVariant: {
-          include: {
-            product: true,
+      skip: useSkip ? skip : cursor ? 1 : 0,
+      cursor: useSkip ? undefined : cursor ? { id: cursor } : undefined,
+    };
+
+    const [items, total] = await Promise.all([
+      this.prisma.purchase.findMany({
+        ...findArgs,
+        include: {
+          productVariant: {
+            include: {
+              product: true,
+            },
           },
         },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+        orderBy: {
+          createdAt: "desc",
+        },
+      }),
+      this.prisma.purchase.count(),
+    ]);
+
+    return { items, total };
   }
 
   async findOne(id: string, options?: { vendorResponse?: boolean }) {
@@ -444,7 +454,8 @@ export class PurchasesService {
     searchParams: SearchPurchaseDto,
     paginationDto: CursorPaginationDto,
   ) {
-    const { cursor, take = 10 } = paginationDto;
+    const { cursor, take = 10, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
     const {
       userId,
       transactionId,
@@ -470,58 +481,72 @@ export class PurchasesService {
       });
       filteredTransactionIds = matchingTxs.map((t) => t.id);
 
-      if (filteredTransactionIds.length === 0) return [];
+      if (filteredTransactionIds.length === 0) {
+        return { items: [], total: 0 };
+      }
     }
 
-    return await this.prisma.purchase.findMany({
-      take,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
-      where: {
-        ...(transactionId && { transactionId }),
-        ...(filteredTransactionIds && {
-          transactionId: { in: filteredTransactionIds },
-        }),
-        ...(status && { status }),
-        ...(productId && {
-          productVariant: {
-            product: {
-              id: productId,
-            },
-          },
-        }),
-        ...(vendorId && {
-          productVariant: {
-            ProductPrice: {
-              some: {
-                vendor: {
-                  id: vendorId,
-                },
-              },
-            },
-          },
-        }),
-      },
-      include: {
+    const where: Prisma.PurchaseWhereInput = {
+      ...(transactionId && { transactionId }),
+      ...(filteredTransactionIds && {
+        transactionId: { in: filteredTransactionIds },
+      }),
+      ...(status && { status }),
+      ...(productId && {
         productVariant: {
-          include: {
-            product: true,
-            ProductPrice: {
-              include: {
-                vendor: true,
+          product: {
+            id: productId,
+          },
+        },
+      }),
+      ...(vendorId && {
+        productVariant: {
+          ProductPrice: {
+            some: {
+              vendor: {
+                id: vendorId,
               },
             },
           },
         },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+      }),
+    };
+
+    const findArgs = {
+      take,
+      skip: useSkip ? skip : cursor ? 1 : 0,
+      cursor: useSkip ? undefined : cursor ? { id: cursor } : undefined,
+    };
+
+    const [items, total] = await Promise.all([
+      this.prisma.purchase.findMany({
+        ...findArgs,
+        where,
+        include: {
+          productVariant: {
+            include: {
+              product: true,
+              ProductPrice: {
+                include: {
+                  vendor: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+      }),
+      this.prisma.purchase.count({ where }),
+    ]);
+
+    return { items, total };
   }
 
   async findByUser(userId: string, paginationDto: CursorPaginationDto) {
-    const { cursor, take = 10 } = paginationDto;
+    const { cursor, take = 10, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
 
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -539,35 +564,47 @@ export class PurchasesService {
     });
     const transactionIds = userTxs.map((t) => t.id);
 
-    if (transactionIds.length === 0) return [];
+    if (transactionIds.length === 0) return { items: [], total: 0 };
 
-    return this.prisma.purchase.findMany({
+    const where: Prisma.PurchaseWhereInput = {
+      transactionId: { in: transactionIds },
+    };
+
+    const findArgs = {
       take,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
-      where: {
-        transactionId: { in: transactionIds },
-      },
-      include: {
-        productVariant: {
-          include: {
-            product: true,
-            ProductPrice: {
-              include: {
-                vendor: true,
+      skip: useSkip ? skip : cursor ? 1 : 0,
+      cursor: useSkip ? undefined : cursor ? { id: cursor } : undefined,
+    };
+
+    const [items, total] = await Promise.all([
+      this.prisma.purchase.findMany({
+        ...findArgs,
+        where,
+        include: {
+          productVariant: {
+            include: {
+              product: true,
+              ProductPrice: {
+                include: {
+                  vendor: true,
+                },
               },
             },
           },
         },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+        orderBy: {
+          createdAt: "desc",
+        },
+      }),
+      this.prisma.purchase.count({ where }),
+    ]);
+
+    return { items, total };
   }
 
   async findByToken(tokenId: string, paginationDto: CursorPaginationDto) {
-    const { cursor, take = 10 } = paginationDto;
+    const { cursor, take = 10, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
 
     const token = await this.prisma.token.findUnique({
       where: { id: tokenId },
@@ -585,38 +622,50 @@ export class PurchasesService {
     });
     const transactionIds = tokenTxs.map((t) => t.id);
 
-    if (transactionIds.length === 0) return [];
+    if (transactionIds.length === 0) return { items: [], total: 0 };
 
-    return this.prisma.purchase.findMany({
+    const where: Prisma.PurchaseWhereInput = {
+      transactionId: { in: transactionIds },
+    };
+
+    const findArgs = {
       take,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
-      where: {
-        transactionId: { in: transactionIds },
-      },
-      include: {
-        productVariant: {
-          include: {
-            product: true,
-            ProductPrice: {
-              include: {
-                vendor: true,
+      skip: useSkip ? skip : cursor ? 1 : 0,
+      cursor: useSkip ? undefined : cursor ? { id: cursor } : undefined,
+    };
+
+    const [items, total] = await Promise.all([
+      this.prisma.purchase.findMany({
+        ...findArgs,
+        where,
+        include: {
+          productVariant: {
+            include: {
+              product: true,
+              ProductPrice: {
+                include: {
+                  vendor: true,
+                },
               },
             },
           },
         },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+        orderBy: {
+          createdAt: "desc",
+        },
+      }),
+      this.prisma.purchase.count({ where }),
+    ]);
+
+    return { items, total };
   }
 
   async findByBlockchain(
     blockchainId: string,
     paginationDto: CursorPaginationDto,
   ) {
-    const { cursor, take = 10 } = paginationDto;
+    const { cursor, take = 10, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
 
     // Use cache for blockchain lookup
     const blockchain = await this.blockchainCache.getById(blockchainId, () =>
@@ -639,31 +688,42 @@ export class PurchasesService {
     });
     const transactionIds = blockchainTxs.map((t) => t.id);
 
-    if (transactionIds.length === 0) return [];
+    if (transactionIds.length === 0) return { items: [], total: 0 };
 
-    return this.prisma.purchase.findMany({
+    const where: Prisma.PurchaseWhereInput = {
+      transactionId: { in: transactionIds },
+    };
+
+    const findArgs = {
       take,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
-      where: {
-        transactionId: { in: transactionIds },
-      },
-      include: {
-        productVariant: {
-          include: {
-            product: true,
-            ProductPrice: {
-              include: {
-                vendor: true,
+      skip: useSkip ? skip : cursor ? 1 : 0,
+      cursor: useSkip ? undefined : cursor ? { id: cursor } : undefined,
+    };
+
+    const [items, total] = await Promise.all([
+      this.prisma.purchase.findMany({
+        ...findArgs,
+        where,
+        include: {
+          productVariant: {
+            include: {
+              product: true,
+              ProductPrice: {
+                include: {
+                  vendor: true,
+                },
               },
             },
           },
         },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+        orderBy: {
+          createdAt: "desc",
+        },
+      }),
+      this.prisma.purchase.count({ where }),
+    ]);
+
+    return { items, total };
   }
 
   private shouldFetchFreshVendorStatus(purchase: {

@@ -8,12 +8,17 @@ import {
   Delete,
   HttpCode,
   HttpStatus,
+  Query,
   UseGuards,
+  Res,
 } from "@nestjs/common";
+import type { Response } from "express";
 import { ApiTags, ApiOperation, ApiResponse } from "@nestjs/swagger";
 import { UsersService } from "./users.service";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
+import { UsersQueryDto } from "./dto/users-query.dto";
+import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { Roles } from "../decorators/roles.decorator";
 import { UserRole } from "@generated/prisma";
@@ -46,8 +51,13 @@ export class UsersController {
     description: "Returns all users",
     type: [UserResponseDto],
   })
-  findAll() {
-    return this.usersService.findAll();
+  async findAll(
+    @Query() query: UsersQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { items, total } = await this.usersService.findAll(query);
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get(":id")
@@ -78,14 +88,27 @@ export class UsersController {
 
   @Delete(":id")
   @UseGuards(UserResourceGuard)
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: "Delete a user (Super Admin only)" })
+  @ApiOperation({ summary: "Soft-delete a user (Admin)" })
   @ApiResponse({
     status: 204,
-    description: "User deleted successfully",
+    description: "User deactivated successfully",
   })
   remove(@Param("id") id: string) {
+    return this.usersService.softDelete(id);
+  }
+
+  @Delete(":id/hard")
+  @UseGuards(UserResourceGuard)
+  @Roles(UserRole.SUPER_ADMIN)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: "Hard-delete a user (Super Admin only)" })
+  @ApiResponse({
+    status: 204,
+    description: "User permanently deleted",
+  })
+  hardRemove(@Param("id") id: string) {
     return this.usersService.remove(id);
   }
 
@@ -98,7 +121,10 @@ export class UsersController {
     description: "Returns user transactions",
     type: [Object],
   })
-  findUserTransactions(@Param("id") id: string) {
-    return this.usersService.findUserTransactions(id);
+  findUserTransactions(
+    @Param("id") id: string,
+    @Query() pagination: CursorPaginationDto,
+  ) {
+    return this.usersService.findUserTransactions(id, pagination);
   }
 }

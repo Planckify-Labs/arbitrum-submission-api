@@ -9,7 +9,9 @@ import {
   HttpCode,
   HttpStatus,
   Query,
+  Res,
 } from "@nestjs/common";
+import type { Response } from "express";
 import { ApiTags } from "@nestjs/swagger";
 import { RegionsService } from "./regions.service";
 import { CreateRegionDto } from "./dto/create-region.dto";
@@ -44,17 +46,28 @@ export class RegionsController {
 
   @Get()
   @ApiGetRegions()
-  findAll(@Query() paginationDto: CursorPaginationDto) {
-    return this.regionsService.findAll(paginationDto);
+  async findAll(
+    @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { items, total } = await this.regionsService.findAll(paginationDto);
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get("search")
   @ApiSearchRegions()
-  search(
+  async search(
     @Query() searchParams: SearchRegionDto,
     @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.regionsService.search(searchParams, paginationDto);
+    const { items, total } = await this.regionsService.search(
+      searchParams,
+      paginationDto,
+    );
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get(":id")

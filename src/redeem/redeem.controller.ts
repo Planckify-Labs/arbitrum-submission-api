@@ -7,7 +7,9 @@ import {
   Query,
   Request,
   UseGuards,
+  Res,
 } from "@nestjs/common";
+import type { Response } from "express";
 import {
   ApiTags,
   ApiOperation,
@@ -31,8 +33,13 @@ export class RedeemController {
   @Get("admin/all")
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @ApiOperation({ summary: "List all redemptions (Admin)" })
-  findAllAdmin(@Query() query: RedeemHistoryQueryDto) {
-    return this.redeemService.findAllAdmin(query);
+  async findAllAdmin(
+    @Query() query: RedeemHistoryQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.redeemService.findAllAdmin(query);
+    res.setHeader("X-Total-Count", String(result.total));
+    return { data: result.data, nextCursor: result.nextCursor, hasMore: result.hasMore };
   }
 
   @Get("admin/:id")

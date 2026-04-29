@@ -10,7 +10,9 @@ import {
   BadRequestException,
   HttpCode,
   HttpStatus,
+  Res,
 } from "@nestjs/common";
+import type { Response } from "express";
 import { ApiTags } from "@nestjs/swagger";
 import { ExchangeRateService } from "./exchange-rate.service";
 import {
@@ -55,12 +57,17 @@ export class ExchangeRateController {
 
   @Get()
   @ApiGetAllExchangeRates()
-  async findAll(@Query() query: QueryExchangeRateDto) {
+  async findAll(
+    @Query() query: QueryExchangeRateDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     console.log("Finding all exchange rates with query:", query);
     if (query.take) {
       query.take = Number(query.take);
     }
-    return await this.exchangeRateService.findAll(query);
+    const { items, total } = await this.exchangeRateService.findAll(query);
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get("average")

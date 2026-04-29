@@ -11,7 +11,9 @@ import {
   Request,
   HttpCode,
   HttpStatus,
+  Res,
 } from "@nestjs/common";
+import type { Response } from "express";
 import {
   ApiTags,
   ApiBearerAuth,
@@ -133,8 +135,13 @@ export class ApiKeysController {
       },
     },
   })
-  findAll(@Query() paginationDto: CursorPaginationDto) {
-    return this.apiKeysService.findAll(paginationDto);
+  async findAll(
+    @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.apiKeysService.findAll(paginationDto);
+    res.setHeader("X-Total-Count", String(result.total));
+    return result;
   }
 
   @Get("search")
@@ -143,11 +150,14 @@ export class ApiKeysController {
     status: 200,
     description: "Filtered list of API keys",
   })
-  search(
+  async search(
     @Query() searchDto: SearchApiKeyDto,
     @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.apiKeysService.search(searchDto, paginationDto);
+    const result = await this.apiKeysService.search(searchDto, paginationDto);
+    res.setHeader("X-Total-Count", String(result.total));
+    return result;
   }
 
   @Get(":id")

@@ -9,7 +9,9 @@ import {
   Query,
   UseGuards,
   Request,
+  Res,
 } from "@nestjs/common";
+import type { Response } from "express";
 
 interface AuthenticatedRequest {
   user: {
@@ -45,8 +47,13 @@ export class DappsController {
 
   @Get("all")
   @ApiGetAllDapps()
-  async findAll(@Query() paginationDto: CursorPaginationDto) {
-    return await this.dappsService.findAll(paginationDto);
+  async findAll(
+    @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { items, total } = await this.dappsService.findAll(paginationDto);
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Public()

@@ -12,7 +12,9 @@ import {
   NotFoundException,
   Request,
   UseGuards,
+  Res,
 } from "@nestjs/common";
+import type { Response } from "express";
 import { ProductsService } from "./products.service";
 import { ApiTags } from "@nestjs/swagger";
 import { CreateProductDto, UpdateProductDto } from "./dto/product.dto";
@@ -75,11 +77,17 @@ export class ProductsController {
   @Public()
   @ApiKey()
   @ApiSearchProductsPublic()
-  search(
+  async search(
     @Query() searchDto: SearchProductDto,
     @Query() paginationDto: CursorPaginationDto = new CursorPaginationDto(),
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.productsService.search(searchDto, paginationDto);
+    const { items, total } = await this.productsService.search(
+      searchDto,
+      paginationDto,
+    );
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get("recommendations")
@@ -154,24 +162,41 @@ export class ProductsController {
   @Public()
   @ApiKey()
   @ApiGetProductsPublic()
-  findAll(@Query() paginationDto: CursorPaginationDto) {
-    return this.productsService.findAll(paginationDto);
+  async findAll(
+    @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { items, total } = await this.productsService.findAll(paginationDto);
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get("vouchers")
   @Public()
   @ApiKey()
   @ApiGetProductsPublic()
-  findVouchers(@Query() paginationDto: CursorPaginationDto) {
-    return this.productsService.findVouchers(paginationDto);
+  async findVouchers(
+    @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { items, total } =
+      await this.productsService.findVouchers(paginationDto);
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get("non-vouchers")
   @Public()
   @ApiKey()
   @ApiGetProductsPublic()
-  findNonVouchers(@Query() paginationDto: CursorPaginationDto) {
-    return this.productsService.findNonVouchers(paginationDto);
+  async findNonVouchers(
+    @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { items, total } =
+      await this.productsService.findNonVouchers(paginationDto);
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get("grouped-by-categories")
@@ -184,8 +209,14 @@ export class ProductsController {
 
   @Get("categories")
   @ApiGetCategories()
-  findAllCategories(@Query() paginationDto: CursorPaginationDto) {
-    return this.productsService.findAllCategories(paginationDto);
+  async findAllCategories(
+    @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { items, total } =
+      await this.productsService.findAllCategories(paginationDto);
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get("categories/:categoryId/products")

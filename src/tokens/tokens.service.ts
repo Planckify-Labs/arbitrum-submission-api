@@ -61,21 +61,35 @@ export class TokensService {
   }
 
   async findAll(paginationDto: CursorPaginationDto) {
-    const { cursor, take = 10 } = paginationDto;
+    const { cursor, take = 10, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
+    const cacheKey = `${cursor ?? "first"}:t${take}:s${skip ?? 0}`;
 
-    return this.tokenCache.getAllTokens(cursor, () =>
-      this.prisma.token.findMany({
-        take,
-        skip: cursor ? 1 : 0,
-        cursor: cursor ? { id: cursor } : undefined,
-        include: {
-          blockchain: true,
-          regionAvailability: true,
-        },
-        orderBy: {
-          symbol: "asc",
-        },
-      }),
+    return this.tokenCache.getAllTokens(
+      cacheKey,
+      async () => {
+        const findArgs = {
+          take,
+          skip: useSkip ? skip : cursor ? 1 : 0,
+          cursor: useSkip ? undefined : cursor ? { id: cursor } : undefined,
+        };
+
+        const [items, total] = await Promise.all([
+          this.prisma.token.findMany({
+            ...findArgs,
+            include: {
+              blockchain: true,
+              regionAvailability: true,
+            },
+            orderBy: {
+              symbol: "asc",
+            },
+          }),
+          this.prisma.token.count(),
+        ]);
+
+        return { items, total };
+      },
       take,
     );
   }
@@ -185,7 +199,8 @@ export class TokensService {
     searchParams: SearchTokenDto,
     paginationDto: CursorPaginationDto,
   ) {
-    const { cursor, take = 10 } = paginationDto;
+    const { cursor, take = 10, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
     const {
       symbol,
       name,
@@ -234,20 +249,27 @@ export class TokensService {
       where.isPaymentEnabled = isPaymentEnabled;
     }
 
-    const result = await this.prisma.token.findMany({
+    const findArgs = {
       take,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
-      where,
-      include: {
-        blockchain: true,
-        regionAvailability: true,
-      },
-      orderBy: {
-        symbol: "asc",
-      },
-    });
+      skip: useSkip ? skip : cursor ? 1 : 0,
+      cursor: useSkip ? undefined : cursor ? { id: cursor } : undefined,
+    };
 
-    return result;
+    const [items, total] = await Promise.all([
+      this.prisma.token.findMany({
+        ...findArgs,
+        where,
+        include: {
+          blockchain: true,
+          regionAvailability: true,
+        },
+        orderBy: {
+          symbol: "asc",
+        },
+      }),
+      this.prisma.token.count({ where }),
+    ]);
+
+    return { items, total };
   }
 }

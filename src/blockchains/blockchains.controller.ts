@@ -90,11 +90,17 @@ export class BlockchainsController {
   @Public()
   @ApiKey()
   @ApiSearchBlockchainsPublic()
-  search(
+  async search(
     @Query() searchParams: SearchBlockchainDto,
     @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.blockchainsService.search(searchParams, paginationDto);
+    const { items, total } = await this.blockchainsService.search(
+      searchParams,
+      paginationDto,
+    );
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get(":id")

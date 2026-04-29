@@ -9,7 +9,9 @@ import {
   HttpCode,
   HttpStatus,
   Query,
+  Res,
 } from "@nestjs/common";
+import type { Response } from "express";
 import { ApiTags } from "@nestjs/swagger";
 import { TokensService } from "./tokens.service";
 import { CreateTokenDto } from "./dto/create-token.dto";
@@ -42,19 +44,30 @@ export class TokensController {
   @Public()
   @ApiKey()
   @ApiGetTokensPublic()
-  findAll(@Query() paginationDto: CursorPaginationDto) {
-    return this.tokensService.findAll(paginationDto);
+  async findAll(
+    @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { items, total } = await this.tokensService.findAll(paginationDto);
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get("search")
   @Public()
   @ApiKey()
   @ApiSearchTokensPublic()
-  search(
+  async search(
     @Query() searchParams: SearchTokenDto,
     @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.tokensService.search(searchParams, paginationDto);
+    const { items, total } = await this.tokensService.search(
+      searchParams,
+      paginationDto,
+    );
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get(":id")

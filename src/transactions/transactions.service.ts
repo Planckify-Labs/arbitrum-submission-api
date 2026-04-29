@@ -33,11 +33,12 @@ export class TransactionsService {
   }
 
   async findAll(paginationDto: CursorPaginationDto) {
-    const { cursor, take = 10 } = paginationDto;
+    const { cursor, take = 10, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
 
     // For hypertable with composite PK, use createdAt-based cursor pagination
     let cursorDate: Date | undefined;
-    if (cursor) {
+    if (cursor && !useSkip) {
       const cursorTx = await this.prisma.transactionHistory.findFirst({
         where: { id: cursor },
         select: { createdAt: true },
@@ -45,25 +46,35 @@ export class TransactionsService {
       cursorDate = cursorTx?.createdAt;
     }
 
-    return await this.prisma.transactionHistory.findMany({
-      take,
-      where: cursorDate ? { createdAt: { lt: cursorDate } } : undefined,
-      include: {
-        token: true,
-        user: {
-          select: {
-            id: true,
-            walletAddress: true,
-            username: true,
-            name: true,
-            email: true,
+    const where: Prisma.TransactionHistoryWhereInput = cursorDate
+      ? { createdAt: { lt: cursorDate } }
+      : {};
+
+    const [items, total] = await Promise.all([
+      this.prisma.transactionHistory.findMany({
+        take,
+        ...(useSkip ? { skip } : {}),
+        where,
+        include: {
+          token: true,
+          user: {
+            select: {
+              id: true,
+              walletAddress: true,
+              username: true,
+              name: true,
+              email: true,
+            },
           },
         },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+        orderBy: {
+          createdAt: "desc",
+        },
+      }),
+      this.prisma.transactionHistory.count(),
+    ]);
+
+    return { items, total };
   }
 
   async findOne(id: string) {
@@ -167,7 +178,7 @@ export class TransactionsService {
     });
   }
 
-  async findByUser(userId: string) {
+  async findByUser(userId: string, paginationDto: CursorPaginationDto = {}) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
     });
@@ -176,24 +187,54 @@ export class TransactionsService {
       throw new NotFoundException(`User with ID ${userId} not found`);
     }
 
-    return await this.prisma.transactionHistory.findMany({
-      where: { userId },
-      include: {
-        token: true,
-        user: {
-          select: {
-            id: true,
-            walletAddress: true,
-            username: true,
-            name: true,
-            email: true,
+    const { cursor, take = 50, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
+
+    let cursorDate: Date | undefined;
+    if (cursor && !useSkip) {
+      const cursorTx = await this.prisma.transactionHistory.findFirst({
+        where: { id: cursor },
+        select: { createdAt: true },
+      });
+      cursorDate = cursorTx?.createdAt;
+    }
+
+    const where: Prisma.TransactionHistoryWhereInput = {
+      userId,
+      ...(cursorDate ? { createdAt: { lt: cursorDate } } : {}),
+    };
+
+    const [items, total] = await Promise.all([
+      this.prisma.transactionHistory.findMany({
+        where,
+        take,
+        ...(useSkip ? { skip } : {}),
+        include: {
+          token: true,
+          user: {
+            select: {
+              id: true,
+              walletAddress: true,
+              username: true,
+              name: true,
+              email: true,
+            },
           },
         },
-      },
-    });
+        orderBy: {
+          createdAt: "desc",
+        },
+      }),
+      this.prisma.transactionHistory.count({ where: { userId } }),
+    ]);
+
+    return { items, total };
   }
 
-  async findByBlockchain(blockchainId: string) {
+  async findByBlockchain(
+    blockchainId: string,
+    paginationDto: CursorPaginationDto = {},
+  ) {
     const blockchain = await this.prisma.blockchain.findUnique({
       where: { id: blockchainId },
     });
@@ -204,31 +245,55 @@ export class TransactionsService {
       );
     }
 
-    return await this.prisma.transactionHistory.findMany({
-      where: {
-        token: {
-          blockchainId,
-        },
-      },
-      include: {
-        token: true,
-        user: {
-          select: {
-            id: true,
-            walletAddress: true,
-            username: true,
-            name: true,
-            email: true,
+    const { cursor, take = 50, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
+
+    let cursorDate: Date | undefined;
+    if (cursor && !useSkip) {
+      const cursorTx = await this.prisma.transactionHistory.findFirst({
+        where: { id: cursor },
+        select: { createdAt: true },
+      });
+      cursorDate = cursorTx?.createdAt;
+    }
+
+    const baseWhere: Prisma.TransactionHistoryWhereInput = {
+      token: { blockchainId },
+    };
+
+    const where: Prisma.TransactionHistoryWhereInput = {
+      ...baseWhere,
+      ...(cursorDate ? { createdAt: { lt: cursorDate } } : {}),
+    };
+
+    const [items, total] = await Promise.all([
+      this.prisma.transactionHistory.findMany({
+        where,
+        take,
+        ...(useSkip ? { skip } : {}),
+        include: {
+          token: true,
+          user: {
+            select: {
+              id: true,
+              walletAddress: true,
+              username: true,
+              name: true,
+              email: true,
+            },
           },
         },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+        orderBy: {
+          createdAt: "desc",
+        },
+      }),
+      this.prisma.transactionHistory.count({ where: baseWhere }),
+    ]);
+
+    return { items, total };
   }
 
-  async findByToken(tokenId: string) {
+  async findByToken(tokenId: string, paginationDto: CursorPaginationDto = {}) {
     const token = await this.prisma.token.findUnique({
       where: { id: tokenId },
     });
@@ -237,24 +302,49 @@ export class TransactionsService {
       throw new NotFoundException(`Token with ID ${tokenId} not found`);
     }
 
-    return await this.prisma.transactionHistory.findMany({
-      where: { tokenId },
-      include: {
-        token: true,
-        user: {
-          select: {
-            id: true,
-            walletAddress: true,
-            username: true,
-            name: true,
-            email: true,
+    const { cursor, take = 50, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
+
+    let cursorDate: Date | undefined;
+    if (cursor && !useSkip) {
+      const cursorTx = await this.prisma.transactionHistory.findFirst({
+        where: { id: cursor },
+        select: { createdAt: true },
+      });
+      cursorDate = cursorTx?.createdAt;
+    }
+
+    const baseWhere: Prisma.TransactionHistoryWhereInput = { tokenId };
+    const where: Prisma.TransactionHistoryWhereInput = {
+      ...baseWhere,
+      ...(cursorDate ? { createdAt: { lt: cursorDate } } : {}),
+    };
+
+    const [items, total] = await Promise.all([
+      this.prisma.transactionHistory.findMany({
+        where,
+        take,
+        ...(useSkip ? { skip } : {}),
+        include: {
+          token: true,
+          user: {
+            select: {
+              id: true,
+              walletAddress: true,
+              username: true,
+              name: true,
+              email: true,
+            },
           },
         },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+        orderBy: {
+          createdAt: "desc",
+        },
+      }),
+      this.prisma.transactionHistory.count({ where: baseWhere }),
+    ]);
+
+    return { items, total };
   }
 
   async findUserTransactionHistory(
@@ -345,7 +435,8 @@ export class TransactionsService {
     searchParams: SearchTransactionDto,
     paginationDto: CursorPaginationDto,
   ) {
-    const { cursor, take = 10 } = paginationDto;
+    const { cursor, take = 10, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
     const {
       type,
       status,
@@ -401,8 +492,10 @@ export class TransactionsService {
         (where.createdAt as Prisma.DateTimeFilter).lte = new Date(endDate);
     }
 
+    const baseWhere = { ...where } as Prisma.TransactionHistoryWhereInput;
+
     // For hypertable with composite PK, use createdAt-based cursor pagination
-    if (cursor) {
+    if (cursor && !useSkip) {
       const cursorTx = await this.prisma.transactionHistory.findFirst({
         where: { id: cursor },
         select: { createdAt: true },
@@ -413,30 +506,34 @@ export class TransactionsService {
       }
     }
 
-    const transactions = await this.prisma.transactionHistory.findMany({
-      take,
-      where,
-      include: {
-        token: {
-          select: {
-            blockchain: {
-              select: {
-                name: true,
-                blockExplorer: true,
+    const [transactions, total] = await Promise.all([
+      this.prisma.transactionHistory.findMany({
+        take,
+        ...(useSkip ? { skip } : {}),
+        where,
+        include: {
+          token: {
+            select: {
+              blockchain: {
+                select: {
+                  name: true,
+                  blockExplorer: true,
+                },
               },
+              contractAddress: true,
+              name: true,
+              symbol: true,
+              decimals: true,
+              logoUrl: true,
             },
-            contractAddress: true,
-            name: true,
-            symbol: true,
-            decimals: true,
-            logoUrl: true,
           },
         },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+        orderBy: {
+          createdAt: "desc",
+        },
+      }),
+      this.prisma.transactionHistory.count({ where: baseWhere }),
+    ]);
 
     // Purchase has no Prisma relation to TransactionHistory (hypertable).
     // Post-fetch associated purchases and attach them manually.
@@ -459,9 +556,11 @@ export class TransactionsService {
     });
     const purchaseByTxId = new Map(purchases.map((p) => [p.transactionId, p]));
 
-    return transactions.map((t) => ({
+    const items = transactions.map((t) => ({
       ...t,
       purchase: purchaseByTxId.get(t.id) ?? null,
     }));
+
+    return { items, total };
   }
 }

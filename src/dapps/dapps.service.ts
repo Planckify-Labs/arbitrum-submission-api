@@ -14,29 +14,41 @@ export class DappsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll(paginationDto: CursorPaginationDto, userId?: string) {
-    const { cursor, take = 10 } = paginationDto;
+    const { cursor, take = 10, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
+    const where: Prisma.DappWhereInput = {
+      isActive: true,
+    };
 
-    const dapps = await this.prisma.dapp.findMany({
+    const findArgs = {
       take,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
-      where: {
-        isActive: true,
-      },
-      include: {
-        category: true,
-        favorites: userId ? { where: { userId } } : false,
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+      skip: useSkip ? skip : cursor ? 1 : 0,
+      cursor: useSkip ? undefined : cursor ? { id: cursor } : undefined,
+    };
 
-    return dapps.map((dapp) => ({
-      ...dapp,
-      isFavorite: userId ? dapp.favorites.length > 0 : false,
-      favorites: undefined,
-    }));
+    const [dapps, total] = await Promise.all([
+      this.prisma.dapp.findMany({
+        ...findArgs,
+        where,
+        include: {
+          category: true,
+          favorites: userId ? { where: { userId } } : false,
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+      }),
+      this.prisma.dapp.count({ where }),
+    ]);
+
+    return {
+      items: dapps.map((dapp) => ({
+        ...dapp,
+        isFavorite: userId ? dapp.favorites.length > 0 : false,
+        favorites: undefined,
+      })),
+      total,
+    };
   }
 
   async findPopular(paginationDto: CursorPaginationDto, userId?: string) {

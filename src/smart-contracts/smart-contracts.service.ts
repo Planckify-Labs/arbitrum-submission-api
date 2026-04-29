@@ -27,35 +27,47 @@ export class SmartContractsService {
   }
 
   async findAll(paginationDto: CursorPaginationDto) {
-    const { cursor, take = 10 } = paginationDto;
+    const { cursor, take = 10, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
+    const cacheKey = `${cursor ?? "first"}:t${take}:s${skip ?? 0}`;
 
-    return this.contractCache.getAllContracts(cursor, () =>
-      this.prisma.smartContract.findMany({
+    return this.contractCache.getAllContracts(cacheKey, async () => {
+      const findArgs = {
         take,
-        skip: cursor ? 1 : 0,
-        cursor: cursor ? { id: cursor } : undefined,
-        include: {
-          blockchain: true,
-        },
-        orderBy: [
-          {
-            blockchain: {
+        skip: useSkip ? skip : cursor ? 1 : 0,
+        cursor: useSkip ? undefined : cursor ? { id: cursor } : undefined,
+      };
+
+      const [items, total] = await Promise.all([
+        this.prisma.smartContract.findMany({
+          ...findArgs,
+          include: {
+            blockchain: true,
+          },
+          orderBy: [
+            {
+              blockchain: {
+                name: "asc",
+              },
+            },
+            {
               name: "asc",
             },
-          },
-          {
-            name: "asc",
-          },
-        ],
-      }),
-    );
+          ],
+        }),
+        this.prisma.smartContract.count(),
+      ]);
+
+      return { items, total };
+    });
   }
 
   async search(
     searchParams: SearchSmartContractDto,
     paginationDto: CursorPaginationDto,
   ) {
-    const { cursor, take = 10 } = paginationDto;
+    const { cursor, take = 10, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
     const {
       name,
       blockchainId,
@@ -112,25 +124,34 @@ export class SmartContractsService {
       where.isActive = isActive;
     }
 
-    return await this.prisma.smartContract.findMany({
+    const findArgs = {
       take,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
-      where,
-      include: {
-        blockchain: true,
-      },
-      orderBy: [
-        {
-          blockchain: {
+      skip: useSkip ? skip : cursor ? 1 : 0,
+      cursor: useSkip ? undefined : cursor ? { id: cursor } : undefined,
+    };
+
+    const [items, total] = await Promise.all([
+      this.prisma.smartContract.findMany({
+        ...findArgs,
+        where,
+        include: {
+          blockchain: true,
+        },
+        orderBy: [
+          {
+            blockchain: {
+              name: "asc",
+            },
+          },
+          {
             name: "asc",
           },
-        },
-        {
-          name: "asc",
-        },
-      ],
-    });
+        ],
+      }),
+      this.prisma.smartContract.count({ where }),
+    ]);
+
+    return { items, total };
   }
 
   async findOne(id: string) {

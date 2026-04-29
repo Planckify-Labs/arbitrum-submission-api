@@ -7,7 +7,6 @@ import { PrismaService } from "../prisma/prisma.service";
 import {
   CreateExchangeRateDto,
   QueryExchangeRateDto,
-  CursorPaginatedExchangeRateResponse,
   ExchangeRateResponseDto,
   GetLatestExchangeRateDto,
 } from "./dto/exchange-rate.dto";
@@ -98,10 +97,13 @@ export class ExchangeRateService {
 
   async findAll(
     query: QueryExchangeRateDto,
-  ): Promise<CursorPaginatedExchangeRateResponse> {
+  ): Promise<{ items: ExchangeRateResponseDto[]; total: number }> {
     const take = Math.max(1, Math.min(100, query.take || 10));
-    const cursor = this.decodeCursor(query.cursor);
-    const where = this.buildWhereClause(query);
+    const skip =
+      typeof query.skip === "number" && query.skip > 0 ? query.skip : undefined;
+    const cursor = skip ? null : this.decodeCursor(query.cursor);
+    const baseWhere = this.buildWhereClause(query);
+    const where = { ...baseWhere };
 
     if (cursor) {
       where.OR = [
@@ -115,33 +117,22 @@ export class ExchangeRateService {
       ];
     }
 
-    // Paginated queries are not cached due to cursor complexity
-    const rates = await this.prisma.exchangeRate.findMany({
-      take: take + 1,
-      where,
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      include: {
-        sourceProvider: true,
-      },
-    });
-
-    const hasMore = rates.length > take;
-    const items = rates.slice(0, take);
-
-    const transformedItems = items.map((rate) =>
-      this.transformExchangeRate(rate),
-    );
-
-    const nextCursor =
-      hasMore && items.length > 0
-        ? this.encodeCursor(items[items.length - 1])
-        : undefined;
+    const [rates, total] = await Promise.all([
+      this.prisma.exchangeRate.findMany({
+        take,
+        ...(skip ? { skip } : {}),
+        where,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        include: {
+          sourceProvider: true,
+        },
+      }),
+      this.prisma.exchangeRate.count({ where: baseWhere }),
+    ]);
 
     return {
-      data: transformedItems,
-      count: items.length,
-      nextCursor,
-      hasMore,
+      items: rates.map((rate) => this.transformExchangeRate(rate)),
+      total,
     };
   }
 

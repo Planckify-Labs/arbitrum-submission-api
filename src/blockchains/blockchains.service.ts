@@ -190,7 +190,8 @@ export class BlockchainsService {
     searchParams: SearchBlockchainDto,
     paginationDto: CursorPaginationDto,
   ) {
-    const { cursor, take = 10 } = paginationDto;
+    const { cursor, take = 10, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
     const { name, chainId, isEVM, isActive, isTestnet } = searchParams;
 
     const where: Prisma.BlockchainWhereInput = {};
@@ -218,22 +219,31 @@ export class BlockchainsService {
       where.isTestnet = isTestnet;
     }
 
-    return await this.prisma.blockchain.findMany({
+    const findArgs = {
       take,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
-      where,
-      include: {
-        tokens: {
-          where: {
-            isNativeCurrency: true,
+      skip: useSkip ? skip : cursor ? 1 : 0,
+      cursor: useSkip ? undefined : cursor ? { id: cursor } : undefined,
+    };
+
+    const [items, total] = await Promise.all([
+      this.prisma.blockchain.findMany({
+        ...findArgs,
+        where,
+        include: {
+          tokens: {
+            where: {
+              isNativeCurrency: true,
+            },
           },
         },
-      },
-      orderBy: {
-        name: "asc",
-      },
-    });
+        orderBy: {
+          name: "asc",
+        },
+      }),
+      this.prisma.blockchain.count({ where }),
+    ]);
+
+    return { items, total };
   }
 
   async findOne(id: string) {

@@ -8,11 +8,15 @@ import {
   Delete,
   HttpCode,
   HttpStatus,
+  Query,
+  Res,
 } from "@nestjs/common";
+import type { Response } from "express";
 import { ApiTags } from "@nestjs/swagger";
 import { VendorsService } from "./vendors.service";
 import { CreateVendorDto } from "./dto/create-vendor.dto";
 import { UpdateVendorDto } from "./dto/update-vendor.dto";
+import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import {
   ApiCreateVendor,
   ApiDeleteVendor,
@@ -35,8 +39,10 @@ export class VendorsController {
 
   @Get()
   @ApiGetVendors()
-  findAll() {
-    return this.vendorsService.findAll();
+  async findAll(@Res({ passthrough: true }) res: Response) {
+    const { items, total } = await this.vendorsService.findAll();
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get(":id")
@@ -60,7 +66,10 @@ export class VendorsController {
 
   @Get(":id/products")
   @ApiGetVendorProducts()
-  findVendorProducts(@Param("id") id: string) {
-    return this.vendorsService.findVendorProducts(id);
+  findVendorProducts(
+    @Param("id") id: string,
+    @Query() pagination: CursorPaginationDto,
+  ) {
+    return this.vendorsService.findVendorProducts(id, pagination);
   }
 }

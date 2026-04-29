@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateVendorDto } from "./dto/create-vendor.dto";
 import { UpdateVendorDto } from "./dto/update-vendor.dto";
+import { CursorPaginationDto } from "../dto/common/pagination.dto";
 
 @Injectable()
 export class VendorsService {
@@ -14,7 +15,11 @@ export class VendorsService {
   }
 
   async findAll() {
-    return await this.prisma.vendor.findMany();
+    const [items, total] = await Promise.all([
+      this.prisma.vendor.findMany(),
+      this.prisma.vendor.count(),
+    ]);
+    return { items, total };
   }
 
   async findOne(id: string) {
@@ -46,8 +51,13 @@ export class VendorsService {
     });
   }
 
-  async findVendorProducts(id: string) {
+  async findVendorProducts(
+    id: string,
+    pagination: CursorPaginationDto = {},
+  ) {
     await this.findOne(id); // Check if vendor exists
+
+    const { cursor, take = 50 } = pagination;
 
     return await this.prisma.product.findMany({
       where: {
@@ -61,6 +71,10 @@ export class VendorsService {
           },
         },
       },
+      take,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
+      orderBy: { createdAt: "desc" },
       include: {
         category: true,
         variants: {

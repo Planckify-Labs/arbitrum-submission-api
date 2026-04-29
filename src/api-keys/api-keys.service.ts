@@ -62,22 +62,31 @@ export class ApiKeysService {
   }
 
   async findAll(paginationDto: CursorPaginationDto) {
-    const { take = 10, cursor } = paginationDto;
+    const { take = 10, cursor, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
 
-    const apiKeys = await this.prisma.apiKey.findMany({
-      take: take + 1,
-      cursor: cursor ? { id: cursor } : undefined,
-      orderBy: { createdAt: "desc" },
-      include: {
-        createdBy: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
+    const findArgs = {
+      skip: useSkip ? skip : cursor ? 1 : 0,
+      cursor: useSkip ? undefined : cursor ? { id: cursor } : undefined,
+    };
+
+    const [apiKeys, total] = await Promise.all([
+      this.prisma.apiKey.findMany({
+        take: take + 1,
+        ...findArgs,
+        orderBy: { createdAt: "desc" },
+        include: {
+          createdBy: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
           },
         },
-      },
-    });
+      }),
+      this.prisma.apiKey.count(),
+    ]);
 
     const hasNextPage = apiKeys.length > take;
     const items = hasNextPage ? apiKeys.slice(0, -1) : apiKeys;
@@ -86,11 +95,13 @@ export class ApiKeysService {
       items: items.map(this.sanitizeApiKey),
       hasNextPage,
       nextCursor: hasNextPage ? items[items.length - 1].id : null,
+      total,
     };
   }
 
   async search(searchDto: SearchApiKeyDto, paginationDto: CursorPaginationDto) {
-    const { take = 10, cursor } = paginationDto;
+    const { take = 10, cursor, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
     const {
       name,
       type,
@@ -127,21 +138,29 @@ export class ApiKeysService {
       if (expiresTo) where.expiresAt.lte = new Date(expiresTo);
     }
 
-    const apiKeys = await this.prisma.apiKey.findMany({
-      where,
-      take: take + 1,
-      cursor: cursor ? { id: cursor } : undefined,
-      orderBy: { createdAt: "desc" },
-      include: {
-        createdBy: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
+    const findArgs = {
+      skip: useSkip ? skip : cursor ? 1 : 0,
+      cursor: useSkip ? undefined : cursor ? { id: cursor } : undefined,
+    };
+
+    const [apiKeys, total] = await Promise.all([
+      this.prisma.apiKey.findMany({
+        where,
+        take: take + 1,
+        ...findArgs,
+        orderBy: { createdAt: "desc" },
+        include: {
+          createdBy: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
           },
         },
-      },
-    });
+      }),
+      this.prisma.apiKey.count({ where }),
+    ]);
 
     const hasNextPage = apiKeys.length > take;
     const items = hasNextPage ? apiKeys.slice(0, -1) : apiKeys;
@@ -150,6 +169,7 @@ export class ApiKeysService {
       items: items.map(this.sanitizeApiKey),
       hasNextPage,
       nextCursor: hasNextPage ? items[items.length - 1].id : null,
+      total,
     };
   }
 

@@ -9,7 +9,9 @@ import {
   HttpCode,
   HttpStatus,
   Query,
+  Res,
 } from "@nestjs/common";
+import type { Response } from "express";
 import { ApiTags } from "@nestjs/swagger";
 import { SmartContractsService } from "./smart-contracts.service";
 import { CreateSmartContractDto } from "./dto/create-smart-contract.dto";
@@ -43,19 +45,31 @@ export class SmartContractsController {
   @Public()
   @ApiKey()
   @ApiGetSmartContractsPublic()
-  findAll(@Query() paginationDto: CursorPaginationDto) {
-    return this.smartContractsService.findAll(paginationDto);
+  async findAll(
+    @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { items, total } =
+      await this.smartContractsService.findAll(paginationDto);
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get("search")
   @Public()
   @ApiKey()
   @ApiSearchSmartContractsPublic()
-  search(
+  async search(
     @Query() searchParams: SearchSmartContractDto,
     @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.smartContractsService.search(searchParams, paginationDto);
+    const { items, total } = await this.smartContractsService.search(
+      searchParams,
+      paginationDto,
+    );
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get("chain/:chainId")

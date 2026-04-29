@@ -6,10 +6,11 @@ import {
   Param,
   Query,
   Req,
+  Res,
   UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
-import { Request } from "express";
+import { Request, Response } from "express";
 import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
 import { TransactionsService } from "./transactions.service";
 import { CreateTransactionDto } from "./dto/create-transaction.dto";
@@ -27,8 +28,11 @@ import {
   ApiGetMyTransactionHistory,
 } from "../decorators/swagger/transaction.decorators";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { RolesGuard } from "../auth/guards/roles.guard";
+import { Roles } from "../decorators/roles.decorator";
+import { UserRole } from "@generated/prisma";
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @ApiBearerAuth()
 @Controller("transactions")
 @ApiTags("transactions")
@@ -49,18 +53,34 @@ export class TransactionsController {
   }
 
   @Get()
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @ApiGetTransactions()
-  findAll(@Query() paginationDto: CursorPaginationDto) {
-    return this.transactionsService.findAll(paginationDto);
+  async findAll(
+    @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { items, total } =
+      await this.transactionsService.findAll(paginationDto);
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get("search")
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @ApiSearchTransactions()
-  search(@Query() queryParams: SearchTransactionDto & CursorPaginationDto) {
-    const { cursor, take, ...searchParams } = queryParams;
-    const paginationDto: CursorPaginationDto = { cursor, take };
+  async search(
+    @Query() queryParams: SearchTransactionDto & CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { cursor, take, skip, ...searchParams } = queryParams;
+    const paginationDto: CursorPaginationDto = { cursor, take, skip };
 
-    return this.transactionsService.search(searchParams, paginationDto);
+    const { items, total } = await this.transactionsService.search(
+      searchParams,
+      paginationDto,
+    );
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get("my-history")
@@ -92,20 +112,50 @@ export class TransactionsController {
   }
 
   @Get("user/:userId")
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @ApiGetUserTransactions()
-  findByUser(@Param("userId") userId: string) {
-    return this.transactionsService.findByUser(userId);
+  async findByUser(
+    @Param("userId") userId: string,
+    @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { items, total } = await this.transactionsService.findByUser(
+      userId,
+      paginationDto,
+    );
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get("blockchain/:blockchainId")
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @ApiGetBlockchainTransactions()
-  findByBlockchain(@Param("blockchainId") blockchainId: string) {
-    return this.transactionsService.findByBlockchain(blockchainId);
+  async findByBlockchain(
+    @Param("blockchainId") blockchainId: string,
+    @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { items, total } = await this.transactionsService.findByBlockchain(
+      blockchainId,
+      paginationDto,
+    );
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get("token/:tokenId")
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @ApiGetTokenTransactions()
-  findByToken(@Param("tokenId") tokenId: string) {
-    return this.transactionsService.findByToken(tokenId);
+  async findByToken(
+    @Param("tokenId") tokenId: string,
+    @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { items, total } = await this.transactionsService.findByToken(
+      tokenId,
+      paginationDto,
+    );
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 }

@@ -31,8 +31,11 @@ import {
   ApiCreatePurchase,
 } from "../decorators/swagger/purchase.decorators";
 import { JwtAuthGuard } from "src/auth/guards/jwt-auth.guard";
+import { RolesGuard } from "src/auth/guards/roles.guard";
+import { Roles } from "src/decorators/roles.decorator";
+import { UserRole } from "@generated/prisma";
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller("purchases")
 @ApiTags("purchases")
 export class PurchasesController {
@@ -119,45 +122,80 @@ export class PurchasesController {
   }
 
   @Get()
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @ApiGetPurchases()
-  findAll(@Query() paginationDto: CursorPaginationDto) {
-    return this.purchasesService.findAll(paginationDto);
+  async findAll(
+    @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { items, total } =
+      await this.purchasesService.findAll(paginationDto);
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get("search")
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @ApiSearchPurchases()
-  search(
+  async search(
     @Query() searchParams: SearchPurchaseDto,
     @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.purchasesService.search(searchParams, paginationDto);
+    const { items, total } = await this.purchasesService.search(
+      searchParams,
+      paginationDto,
+    );
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get("user/:userId")
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @ApiGetUserPurchases()
-  findByUser(
+  async findByUser(
     @Param("userId") userId: string,
     @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.purchasesService.findByUser(userId, paginationDto);
+    const { items, total } = await this.purchasesService.findByUser(
+      userId,
+      paginationDto,
+    );
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get("token/:tokenId")
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @ApiGetTokenPurchases()
-  findByToken(
+  async findByToken(
     @Param("tokenId") tokenId: string,
     @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.purchasesService.findByToken(tokenId, paginationDto);
+    const { items, total } = await this.purchasesService.findByToken(
+      tokenId,
+      paginationDto,
+    );
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get("blockchain/:blockchainId")
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @ApiGetBlockchainPurchases()
-  findByBlockchain(
+  async findByBlockchain(
     @Param("blockchainId") blockchainId: string,
     @Query() paginationDto: CursorPaginationDto,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.purchasesService.findByBlockchain(blockchainId, paginationDto);
+    const { items, total } = await this.purchasesService.findByBlockchain(
+      blockchainId,
+      paginationDto,
+    );
+    res.setHeader("X-Total-Count", String(total));
+    return items;
   }
 
   @Get(":id")
@@ -167,13 +205,14 @@ export class PurchasesController {
     @Query("vendorResponse") vendorResponse?: string,
   ) {
     const includeVendorResponse = vendorResponse === "true";
-    return this.purchasesService.findOne(id, { 
-      vendorResponse: includeVendorResponse 
+    return this.purchasesService.findOne(id, {
+      vendorResponse: includeVendorResponse
     });
   }
 
 
   @Put(":id/status")
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @ApiUpdatePurchaseStatus()
   updateStatus(
     @Param("id") id: string,
@@ -226,6 +265,7 @@ export class PurchasesController {
   }
 
   @Get("queue/stats")
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @ApiGetQueueStats()
   async getQueueStats() {
     return await this.queueService.getQueueStats();

@@ -38,24 +38,34 @@ export class RegionsService {
   }
 
   async findAll(paginationDto: CursorPaginationDto) {
-    const { cursor, take = 10 } = paginationDto;
+    const { cursor, take = 10, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
 
-    return await this.prisma.region.findMany({
+    const findArgs = {
       take,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
-      include: {
-        users: true,
-        availableTokens: {
-          include: {
-            token: true,
+      skip: useSkip ? skip : cursor ? 1 : 0,
+      cursor: useSkip ? undefined : cursor ? { id: cursor } : undefined,
+    };
+
+    const [items, total] = await Promise.all([
+      this.prisma.region.findMany({
+        ...findArgs,
+        include: {
+          users: true,
+          availableTokens: {
+            include: {
+              token: true,
+            },
           },
         },
-      },
-      orderBy: {
-        code: "asc",
-      },
-    });
+        orderBy: {
+          code: "asc",
+        },
+      }),
+      this.prisma.region.count(),
+    ]);
+
+    return { items, total };
   }
 
   async findOne(id: string) {
@@ -261,7 +271,8 @@ export class RegionsService {
     searchParams: SearchRegionDto,
     paginationDto: CursorPaginationDto,
   ) {
-    const { cursor, take = 10 } = paginationDto;
+    const { cursor, take = 10, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
     const { code, name, currencyCode, isActive, hasKYCRequirement } =
       searchParams;
 
@@ -287,22 +298,31 @@ export class RegionsService {
       where.hasKYCRequirement = hasKYCRequirement;
     }
 
-    return await this.prisma.region.findMany({
+    const findArgs = {
       take,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
-      where,
-      include: {
-        users: true,
-        availableTokens: {
-          include: {
-            token: true,
+      skip: useSkip ? skip : cursor ? 1 : 0,
+      cursor: useSkip ? undefined : cursor ? { id: cursor } : undefined,
+    };
+
+    const [items, total] = await Promise.all([
+      this.prisma.region.findMany({
+        ...findArgs,
+        where,
+        include: {
+          users: true,
+          availableTokens: {
+            include: {
+              token: true,
+            },
           },
         },
-      },
-      orderBy: {
-        code: "asc",
-      },
-    });
+        orderBy: {
+          code: "asc",
+        },
+      }),
+      this.prisma.region.count({ where }),
+    ]);
+
+    return { items, total };
   }
 }

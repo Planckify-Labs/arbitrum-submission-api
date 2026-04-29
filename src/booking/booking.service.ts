@@ -207,16 +207,29 @@ export class BookingService {
   }
 
   async findAllAdmin(query: BookingQueryDto) {
-    const { status, cursor, take = 10 } = query;
-    return this.prisma.bookingOrder.findMany({
-      where: status ? { status } : undefined,
-      take,
-      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
-      orderBy: { createdAt: 'desc' },
-      include: {
-        purchase: true,
-      },
-    });
+    const { status, cursor, take = 10, skip } = query;
+    const useSkip = typeof skip === "number" && skip > 0;
+    const where = status ? { status } : undefined;
+
+    const findArgs = {
+      skip: useSkip ? skip : cursor ? 1 : 0,
+      cursor: useSkip ? undefined : cursor ? { id: cursor } : undefined,
+    };
+
+    const [items, total] = await Promise.all([
+      this.prisma.bookingOrder.findMany({
+        where,
+        take,
+        ...findArgs,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          purchase: true,
+        },
+      }),
+      this.prisma.bookingOrder.count({ where }),
+    ]);
+
+    return { items, total };
   }
 
   async getLatestBooking(walletAddress: string) {

@@ -111,23 +111,35 @@ export class ProductsService {
   ) {}
 
   async findAll(paginationDto: CursorPaginationDto) {
-    const { cursor, take = 10 } = paginationDto;
+    const { cursor, take = 10, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
+    const cacheKey = `${cursor ?? "first"}:t${take}:s${skip ?? 0}`;
 
-    return this.productCache.getProductList(cursor ?? "first", async () => {
-      return this.prisma.product.findMany({
+    return this.productCache.getProductList(cacheKey, async () => {
+      const findArgs = {
         take,
-        skip: cursor ? 1 : 0,
-        cursor: cursor ? { id: cursor } : undefined,
-        include: productInclude,
-        orderBy: {
-          name: "asc",
-        },
-      });
+        skip: useSkip ? skip : cursor ? 1 : 0,
+        cursor: useSkip ? undefined : cursor ? { id: cursor } : undefined,
+      };
+
+      const [items, total] = await Promise.all([
+        this.prisma.product.findMany({
+          ...findArgs,
+          include: productInclude,
+          orderBy: {
+            name: "asc",
+          },
+        }),
+        this.prisma.product.count(),
+      ]);
+
+      return { items, total };
     });
   }
 
-  search(params: SearchProductDto, paginationDto: CursorPaginationDto) {
-    const { cursor, take = 10 } = paginationDto;
+  async search(params: SearchProductDto, paginationDto: CursorPaginationDto) {
+    const { cursor, take = 10, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
     const { query, vendorId, active, code, id, name, vendorName, isVoucher } =
       params;
 
@@ -211,66 +223,107 @@ export class ProductsService {
       where.isVoucher = isVoucher;
     }
 
+    const findArgs = {
+      take,
+      skip: useSkip ? skip : cursor ? 1 : 0,
+      cursor: useSkip ? undefined : cursor ? { id: cursor } : undefined,
+    };
+
     // Search queries are not cached due to high variability
-    return this.prisma.product.findMany({
-      take,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
-      where,
-      include: productInclude,
-      orderBy: {
-        name: "asc",
-      },
-    });
+    const [items, total] = await Promise.all([
+      this.prisma.product.findMany({
+        ...findArgs,
+        where,
+        include: productInclude,
+        orderBy: {
+          name: "asc",
+        },
+      }),
+      this.prisma.product.count({ where }),
+    ]);
+
+    return { items, total };
   }
 
-  findVouchers(paginationDto: CursorPaginationDto) {
-    const { cursor, take = 10 } = paginationDto;
+  async findVouchers(paginationDto: CursorPaginationDto) {
+    const { cursor, take = 10, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
+    const where: Prisma.ProductWhereInput = {
+      isVoucher: true,
+      isActive: true,
+    };
 
-    return this.prisma.product.findMany({
+    const findArgs = {
       take,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
-      where: {
-        isVoucher: true,
-        isActive: true,
-      },
-      include: productInclude,
-      orderBy: {
-        name: "asc",
-      },
-    });
+      skip: useSkip ? skip : cursor ? 1 : 0,
+      cursor: useSkip ? undefined : cursor ? { id: cursor } : undefined,
+    };
+
+    const [items, total] = await Promise.all([
+      this.prisma.product.findMany({
+        ...findArgs,
+        where,
+        include: productInclude,
+        orderBy: {
+          name: "asc",
+        },
+      }),
+      this.prisma.product.count({ where }),
+    ]);
+
+    return { items, total };
   }
 
-  findNonVouchers(paginationDto: CursorPaginationDto) {
-    const { cursor, take = 10 } = paginationDto;
+  async findNonVouchers(paginationDto: CursorPaginationDto) {
+    const { cursor, take = 10, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
+    const where: Prisma.ProductWhereInput = {
+      isVoucher: false,
+      isActive: true,
+    };
 
-    return this.prisma.product.findMany({
+    const findArgs = {
       take,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
-      where: {
-        isVoucher: false,
-        isActive: true,
-      },
-      include: productInclude,
-      orderBy: {
-        name: "asc",
-      },
-    });
+      skip: useSkip ? skip : cursor ? 1 : 0,
+      cursor: useSkip ? undefined : cursor ? { id: cursor } : undefined,
+    };
+
+    const [items, total] = await Promise.all([
+      this.prisma.product.findMany({
+        ...findArgs,
+        where,
+        include: productInclude,
+        orderBy: {
+          name: "asc",
+        },
+      }),
+      this.prisma.product.count({ where }),
+    ]);
+
+    return { items, total };
   }
 
-  findAllCategories(paginationDto: CursorPaginationDto) {
-    const { cursor, take = 10 } = paginationDto;
+  async findAllCategories(paginationDto: CursorPaginationDto) {
+    const { cursor, take = 10, skip } = paginationDto;
+    const useSkip = typeof skip === "number" && skip > 0;
 
-    return this.prisma.category.findMany({
+    const findArgs = {
       take,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
-      orderBy: {
-        name: "asc",
-      },
-    });
+      skip: useSkip ? skip : cursor ? 1 : 0,
+      cursor: useSkip ? undefined : cursor ? { id: cursor } : undefined,
+    };
+
+    const [items, total] = await Promise.all([
+      this.prisma.category.findMany({
+        ...findArgs,
+        orderBy: {
+          name: "asc",
+        },
+      }),
+      this.prisma.category.count(),
+    ]);
+
+    return { items, total };
   }
 
   async findByCategory(categoryId: string) {

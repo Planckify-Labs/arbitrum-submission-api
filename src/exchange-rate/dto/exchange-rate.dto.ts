@@ -153,21 +153,16 @@ export class QueryExchangeRateDto {
   @Max(100)
   @Type(() => Number)
   take?: number;
-}
 
-export class CursorPaginatedExchangeRateResponse {
-  @ApiProperty({
-    description: "List of exchange rates",
-    type: [ExchangeRateResponseDto],
+  @ApiPropertyOptional({
+    description: "Offset for pagination (used for jump-to-page)",
+    minimum: 0,
+    example: 0,
   })
-  data: ExchangeRateResponseDto[];
-
-  @ApiProperty({ description: "Number of records returned" })
-  count: number;
-
-  @ApiProperty({ description: "Cursor for the next page", required: false })
-  nextCursor?: string;
-
-  @ApiProperty({ description: "Whether there are more records available" })
-  hasMore: boolean;
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  @Type(() => Number)
+  skip?: number;
 }
+

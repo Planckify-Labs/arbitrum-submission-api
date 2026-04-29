@@ -297,29 +297,39 @@ export class RedeemService {
 
   async findAllAdmin(query: RedeemHistoryQueryDto & { userId?: string }) {
     const limit = query.limit ?? 20;
-    const where: Prisma.PointRedemptionWhereInput = {};
-    if (query.userId) where.userId = query.userId;
-    if (query.status) where.status = query.status;
-    if (query.cursor) {
-      where.id = { lt: query.cursor };
+    const skipOffset =
+      typeof query.skip === "number" && query.skip > 0 ? query.skip : undefined;
+
+    const baseWhere: Prisma.PointRedemptionWhereInput = {};
+    if (query.userId) baseWhere.userId = query.userId;
+    if (query.status) baseWhere.status = query.status;
+
+    const listWhere: Prisma.PointRedemptionWhereInput = { ...baseWhere };
+    if (!skipOffset && query.cursor) {
+      listWhere.id = { lt: query.cursor };
     }
 
-    const records = await this.prisma.pointRedemption.findMany({
-      where,
-      take: limit + 1,
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      include: {
-        user: { select: { id: true, username: true, email: true } },
-        productVariant: { include: { product: true } },
-        productPrice: true,
-      },
-    });
+    const [records, total] = await Promise.all([
+      this.prisma.pointRedemption.findMany({
+        where: listWhere,
+        take: limit + 1,
+        ...(skipOffset ? { skip: skipOffset } : {}),
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        include: {
+          user: { select: { id: true, username: true, email: true } },
+          productVariant: { include: { product: true } },
+          productPrice: true,
+        },
+      }),
+      this.prisma.pointRedemption.count({ where: baseWhere }),
+    ]);
 
     const hasMore = records.length > limit;
     const data = hasMore ? records.slice(0, limit) : records;
     const nextCursor = hasMore ? data[data.length - 1].id : null;
 
     return {
+      total,
       data: data.map((r) => ({
         id: r.id,
         status: r.status,

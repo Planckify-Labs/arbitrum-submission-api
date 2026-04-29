@@ -64,6 +64,18 @@ export class BookingQueryDto {
   @IsOptional()
   @Type(() => Number)
   take?: number;
+
+  @ApiProperty({
+    description: "Offset for pagination (used for jump-to-page)",
+    example: 0,
+    required: false,
+    type: Number,
+  })
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  skip?: number;
 }
 
 export class BookingStatsResponseDto {

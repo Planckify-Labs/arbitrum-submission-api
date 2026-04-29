@@ -11,7 +11,6 @@ import {
   CreateExchangeRateDto,
   ExchangeRateResponseDto,
   QueryExchangeRateDto,
-  CursorPaginatedExchangeRateResponse,
   GetLatestExchangeRateDto,
 } from "../../exchange-rate/dto/exchange-rate.dto";
 
@@ -82,7 +81,8 @@ export const ApiGetAllExchangeRates = () =>
     ApiResponse({
       status: 200,
       description: "Exchange rates retrieved successfully",
-      type: CursorPaginatedExchangeRateResponse,
+      type: ExchangeRateResponseDto,
+      isArray: true,
     }),
   );
 

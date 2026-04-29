@@ -1,5 +1,5 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsNumber, IsOptional, IsString } from "class-validator";
+import { IsNumber, IsOptional, IsString, Min } from "class-validator";
 import { Type } from "class-transformer";
 
 export class CursorPaginationDto {
@@ -21,4 +21,15 @@ export class CursorPaginationDto {
   @IsOptional()
   @IsString()
   cursor?: string;
+
+  @ApiProperty({
+    description: "Offset for pagination (used for jump-to-page)",
+    example: 0,
+    required: false,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
+  @Min(0)
+  skip?: number;
 }

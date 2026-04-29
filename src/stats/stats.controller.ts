@@ -1,11 +1,13 @@
-import { Controller, Get } from "@nestjs/common";
+import { Controller, Get, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiResponse } from "@nestjs/swagger";
 import { StatsService } from "./stats.service";
 import { Roles } from "../decorators/roles.decorator";
+import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { UserRole } from "@generated/prisma";
 
 @Controller("stats")
 @ApiTags("stats")
+@UseGuards(JwtAuthGuard)
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 export class StatsController {
   constructor(private readonly statsService: StatsService) {}
