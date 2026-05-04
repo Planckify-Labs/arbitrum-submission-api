@@ -1,5 +1,7 @@
 import { BadRequestException, ValidationPipe } from "@nestjs/common";
+import { CreateMerchantDto } from "./dto/create-merchant.dto";
 import { ListChannelsQueryDto } from "./dto/list-channels-query.dto";
+import { PatchMerchantDto } from "./dto/patch-merchant.dto";
 
 /**
  * Validation-pipe smoke tests for the public `GET /v1/merchants/channels`
@@ -65,6 +67,69 @@ describe("ListChannelsQueryDto validation (feeds GET /v1/merchants/channels)", (
   it("rejects a malformed country (empty string) with 400", async () => {
     await expect(
       pipe.transform({ country: "" }, metatype),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+/**
+ * Regression for the bug where `payoutAccountNumber: { ... }` (an object)
+ * was silently coerced by `enableImplicitConversion: true` to the literal
+ * string `"[object Object]"` — `@IsString()` then passed and the BYTEA
+ * column was written with garbage. The DTO must 400 instead.
+ */
+describe("CreateMerchantDto / PatchMerchantDto reject non-string fields", () => {
+  const pipe = makePipe();
+
+  const validBody = {
+    displayName: "Warung Test",
+    countryCode: "ID",
+    payoutChannel: "GOPAY",
+    payoutAccountNumber: "+6281234567890",
+    payoutAccountHolderName: "Bu Sari",
+  };
+
+  it("accepts a well-formed signup body", async () => {
+    const out = await pipe.transform(validBody, {
+      type: "body",
+      metatype: CreateMerchantDto,
+      data: "",
+    });
+    expect(out).toBeInstanceOf(CreateMerchantDto);
+    expect(out.payoutAccountNumber).toBe("+6281234567890");
+  });
+
+  for (const field of [
+    "displayName",
+    "countryCode",
+    "payoutChannel",
+    "payoutAccountNumber",
+    "payoutAccountHolderName",
+  ] as const) {
+    it(`rejects an object passed as ${field} with 400 (no silent String() coercion)`, async () => {
+      await expect(
+        pipe.transform(
+          { ...validBody, [field]: { foo: "bar" } },
+          { type: "body", metatype: CreateMerchantDto, data: "" },
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it(`rejects a number passed as ${field} with 400`, async () => {
+      await expect(
+        pipe.transform(
+          { ...validBody, [field]: 1234567890 },
+          { type: "body", metatype: CreateMerchantDto, data: "" },
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  }
+
+  it("rejects an object passed as payoutAccountNumber on PATCH /me", async () => {
+    await expect(
+      pipe.transform(
+        { payoutAccountNumber: { foo: "bar" } },
+        { type: "body", metatype: PatchMerchantDto, data: "" },
+      ),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

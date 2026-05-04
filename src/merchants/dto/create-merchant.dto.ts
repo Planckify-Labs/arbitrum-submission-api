@@ -8,6 +8,7 @@ import {
   MaxLength,
   ValidateNested,
 } from "class-validator";
+import { RawString } from "../../utils/validators/raw-string.transform";
 
 /**
  * Sub-object for the optional QRIS sticker linkage carried on the
@@ -23,6 +24,7 @@ export class QrisLinkDto {
   @ApiProperty({
     description: "PAN from EMVCo tag 26 sub-01 of the merchant's QRIS sticker.",
   })
+  @RawString()
   @IsString()
   @Length(8, 40)
   qrisPan!: string;
@@ -31,6 +33,7 @@ export class QrisLinkDto {
     description: "Object-store key for the sticker evidence photo (optional).",
   })
   @IsOptional()
+  @RawString({ optional: true })
   @IsString()
   @MaxLength(512)
   stickerPhotoKey?: string;
@@ -53,6 +56,7 @@ export class CreateMerchantDto {
     description: "Merchant display name (customer-facing).",
     example: "Warung Mbak Sari",
   })
+  @RawString()
   @IsString()
   @Length(1, 80)
   displayName!: string;
@@ -62,6 +66,7 @@ export class CreateMerchantDto {
       "ISO 3166-1 alpha-2 country code. Today only ID has seeded channels; unknown country+channel combinations fail with CHANNEL_UNKNOWN at the channel lookup, so the country allowlist is data-driven (the `Channel` table) rather than enum-locked here.",
     example: "ID",
   })
+  @RawString()
   @IsString()
   @Matches(/^[A-Z]{2}$/, { message: "countryCode must be an ISO 3166-1 alpha-2 code (e.g. ID)" })
   countryCode!: string;
@@ -71,6 +76,7 @@ export class CreateMerchantDto {
       "Canonical payout channel code — validated against the `Channel` table for the given country.",
     example: "GOPAY",
   })
+  @RawString()
   @IsString()
   @Length(1, 32)
   payoutChannel!: string;
@@ -79,6 +85,7 @@ export class CreateMerchantDto {
     description:
       "Polymorphic account identifier — phone (+62…) for e-wallets, digits for banks. Format validated against the channel's `accountFormat` regex.",
   })
+  @RawString()
   @IsString()
   @Length(3, 64)
   payoutAccountNumber!: string;
@@ -87,6 +94,7 @@ export class CreateMerchantDto {
     description:
       "Legal account holder name. Must match the e-wallet/bank record exactly — Xendit rejects mismatches.",
   })
+  @RawString()
   @IsString()
   @Length(1, 120)
   payoutAccountHolderName!: string;
@@ -95,6 +103,7 @@ export class CreateMerchantDto {
     description: "WhatsApp / contact phone (not the payout account).",
   })
   @IsOptional()
+  @RawString({ optional: true })
   @IsString()
   @Length(5, 32)
   contactPhone?: string;

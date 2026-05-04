@@ -99,7 +99,7 @@ export class MerchantsService {
     // round-trip. Callers that need true at-rest secrecy layer this
     // through pgcrypto or a KMS envelope later; the column shape is
     // unchanged.
-    const accountBytes = Buffer.from(dto.payoutAccountNumber, "utf8");
+    const accountBytes = this.encodeAccountNumber(dto.payoutAccountNumber);
 
     try {
       const row = await this.prisma.$transaction(async (tx) => {
@@ -231,7 +231,7 @@ export class MerchantsService {
         contactPhone: dto.contactPhone ?? existing.contactPhone,
         payoutChannelCode: nextChannel,
         payoutAccountNumber: nextAccount
-          ? Buffer.from(nextAccount, "utf8")
+          ? this.encodeAccountNumber(nextAccount)
           : existing.payoutAccountNumber,
         payoutAccountHolderName:
           dto.payoutAccountHolderName ?? existing.payoutAccountHolderName,
@@ -384,6 +384,24 @@ export class MerchantsService {
       });
     }
     return row;
+  }
+
+  /**
+   * Final defensive guard before we materialise the BYTEA payload. The
+   * DTO layer already rejects non-string inputs (see `RawString`), but a
+   * future caller that hand-builds a Prisma update could otherwise drop
+   * an object/number into this path — `Buffer.from(value, "utf8")` would
+   * then silently coerce it via `String(value)` and persist
+   * `"[object Object]"`. We refuse the write loudly instead.
+   */
+  private encodeAccountNumber(account: string): Buffer {
+    if (typeof account !== "string") {
+      throw new BadRequestException({
+        message: "payoutAccountNumber must be a string",
+        code: "PAYOUT_ACCOUNT_TYPE_INVALID",
+      });
+    }
+    return Buffer.from(account, "utf8");
   }
 
   private validateAccountFormat(account: string, format: string): void {
