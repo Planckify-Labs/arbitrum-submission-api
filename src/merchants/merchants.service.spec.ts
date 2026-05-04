@@ -10,6 +10,7 @@ import {
 } from "@nestjs/common";
 import type { ConfigService } from "@nestjs/config";
 import { exportJWK, importSPKI, jwtVerify } from "jose";
+import { encryptAccountNumber } from "../payout/account-number-crypto";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { ValkeyService } from "../valkey/valkey.service";
 import {
@@ -91,7 +92,7 @@ function buildPrismaStub(
     contactPhone: "",
     country: "ID",
     payoutChannelCode: "GOPAY",
-    payoutAccountNumber: Buffer.from("+6281234567890", "utf8"),
+    payoutAccountNumber: encryptAccountNumber("+6281234567890"),
     payoutAccountHolderName: "Bu Sari",
     qrisPan: null,
     jwsQr: "takumipay:v1:PENDING",
@@ -302,7 +303,7 @@ describe("MerchantsService", () => {
         contactPhone: "+6289999",
         country: "ID",
         payoutChannelCode: "BCA",
-        payoutAccountNumber: Buffer.from("1234567890", "utf8"),
+        payoutAccountNumber: encryptAccountNumber("1234567890"),
         payoutAccountHolderName: "Bu Profile",
         qrisPan: null,
         jwsQr: "takumipay:v1:AAA",
@@ -331,7 +332,7 @@ describe("MerchantsService", () => {
         contactPhone: "",
         country: "ID",
         payoutChannelCode: "GOPAY",
-        payoutAccountNumber: Buffer.from("+6281234567890", "utf8"),
+        payoutAccountNumber: encryptAccountNumber("+6281234567890"),
         payoutAccountHolderName: "Bu Rot",
         qrisPan: null,
         jwsQr: "takumipay:v1:OLD",

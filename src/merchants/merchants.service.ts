@@ -7,6 +7,10 @@ import {
   Optional,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import {
+  decryptAccountNumber,
+  encryptAccountNumber,
+} from "../payout/account-number-crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { ValkeyService } from "../valkey/valkey.service";
 import type { ChannelResponseDto } from "./dto/channel-response.dto";
@@ -92,13 +96,6 @@ export class MerchantsService {
       qrisPan: qrisPan ?? undefined,
     });
 
-    // Account number encryption placeholder — the column is BYTEA per
-    // schema.prisma §6.6, and the long-term encryption envelope is
-    // delivered by task 45 / ops. For now we persist UTF-8 bytes of the
-    // plaintext so the Xendit payout service (task 29) can decrypt
-    // round-trip. Callers that need true at-rest secrecy layer this
-    // through pgcrypto or a KMS envelope later; the column shape is
-    // unchanged.
     const accountBytes = this.encodeAccountNumber(dto.payoutAccountNumber);
 
     try {
@@ -401,7 +398,7 @@ export class MerchantsService {
         code: "PAYOUT_ACCOUNT_TYPE_INVALID",
       });
     }
-    return Buffer.from(account, "utf8");
+    return encryptAccountNumber(account);
   }
 
   private validateAccountFormat(account: string, format: string): void {
@@ -454,8 +451,8 @@ export class MerchantsService {
     createdAt: Date;
     updatedAt: Date;
   }): MerchantResponseDto {
-    const accountUtf8 = Buffer.from(row.payoutAccountNumber).toString("utf8");
-    const last4 = accountUtf8.slice(-4).padStart(4, "•");
+    const accountPlaintext = decryptAccountNumber(row.payoutAccountNumber);
+    const last4 = accountPlaintext.slice(-4).padStart(4, "•");
     return {
       id: row.id,
       displayName: row.displayName,
