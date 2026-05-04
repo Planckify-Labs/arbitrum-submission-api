@@ -709,6 +709,26 @@ async function main() {
         bundlerUrl: null, // Arc has no bundler; see task 37 + §7.1.
       },
     }),
+    // Monad mainnet — sourced from staging-api.takumiaiwallet.xyz /blockchains.
+    // EVM chain 143, native currency MON. No Gateway / Paymaster / x402 on
+    // Monad — those fields stay null. Appended last to keep existing
+    // `blockchains[N]` indices stable; Monad is `blockchains[9]`.
+    prisma.blockchain.upsert({
+      where: { chainId: 143 },
+      update: {
+        rpcUrl: "https://rpc.monad.xyz",
+        blockExplorer: "https://monadvision.com",
+      },
+      create: {
+        name: "Monad",
+        chainId: 143,
+        rpcUrl: "https://rpc.monad.xyz",
+        blockExplorer: "https://monadvision.com",
+        isEVM: true,
+        isActive: true,
+        isTestnet: false,
+      },
+    }),
   ]);
 
   await Promise.all([
@@ -1180,6 +1200,39 @@ async function main() {
       },
     }),
   ]);
+
+  // MON on Monad — native currency, no contract address (mirrors staging).
+  // The compound-unique upsert path can't be used here because Postgres
+  // allows multiple null contractAddress rows per blockchain, so we identify
+  // the row by (blockchainId, isNativeCurrency) instead. Idempotent on re-seed.
+  const existingMonToken = await prisma.token.findFirst({
+    where: {
+      blockchainId: blockchains[9].id,
+      isNativeCurrency: true,
+    },
+  });
+  if (existingMonToken) {
+    await prisma.token.update({
+      where: { id: existingMonToken.id },
+      data: {
+        logoUrl: "https://files.svgcdn.io/token-branded/monad.png",
+      },
+    });
+  } else {
+    await prisma.token.create({
+      data: {
+        name: "Monad",
+        symbol: "MON",
+        decimals: 18,
+        blockchainId: blockchains[9].id, // Monad
+        contractAddress: null,
+        logoUrl: "https://files.svgcdn.io/token-branded/monad.png",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
+      },
+    });
+  }
 
   const exchangeSource = await prisma.exchangeSource.upsert({
     where: { name: "CoinGecko" },
