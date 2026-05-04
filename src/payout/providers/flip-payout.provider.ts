@@ -2,7 +2,7 @@ import { Injectable, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { timingSafeEqual } from "node:crypto";
 import type { Merchant, PaymentIntent } from "@generated/prisma";
-import type { PrismaService } from "../../prisma/prisma.service";
+import { PrismaService } from "../../prisma/prisma.service";
 import { decryptAccountNumber, redactAccountNumber } from "../account-number-crypto";
 import type { IPayoutProviderAdapter } from "../payout-provider.port";
 import { getProviderChannel } from "../provider-channel";
