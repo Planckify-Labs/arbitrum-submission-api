@@ -13,6 +13,7 @@ import * as path from "path";
 import * as argon2 from "argon2";
 import { DUITKU_CHANNEL_CODES } from "../../payout/duitku-channels";
 import { FLIP_CHANNEL_CODES } from "../../payout/flip-channels";
+import { XENDIT_CHANNEL_CODES } from "../../payout/xendit-channels";
 
 interface VCGamersProduct {
   key: string;
@@ -1350,33 +1351,43 @@ async function main() {
       },
     });
 
-    // Xendit provider mapping — `providerChannelCode` == canonical today.
-    await prisma.providerChannel.upsert({
-      where: {
-        channelCode_country_provider: {
+    // Xendit provider mapping — wire-code resolved from `XENDIT_CHANNEL_CODES`.
+    // Xendit's Payouts API uses country-prefixed codes (ID_OVO, ID_BCA, …);
+    // the bare canonical code is for the Payment Methods (collection) API
+    // and is rejected by `/v2/payouts` with "Channel code is not supported".
+    const xenditCode = XENDIT_CHANNEL_CODES[ch.channelCode];
+    if (xenditCode) {
+      await prisma.providerChannel.upsert({
+        where: {
+          channelCode_country_provider: {
+            channelCode: ch.channelCode,
+            country: ch.country,
+            provider: "xendit",
+          },
+        },
+        update: {
+          providerChannelCode: xenditCode,
+          minAmountIdr: ch.minAmountIdr,
+          maxAmountIdr: ch.maxAmountIdr,
+          feeIdr: ch.feeIdr,
+          isActive: true,
+        },
+        create: {
           channelCode: ch.channelCode,
           country: ch.country,
           provider: "xendit",
+          providerChannelCode: xenditCode,
+          minAmountIdr: ch.minAmountIdr,
+          maxAmountIdr: ch.maxAmountIdr,
+          feeIdr: ch.feeIdr,
+          isActive: true,
         },
-      },
-      update: {
-        providerChannelCode: ch.channelCode,
-        minAmountIdr: ch.minAmountIdr,
-        maxAmountIdr: ch.maxAmountIdr,
-        feeIdr: ch.feeIdr,
-        isActive: true,
-      },
-      create: {
-        channelCode: ch.channelCode,
-        country: ch.country,
-        provider: "xendit",
-        providerChannelCode: ch.channelCode,
-        minAmountIdr: ch.minAmountIdr,
-        maxAmountIdr: ch.maxAmountIdr,
-        feeIdr: ch.feeIdr,
-        isActive: true,
-      },
-    });
+      });
+    } else {
+      console.warn(
+        `seed: no Xendit channel code for canonical "${ch.channelCode}"; skipping xendit ProviderChannel row.`,
+      );
+    }
 
     // Duitku provider mapping — wire-code resolved from the shared
     // `DUITKU_CHANNEL_CODES` table (research §2.7). Channels without a

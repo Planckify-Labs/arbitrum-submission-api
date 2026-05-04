@@ -1,6 +1,6 @@
 {
   "reference_id": "pi_01HXYZ",
-  "channel_code": "GOPAY",
+  "channel_code": "ID_GOPAY",
   "channel_properties": {
     "account_number": "081234567890",
     "account_holder_name": "Budi Warung"

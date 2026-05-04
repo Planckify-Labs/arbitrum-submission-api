@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ConfigService } from "@nestjs/config";
 import type { Merchant, PaymentIntent } from "@generated/prisma";
+import type { PrismaService } from "../../prisma/prisma.service";
 import { encryptAccountNumber } from "../account-number-crypto";
 import { PayoutProviderError } from "../types";
 import { XenditPayoutProvider } from "./xendit-payout.provider";
@@ -45,12 +46,32 @@ function intentStub(overrides: Partial<PaymentIntent> = {}): PaymentIntent {
 function merchantStub(overrides: Partial<Merchant> = {}): Merchant {
   return {
     id: "mch_123",
+    country: "ID",
     payoutChannelCode: "GOPAY",
     payoutAccountNumber: encryptAccountNumber("081234567890"),
     payoutAccountHolderName: "Budi Warung",
     payoutProvider: "xendit",
     ...overrides,
   } as unknown as Merchant;
+}
+
+function prismaStub(
+  providerChannelRow: unknown = {
+    providerChannelCode: "ID_GOPAY",
+    channelCode: "GOPAY",
+    country: "ID",
+    provider: "xendit",
+    minAmountIdr: 10_000,
+    maxAmountIdr: 20_000_000,
+    feeIdr: 2500,
+    isActive: true,
+  },
+): PrismaService {
+  return {
+    providerChannel: {
+      findUnique: jest.fn(async () => providerChannelRow),
+    },
+  } as unknown as PrismaService;
 }
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -75,6 +96,7 @@ describe("XenditPayoutProvider wire-format parity (task 17)", () => {
     );
     const provider = new XenditPayoutProvider(
       configStub() as any,
+      prismaStub(),
       fetchMock as any,
     );
     await provider.triggerPayout(intentStub(), merchantStub());
@@ -95,6 +117,7 @@ describe("XenditPayoutProvider.triggerPayout", () => {
     );
     const provider = new XenditPayoutProvider(
       configStub() as any,
+      prismaStub(),
       fetchMock as any,
     );
     const receipt = await provider.triggerPayout(intentStub(), merchantStub());
@@ -113,7 +136,7 @@ describe("XenditPayoutProvider.triggerPayout", () => {
     const parsed = JSON.parse((init as RequestInit).body as string);
     expect(parsed).toMatchObject({
       reference_id: "pi_01HXYZ",
-      channel_code: "GOPAY",
+      channel_code: "ID_GOPAY",
       amount: 15_000,
       currency: "IDR",
     });
@@ -141,6 +164,7 @@ describe("XenditPayoutProvider.triggerPayout", () => {
     );
     const provider = new XenditPayoutProvider(
       configStub() as any,
+      prismaStub(),
       fetchMock as any,
     );
 
@@ -162,6 +186,7 @@ describe("XenditPayoutProvider.triggerPayout", () => {
     );
     const provider = new XenditPayoutProvider(
       configStub() as any,
+      prismaStub(),
       fetchMock as any,
     );
 
@@ -184,6 +209,7 @@ describe("XenditPayoutProvider.triggerPayout", () => {
       );
     const provider = new XenditPayoutProvider(
       configStub() as any,
+      prismaStub(),
       fetchMock as any,
     );
     const receipt = await provider.triggerPayout(intentStub(), merchantStub());
@@ -204,6 +230,7 @@ describe("XenditPayoutProvider.triggerPayout", () => {
 
     const provider = new XenditPayoutProvider(
       configStub() as any,
+      prismaStub(),
       fetchMock,
     );
 
@@ -221,6 +248,7 @@ describe("XenditPayoutProvider.triggerPayout", () => {
     const fetchMock = jest.fn();
     const provider = new XenditPayoutProvider(
       configStub({ XENDIT_SECRET_KEY: undefined } as any) as any,
+      prismaStub(),
       fetchMock as any,
     );
     await expect(

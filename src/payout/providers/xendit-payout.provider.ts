@@ -2,8 +2,10 @@ import { Injectable, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { timingSafeEqual } from "node:crypto";
 import type { Merchant, PaymentIntent } from "@generated/prisma";
+import type { PrismaService } from "../../prisma/prisma.service";
 import { decryptAccountNumber, redactAccountNumber } from "../account-number-crypto";
 import type { IPayoutProviderAdapter } from "../payout-provider.port";
+import { getProviderChannel } from "../provider-channel";
 import {
   PayoutProviderError,
   type TPayoutReceipt,
@@ -64,6 +66,7 @@ export class XenditPayoutProvider implements IPayoutProviderAdapter {
 
   constructor(
     private readonly config: ConfigService,
+    @Optional() private readonly prisma?: PrismaService,
     @Optional() httpFetch?: typeof fetch,
   ) {
     this.httpFetch = httpFetch ?? fetch;
@@ -75,6 +78,12 @@ export class XenditPayoutProvider implements IPayoutProviderAdapter {
   ): Promise<TPayoutReceipt> {
     const apiKey = this.requireConfig("XENDIT_SECRET_KEY");
     const apiBase = this.config.get<string>("XENDIT_API_BASE") ?? XenditPayoutProvider.DEFAULT_API_BASE;
+
+    // Resolve the wire channel_code via ProviderChannel. Xendit's Payouts
+    // API uses country-prefixed codes (ID_OVO, ID_BCA, …) — different from
+    // the canonical merchant-facing code we hold on Merchant. Mirrors the
+    // pattern Flip and Duitku already follow.
+    const wireChannelCode = await this.resolveWireChannelCode(merchant);
 
     // Decrypt the merchant's account number just-in-time. NEVER logged in
     // plaintext — only via `redactAccountNumber` for trace readability.
@@ -92,7 +101,7 @@ export class XenditPayoutProvider implements IPayoutProviderAdapter {
 
     const body = {
       reference_id: referenceId,
-      channel_code: merchant.payoutChannelCode,
+      channel_code: wireChannelCode,
       channel_properties: {
         account_number: accountNumberPlaintext,
         account_holder_name: merchant.payoutAccountHolderName,
@@ -322,6 +331,31 @@ export class XenditPayoutProvider implements IPayoutProviderAdapter {
       default:
         return "PENDING";
     }
+  }
+
+  private async resolveWireChannelCode(merchant: Merchant): Promise<string> {
+    if (!this.prisma) {
+      throw new PayoutProviderError({
+        message: "PrismaService not injected into XenditPayoutProvider",
+        kind: "unknown",
+        httpStatus: null,
+        rawResponse: null,
+      });
+    }
+    const pc = await getProviderChannel(
+      this.prisma,
+      merchant,
+      merchant.payoutChannelCode,
+    );
+    if (!pc) {
+      throw new PayoutProviderError({
+        message: `Missing ProviderChannel row for (${merchant.payoutChannelCode}, ${merchant.country}, xendit). Seed the row before enabling Xendit for this merchant.`,
+        kind: "client_error",
+        httpStatus: null,
+        rawResponse: null,
+      });
+    }
+    return pc.providerChannelCode;
   }
 
   private requireConfig(key: string): string {
