@@ -41,31 +41,52 @@ export class AuthController {
     @Param("walletAddress") walletAddress: string,
     @Query() nonceDto: NonceDto,
   ) {
-    // Explicit chainSlug wins — caller told us exactly which SIWS cluster.
+    // Explicit chainSlug wins — caller told us exactly which cluster/network.
     if (nonceDto.chainSlug) {
-      if (!nonceDto.chainSlug.startsWith("solana-")) {
-        throw new BadRequestException(
-          `Unsupported chainSlug: ${nonceDto.chainSlug}`,
+      if (nonceDto.chainSlug.startsWith("sui-")) {
+        const nonce = await this.authService.generateNonce(
+          walletAddress,
+          "sui",
         );
+        const message = this.authService.createSiwsSuiMessage(
+          walletAddress,
+          nonce,
+          nonceDto.chainSlug,
+        );
+        return { nonce, message };
       }
-      const nonce = await this.authService.generateNonce(
-        walletAddress,
-        "solana",
+      if (nonceDto.chainSlug.startsWith("solana-")) {
+        const nonce = await this.authService.generateNonce(
+          walletAddress,
+          "solana",
+        );
+        const message = this.authService.createSiwsMessage(
+          walletAddress,
+          nonce,
+          nonceDto.chainSlug,
+        );
+        return { nonce, message };
+      }
+      throw new BadRequestException(
+        `Unsupported chainSlug: ${nonceDto.chainSlug}`,
       );
-      const message = this.authService.createSiwsMessage(
-        walletAddress,
-        nonce,
-        nonceDto.chainSlug,
-      );
-      return { nonce, message };
     }
 
     // Defense-in-depth: auto-detect namespace from address format when
-    // the caller didn't specify one. A Solana base58 address hitting the
-    // SIWE-only path gets 400 "Invalid Ethereum wallet address format",
-    // which is confusing and brittle. Route it to SIWS (mainnet default)
-    // instead — devnet callers still need to pass `chainSlug` explicitly.
+    // the caller didn't specify one. Sui canonical addresses are
+    // `0x` + 64 hex chars (32 bytes); Solana addresses are base58 (no
+    // 0x prefix); EVM addresses are `0x` + 40 hex chars.
     const isEvmAddress = /^0x[a-fA-F0-9]{40}$/.test(walletAddress);
+    const isSuiAddress = /^0x[a-fA-F0-9]{64}$/.test(walletAddress);
+    if (isSuiAddress) {
+      const nonce = await this.authService.generateNonce(walletAddress, "sui");
+      const message = this.authService.createSiwsSuiMessage(
+        walletAddress,
+        nonce,
+        "sui-mainnet",
+      );
+      return { nonce, message };
+    }
     if (!isEvmAddress) {
       const nonce = await this.authService.generateNonce(
         walletAddress,

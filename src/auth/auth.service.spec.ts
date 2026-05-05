@@ -3,6 +3,7 @@ import { JwtService } from "@nestjs/jwt";
 import { AuthService } from "./auth.service";
 import { NonceCacheService } from "../valkey/services/nonce-cache.service";
 import { SiwsService } from "./siws/siws.service";
+import { SiwsSuiService } from "./siws-sui/siws-sui.service";
 import { PrismaService } from "../prisma/prisma.service";
 
 describe("AuthService.verifySignature dispatcher", () => {
@@ -23,11 +24,16 @@ describe("AuthService.verifySignature dispatcher", () => {
     buildMessage: jest.fn(),
   } as unknown as SiwsService;
 
+  const siwsSui = {
+    verify: jest.fn(),
+    buildMessage: jest.fn(),
+  } as unknown as SiwsSuiService;
+
   let service: AuthService;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service = new AuthService(prisma, jwt, config, nonceCache, siws);
+    service = new AuthService(prisma, jwt, config, nonceCache, siws, siwsSui);
   });
 
   it("routes SIWS messages to SiwsService.verify", async () => {

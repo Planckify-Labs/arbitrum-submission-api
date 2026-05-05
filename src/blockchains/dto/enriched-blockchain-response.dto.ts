@@ -144,7 +144,7 @@ export class EnrichedBlockchainResponseDto {
   name: string;
 
   @ApiProperty({
-    description: "EVM chain ID (CAIP-2 reference). Null for non-EVM rows (e.g. Solana).",
+    description: "EVM chain ID (CAIP-2 reference). Null for non-EVM rows (e.g. Solana, Sui).",
     example: 5042002,
     nullable: true,
     required: false,
@@ -153,7 +153,16 @@ export class EnrichedBlockchainResponseDto {
 
   @ApiProperty({
     description:
-      "CAIP-2 chain identifier — `eip155:<chainId>` for EVM, `solana:<cluster>` for Solana.",
+      "Stable slug for non-EVM rows (e.g. `sui-mainnet`, `solana-devnet`). Mobile uses this to disambiguate non-EVM namespaces — `isEVM:false` alone collides between Solana and Sui.",
+    example: "sui-mainnet",
+    nullable: true,
+    required: false,
+  })
+  chainSlug: string | null;
+
+  @ApiProperty({
+    description:
+      "CAIP-2 chain identifier — `eip155:<chainId>` for EVM, `solana:<cluster>` for Solana, `sui:<network>` for Sui.",
     example: "eip155:5042002",
     nullable: true,
     required: false,

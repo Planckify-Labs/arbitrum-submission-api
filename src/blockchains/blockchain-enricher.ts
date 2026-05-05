@@ -33,6 +33,7 @@ export interface TBlockchainRow {
   id: string;
   name: string;
   chainId: number | null;
+  chainSlug?: string | null;
   rpcUrl: string;
   blockExplorer: string;
   isEVM: boolean;
@@ -68,7 +69,23 @@ export function buildCaip2Id(row: TBlockchainRow): string | null {
   if (row.isEVM && row.chainId != null) {
     return `eip155:${row.chainId}`;
   }
-  // Non-EVM rows don't carry a CAIP-2 today — future work when SVM rows land.
+  // Non-EVM rows are keyed by `chainSlug` (e.g. `sui-mainnet`,
+  // `solana-devnet`). Translate to CAIP-2:
+  //   `sui-mainnet`    → `sui:mainnet`
+  //   `sui-testnet`    → `sui:testnet`
+  //   `sui-devnet`     → `sui:devnet`
+  //   `solana-mainnet` → `solana:mainnet-beta`  (Solana CAIP-2 uses
+  //                                             "mainnet-beta")
+  //   `solana-devnet`  → `solana:devnet`
+  if (typeof row.chainSlug === "string") {
+    if (row.chainSlug.startsWith("sui-")) {
+      return `sui:${row.chainSlug.slice("sui-".length)}`;
+    }
+    if (row.chainSlug.startsWith("solana-")) {
+      const cluster = row.chainSlug.slice("solana-".length);
+      return cluster === "mainnet" ? "solana:mainnet-beta" : `solana:${cluster}`;
+    }
+  }
   return null;
 }
 
@@ -180,6 +197,7 @@ export function enrichBlockchain(
     id: row.id,
     name: row.name,
     chainId: row.chainId,
+    chainSlug: row.chainSlug ?? null,
     caip2Id: buildCaip2Id(row),
     rpcUrl: row.rpcUrl,
     blockExplorer: row.blockExplorer,

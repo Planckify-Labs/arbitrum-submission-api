@@ -730,6 +730,43 @@ async function main() {
         isTestnet: false,
       },
     }),
+    // Sui mainnet — keyed by chainSlug (no EIP-155 chainId, same posture
+    // as Solana). Public Mysten fullnode for v1; swap in Alchemy/Triton
+    // when traffic warrants. blockchains[10].
+    // See docs/sui-chain-support-spec.md §3.8.
+    prisma.blockchain.upsert({
+      where: { chainSlug: "sui-mainnet" },
+      update: {
+        rpcUrl: "https://fullnode.mainnet.sui.io:443",
+        blockExplorer: "https://suivision.xyz",
+      },
+      create: {
+        name: "Sui",
+        chainSlug: "sui-mainnet",
+        rpcUrl: "https://fullnode.mainnet.sui.io:443",
+        blockExplorer: "https://suivision.xyz",
+        isEVM: false,
+        isActive: true,
+        isTestnet: false,
+      },
+    }),
+    // Sui testnet — blockchains[11].
+    prisma.blockchain.upsert({
+      where: { chainSlug: "sui-testnet" },
+      update: {
+        rpcUrl: "https://fullnode.testnet.sui.io:443",
+        blockExplorer: "https://testnet.suivision.xyz",
+      },
+      create: {
+        name: "Sui Testnet",
+        chainSlug: "sui-testnet",
+        rpcUrl: "https://fullnode.testnet.sui.io:443",
+        blockExplorer: "https://testnet.suivision.xyz",
+        isEVM: false,
+        isActive: true,
+        isTestnet: true,
+      },
+    }),
   ]);
 
   await Promise.all([
@@ -937,6 +974,34 @@ async function main() {
         contractAddress: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",
         logoUrl:
           "https://assets.coingecko.com/coins/images/325/small/Tether.png",
+        isStablecoin: true,
+        isActive: true,
+        peggedCurrency: "USD",
+      },
+    }),
+    // USDC on Sui mainnet — Circle-issued. CoinType is stored in
+    // `contractAddress` (same column-reuse pattern Solana uses for SPL
+    // mints). Mobile `SuiWalletKit.getTokenBalance` passes this string
+    // verbatim to `client.getBalance({ owner, coinType })`.
+    // See docs/sui-chain-support-spec.md §3.8.
+    prisma.token.upsert({
+      where: {
+        blockchainId_contractAddress: {
+          blockchainId: blockchains[10].id, // Sui mainnet
+          contractAddress:
+            "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC",
+        },
+      },
+      update: {},
+      create: {
+        name: "USD Coin",
+        symbol: "USDC",
+        decimals: 6,
+        blockchainId: blockchains[10].id, // Sui mainnet
+        contractAddress:
+          "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC",
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "USD",
@@ -1233,6 +1298,44 @@ async function main() {
         isActive: true,
       },
     });
+  }
+
+  // SUI native currency rows — `0x2::sui::SUI` is the canonical CoinType.
+  // Mirrors how Solana stores Wrapped SOL (`So11…112`) on the native row:
+  // mobile `SuiWalletKit.getTokenBalance` can pass this string verbatim.
+  // Decimals: 9 (1 SUI = 10⁹ MIST). One row per network.
+  for (const [idx, label] of [
+    [10, "Sui"], // mainnet
+    [11, "Sui Testnet"],
+  ] as const) {
+    const existing = await prisma.token.findFirst({
+      where: {
+        blockchainId: blockchains[idx].id,
+        isNativeCurrency: true,
+      },
+    });
+    if (existing) {
+      await prisma.token.update({
+        where: { id: existing.id },
+        data: {
+          logoUrl: "https://cryptologos.cc/logos/sui-sui-logo.png",
+        },
+      });
+    } else {
+      await prisma.token.create({
+        data: {
+          name: label,
+          symbol: "SUI",
+          decimals: 9,
+          blockchainId: blockchains[idx].id,
+          contractAddress: "0x2::sui::SUI",
+          logoUrl: "https://cryptologos.cc/logos/sui-sui-logo.png",
+          isStablecoin: false,
+          isNativeCurrency: true,
+          isActive: true,
+        },
+      });
+    }
   }
 
   const exchangeSource = await prisma.exchangeSource.upsert({

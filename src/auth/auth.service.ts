@@ -16,8 +16,10 @@ import { NonceCacheService } from "../valkey/services/nonce-cache.service";
 import { AuthResponseDto } from "./dto/auth-response.dto";
 import { SiwsService } from "./siws/siws.service";
 import { chainSlugToCluster, SiwsCluster } from "./siws/siws-message";
+import { SiwsSuiService } from "./siws-sui/siws-sui.service";
+import { suiChainSlugToNetwork } from "./siws-sui/siws-sui-message";
 
-export type AddressNamespace = "eip155" | "solana";
+export type AddressNamespace = "eip155" | "solana" | "sui";
 
 export interface VerifyDispatchResult {
   success: boolean;
@@ -39,6 +41,7 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly nonceCacheService: NonceCacheService,
     private readonly siwsService: SiwsService,
+    private readonly siwsSuiService: SiwsSuiService,
   ) {
     this.defaultChainId = this.configService.get<number>("CHAIN_ID", 1);
     this.nonceExpireMinutes = parseInt(
@@ -132,6 +135,45 @@ export class AuthService {
     });
   }
 
+  /**
+   * Sui counterpart to {@link createSiwsMessage}. Emits the canonical
+   * "wants you to sign in with your Sui account:" message that the
+   * mobile `SuiWalletKit.signAuthMessage` round-trips via
+   * `Ed25519Keypair.signPersonalMessage`.
+   */
+  createSiwsSuiMessage(
+    walletAddress: string,
+    nonce: string,
+    chainSlug: string,
+  ): string {
+    const network = suiChainSlugToNetwork(chainSlug);
+    const domain = this.configService.get<string>("SIWE_DOMAIN");
+    const uri = this.configService.get<string>("SIWE_URI");
+    const statement = this.configService.get<string>("SIWE_STATEMENT");
+    const issuedAt = new Date();
+    const expiration = new Date(
+      issuedAt.getTime() + this.nonceExpireMinutes * 60 * 1000,
+    );
+
+    if (!domain || !uri) {
+      throw new BadRequestException(
+        "SIWS-Sui environment (SIWE_DOMAIN/SIWE_URI) is not configured",
+      );
+    }
+
+    return this.siwsSuiService.buildMessage({
+      domain,
+      address: walletAddress,
+      statement,
+      uri,
+      version: "1",
+      chainId: network,
+      nonce,
+      issuedAt: issuedAt.toISOString(),
+      expirationTime: expiration.toISOString(),
+    });
+  }
+
   async verifySignature(
     message: string,
     signature: string,
@@ -143,6 +185,16 @@ export class AuthService {
     };
 
     try {
+      if (message.includes("wants you to sign in with your Sui account:")) {
+        const result = await this.siwsSuiService.verify(message, signature);
+        if (!result.success) return empty;
+        return {
+          success: true,
+          address: result.address,
+          namespace: "sui",
+        };
+      }
+
       if (message.includes("wants you to sign in with your Solana account:")) {
         const result = await this.siwsService.verify(message, signature);
         if (!result.success) return empty;
