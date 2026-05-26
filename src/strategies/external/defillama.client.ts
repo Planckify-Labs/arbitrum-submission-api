@@ -1,0 +1,377 @@
+import { Injectable, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { ValkeyService } from "../../valkey/valkey.service";
+
+export interface DeFiLlamaYieldPool {
+  pool: string;
+  chain: string;
+  project: string;
+  symbol: string;
+  tvlUsd: number;
+  apy: number;
+  apy7d?: number;
+  apyBase?: number;
+  apyReward?: number;
+  ilRisk: "yes" | "no";
+  exposure: "multi" | "stable" | "single";
+}
+
+interface DeFiLlamaPoolsResponse {
+  status: string;
+  data: Array<{
+    pool: string;
+    chain: string;
+    project: string;
+    symbol: string;
+    tvlUsd: number;
+    apy: number | null;
+    apyMean30d?: number | null;
+    apyBase?: number | null;
+    apyReward?: number | null;
+    ilRisk: "yes" | "no";
+    exposure: "multi" | "stable" | "single";
+    stablecoin?: boolean;
+    apyPct7D?: number | null;
+  }>;
+}
+
+interface DeFiLlamaProtocol {
+  id?: string;
+  name?: string;
+  slug?: string;
+  audits?: string | number | null;
+  audit_note?: string | null;
+  gecko_id?: string | null;
+  category?: string | null;
+  chains?: string[];
+  tvl?: number;
+}
+
+const POOLS_CACHE_KEY = "defillama:pools:filtered:v1";
+const DEFAULT_POOLS_CACHE_TTL_SEC = 30 * 60; // 30 min — matches the cron tick
+const DEFAULT_PROTOCOL_CACHE_TTL_SEC = 6 * 60 * 60; // 6 h — slow-moving metadata
+const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
+const DEFAULT_MIN_TVL_USD = 5_000_000;
+const DEFAULT_MAX_POOLS = 100;
+
+// Chains we score (mirrors the wallet's supported namespaces + L2s users hold).
+const RELEVANT_CHAINS = new Set([
+  "ethereum",
+  "arbitrum",
+  "optimism",
+  "base",
+  "polygon",
+  "avalanche",
+  "bsc",
+  "solana",
+  "sui",
+]);
+
+// Symbols we score. DeFiLlama uses things like "USDC", "STETH",
+// "USDC-USDT" for LP pools; substring match keeps multi-asset pools in.
+const RELEVANT_SYMBOL_TOKENS = [
+  "USDC",
+  "USDT",
+  "DAI",
+  "USDS",
+  "PYUSD",
+  "ETH",
+  "WETH",
+  "STETH",
+  "WSTETH",
+  "RETH",
+  "CBETH",
+  "SOL",
+  "JITOSOL",
+  "MSOL",
+  "BNSOL",
+  "BTC",
+  "WBTC",
+  "TBTC",
+];
+
+function stripTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, "");
+}
+
+function positiveIntFromEnv(raw: string | undefined, fallback: number): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+}
+
+/**
+ * Node's undici-backed `fetch` wraps every transport-level failure in a
+ * generic `TypeError: fetch failed` and stashes the real reason on
+ * `error.cause` (e.g. `Error { code: 'ENOTFOUND' }` for DNS,
+ * `'ECONNREFUSED'`, `'UND_ERR_CONNECT_TIMEOUT'`, etc.). The wrapper's
+ * message alone is useless for triage — this walks the cause chain and
+ * returns a single human string like `fetch failed: ENOTFOUND
+ * yields.llama.fi (getaddrinfo)` that's safe to log.
+ *
+ * Also normalises `AbortError` (our 20s timeout) into a clearer label.
+ */
+function describeFetchError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  if (err.name === "AbortError") return "request aborted (timeout)";
+
+  const parts: string[] = [err.message || err.name];
+  let cause: unknown = (err as { cause?: unknown }).cause;
+  // Walk the cause chain (undici sometimes nests 2 deep: TypeError → Error → SystemError).
+  while (cause instanceof Error) {
+    const code = (cause as NodeJS.ErrnoException).code;
+    const syscall = (cause as NodeJS.ErrnoException).syscall;
+    const hostname = (cause as { hostname?: string }).hostname;
+    const tag = [code, hostname, syscall].filter(Boolean).join(" ");
+    parts.push(tag ? `${cause.message} (${tag})` : cause.message);
+    cause = (cause as { cause?: unknown }).cause;
+  }
+  return parts.join(" → ");
+}
+
+function requireUrl(
+  configService: ConfigService,
+  name: string,
+): string {
+  const value = configService.get<string>(name);
+  if (!value || !value.trim()) {
+    throw new Error(
+      `${name} is required (DeFi Strategies). Set it in your environment — see .env.example for the production default.`,
+    );
+  }
+  return stripTrailingSlash(value.trim());
+}
+
+@Injectable()
+export class DeFiLlamaClient {
+  private readonly logger = new Logger(DeFiLlamaClient.name);
+  private readonly apiKey: string;
+  private readonly yieldsBaseUrl: string;
+  private readonly apiBaseUrl: string;
+  private readonly proBaseUrl: string;
+  private readonly poolsCacheTtlSec: number;
+  private readonly protocolCacheTtlSec: number;
+  private readonly requestTimeoutMs: number;
+  private readonly minTvlUsd: number;
+  private readonly maxPools: number;
+
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly valkeyService: ValkeyService,
+  ) {
+    this.apiKey = this.configService.get<string>("DEFILLAMA_API_KEY") || "";
+    this.yieldsBaseUrl = requireUrl(this.configService, "DEFILLAMA_YIELDS_URL");
+    this.apiBaseUrl = requireUrl(this.configService, "DEFILLAMA_API_URL");
+    // Pro endpoint is only used when a key is present — only require it then.
+    this.proBaseUrl = this.apiKey
+      ? requireUrl(this.configService, "DEFILLAMA_PRO_URL")
+      : "";
+    this.poolsCacheTtlSec = positiveIntFromEnv(
+      this.configService.get<string>("DEFILLAMA_POOLS_CACHE_TTL_SEC"),
+      DEFAULT_POOLS_CACHE_TTL_SEC,
+    );
+    this.protocolCacheTtlSec = positiveIntFromEnv(
+      this.configService.get<string>("DEFILLAMA_PROTOCOL_CACHE_TTL_SEC"),
+      DEFAULT_PROTOCOL_CACHE_TTL_SEC,
+    );
+    this.requestTimeoutMs = positiveIntFromEnv(
+      this.configService.get<string>("DEFILLAMA_REQUEST_TIMEOUT_MS"),
+      DEFAULT_REQUEST_TIMEOUT_MS,
+    );
+    this.minTvlUsd = positiveIntFromEnv(
+      this.configService.get<string>("DEFILLAMA_MIN_TVL_USD"),
+      DEFAULT_MIN_TVL_USD,
+    );
+    this.maxPools = positiveIntFromEnv(
+      this.configService.get<string>("DEFILLAMA_MAX_POOLS"),
+      DEFAULT_MAX_POOLS,
+    );
+    if (!this.apiKey) {
+      this.logger.log(
+        "DEFILLAMA_API_KEY not set — using public /pools endpoint (rate-limited, sufficient for 30-min cron).",
+      );
+    }
+  }
+
+  async getYieldPools(): Promise<DeFiLlamaYieldPool[]> {
+    const started = Date.now();
+    const cached =
+      await this.valkeyService.get<string>(POOLS_CACHE_KEY).catch(() => null);
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached) as DeFiLlamaYieldPool[];
+        this.logger.log(
+          `[getYieldPools] <- valkey cache hit (${parsed.length} pools)`,
+        );
+        return parsed;
+      } catch {
+        // fall through to network
+      }
+    }
+
+    this.logger.log(
+      `[getYieldPools] -> DeFiLlama /pools (hasKey=${Boolean(this.apiKey)})`,
+    );
+
+    try {
+      const url = this.apiKey
+        ? `${this.proBaseUrl}/${this.apiKey}/yields/pools`
+        : `${this.yieldsBaseUrl}/pools`;
+      const raw = await this.fetchJson<DeFiLlamaPoolsResponse>(url);
+      if (!raw || raw.status !== "success" || !Array.isArray(raw.data)) {
+        throw new Error(`Unexpected response shape (status=${raw?.status})`);
+      }
+
+      const filtered = this.filterPools(raw.data);
+      this.logger.log(
+        `[getYieldPools] <- DeFiLlama returned ${raw.data.length} pools (kept ${filtered.length}) in ${Date.now() - started}ms`,
+      );
+
+      await this.valkeyService
+        .set(POOLS_CACHE_KEY, JSON.stringify(filtered), {
+          ttl: this.poolsCacheTtlSec,
+        })
+        .catch((err) => {
+          this.logger.warn(
+            `[getYieldPools] valkey cache set failed: ${err?.message ?? err}`,
+          );
+        });
+
+      return filtered;
+    } catch (error: unknown) {
+      this.logger.error(
+        `[getYieldPools] DeFiLlama request failed (url=${
+          this.apiKey
+            ? `${this.proBaseUrl}/<key>/yields/pools`
+            : `${this.yieldsBaseUrl}/pools`
+        }): ${describeFetchError(error)}`,
+      );
+      // Re-throw — the poll processor's catch block already handles this and
+      // BullMQ will retry. Returning stub data would silently mask outages.
+      throw error;
+    }
+  }
+
+  async getProtocolMetadata(slug: string): Promise<{
+    slug: string;
+    name: string;
+    auditCount: number;
+    gecko_id: string | null;
+    category: string | null;
+    chains: string[];
+  }> {
+    const cacheKey = `defillama:protocol:${slug}:v1`;
+    const cached =
+      await this.valkeyService.get<string>(cacheKey).catch(() => null);
+    if (cached) {
+      try {
+        return JSON.parse(cached);
+      } catch {
+        // fall through
+      }
+    }
+
+    this.logger.log(`[getProtocolMetadata] -> DeFiLlama slug=${slug}`);
+    try {
+      const data = await this.fetchJson<DeFiLlamaProtocol>(
+        `${this.apiBaseUrl}/protocol/${encodeURIComponent(slug)}`,
+      );
+      const normalised = {
+        slug,
+        name: data?.name ?? this.titleCase(slug),
+        auditCount: this.parseAuditCount(data?.audits),
+        gecko_id: data?.gecko_id ?? null,
+        category: data?.category ?? null,
+        chains: Array.isArray(data?.chains) ? data.chains : [],
+      };
+      await this.valkeyService
+        .set(cacheKey, JSON.stringify(normalised), {
+          ttl: this.protocolCacheTtlSec,
+        })
+        .catch(() => undefined);
+      return normalised;
+    } catch (error: unknown) {
+      this.logger.warn(
+        `[getProtocolMetadata] DeFiLlama failed for slug=${slug} (url=${this.apiBaseUrl}/protocol/${encodeURIComponent(slug)}): ${describeFetchError(error)} — using degraded metadata`,
+      );
+      return {
+        slug,
+        name: this.titleCase(slug),
+        auditCount: 0,
+        gecko_id: null,
+        category: null,
+        chains: [],
+      };
+    }
+  }
+
+  private filterPools(
+    pools: DeFiLlamaPoolsResponse["data"],
+  ): DeFiLlamaYieldPool[] {
+    const seen = new Set<string>();
+    return pools
+      .filter((p) => {
+        if (!p.pool || seen.has(p.pool)) return false;
+        if (typeof p.tvlUsd !== "number" || p.tvlUsd < this.minTvlUsd) return false;
+        if (typeof p.apy !== "number" || p.apy <= 0) return false;
+        if (!RELEVANT_CHAINS.has(p.chain?.toLowerCase?.() ?? "")) return false;
+        const symbolUpper = (p.symbol ?? "").toUpperCase();
+        const isRelevantSymbol = RELEVANT_SYMBOL_TOKENS.some((token) =>
+          symbolUpper.includes(token),
+        );
+        if (!isRelevantSymbol) return false;
+        seen.add(p.pool);
+        return true;
+      })
+      .sort((a, b) => b.tvlUsd - a.tvlUsd)
+      .slice(0, this.maxPools)
+      .map((p) => ({
+        pool: p.pool,
+        chain: p.chain,
+        project: p.project,
+        symbol: p.symbol,
+        tvlUsd: p.tvlUsd,
+        apy: p.apy as number,
+        apy7d:
+          (typeof p.apyPct7D === "number"
+            ? (p.apy as number) + p.apyPct7D
+            : undefined) ?? p.apyMean30d ?? undefined,
+        apyBase: p.apyBase ?? undefined,
+        apyReward: p.apyReward ?? undefined,
+        ilRisk: p.ilRisk ?? "no",
+        exposure: p.exposure ?? "single",
+      }));
+  }
+
+  private async fetchJson<T>(url: string): Promise<T> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    try {
+      const response = await fetch(url, {
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      }
+      return (await response.json()) as T;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private parseAuditCount(audits: string | number | null | undefined): number {
+    if (typeof audits === "number") return audits;
+    if (typeof audits === "string") {
+      const n = parseInt(audits, 10);
+      return Number.isFinite(n) ? n : 0;
+    }
+    return 0;
+  }
+
+  private titleCase(slug: string): string {
+    return slug
+      .split(/[-_]/)
+      .map((s) => (s ? s[0].toUpperCase() + s.slice(1) : s))
+      .join(" ");
+  }
+}

@@ -48,6 +48,13 @@ export interface TBlockchainRow {
   x402VerifyingContract: string | null;
   x402FacilitatorUrl: string | null;
   tokens?: TTokenRow[] | null;
+  SmartContract?: TSmartContractRow[] | null;
+}
+
+export interface TSmartContractRow {
+  name: string;
+  address: string;
+  isActive: boolean;
 }
 
 export interface TTokenRow {
@@ -210,6 +217,9 @@ export function enrichBlockchain(
     x402: buildX402(row, x402Svc),
     usdc: buildUsdc(row),
     tokens: (row.tokens ?? []).filter((t) => t.isActive),
+    smartContracts: (row.SmartContract ?? [])
+      .filter((s) => s.isActive)
+      .map((s) => ({ name: s.name, address: s.address })),
     updatedAt: row.updatedAt,
   };
 }

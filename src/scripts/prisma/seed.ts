@@ -11,9 +11,144 @@ import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 import * as argon2 from "argon2";
+import { createPublicClient, erc20Abi, http, type Address, type Hex, type PublicClient } from "viem";
+import { readContract } from "viem/actions";
 import { DUITKU_CHANNEL_CODES } from "../../payout/duitku-channels";
 import { FLIP_CHANNEL_CODES } from "../../payout/flip-channels";
 import { XENDIT_CHANNEL_CODES } from "../../payout/xendit-channels";
+
+// Aave V3 ABI fragments — single source of truth for shapes is
+// https://aave.com/docs/aave-v3/smart-contracts and
+// `@bgd-labs/aave-address-book`. We start from the already-seeded Pool
+// address (SmartContract `aave_v3_pool`) and resolve everything else —
+// PoolAddressesProvider → PoolDataProvider → reserves → aTokens — via
+// on-chain reads. No hand-typed testnet token coordinates anywhere.
+const POOL_ABI = [
+  {
+    name: "ADDRESSES_PROVIDER",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  // Returns ReserveDataLegacy (Aave V3 standard). We only consume
+  // currentLiquidityRate (supply APY in RAY-format), so the tuple
+  // shape stays minimal — viem accepts the abbreviated outputs as
+  // long as the function selector and prefix types match.
+  {
+    name: "getReserveData",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "asset", type: "address" }],
+    outputs: [
+      {
+        name: "",
+        type: "tuple",
+        components: [
+          { name: "configuration", type: "uint256" },
+          { name: "liquidityIndex", type: "uint128" },
+          { name: "currentLiquidityRate", type: "uint128" },
+          { name: "variableBorrowIndex", type: "uint128" },
+          { name: "currentVariableBorrowRate", type: "uint128" },
+          { name: "currentStableBorrowRate", type: "uint128" },
+          { name: "lastUpdateTimestamp", type: "uint40" },
+          { name: "id", type: "uint16" },
+          { name: "aTokenAddress", type: "address" },
+          { name: "stableDebtTokenAddress", type: "address" },
+          { name: "variableDebtTokenAddress", type: "address" },
+          { name: "interestRateStrategyAddress", type: "address" },
+          { name: "accruedToTreasury", type: "uint128" },
+          { name: "unbacked", type: "uint128" },
+          { name: "isolationModeTotalDebt", type: "uint128" },
+        ],
+      },
+    ],
+  },
+] as const;
+
+const ERC20_TOTAL_SUPPLY_ABI = [
+  {
+    name: "totalSupply",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+] as const;
+
+// Aave V3 returns rates in RAY (1e27). Supply APR is the annualized linear
+// rate; APY is computed with per-second compounding (per Aave docs).
+// https://aave.com/docs/developers/smart-contracts/pool#getreservedata
+const SECONDS_PER_YEAR = 31_536_000n;
+const RAY = 10n ** 27n;
+function rayApyFromLiquidityRate(currentLiquidityRate: bigint): number {
+  const ratePerSecond = Number(currentLiquidityRate) / Number(RAY) / Number(SECONDS_PER_YEAR);
+  const apy = (1 + ratePerSecond) ** Number(SECONDS_PER_YEAR) - 1;
+  return apy;
+}
+
+// Mobile adapter slug per testnet chain — must match the slug registered
+// in `services/defi/adapters/aaveV3.ts` for `defi_deposit` to route.
+const TESTNET_SLUG_BY_CHAIN: Record<number, string> = {
+  11155111: "aave-v3-sepolia",
+  84532: "aave-v3-base-sepolia",
+  421614: "aave-v3-arbitrum-sepolia",
+};
+
+const POOL_ADDRESSES_PROVIDER_ABI = [
+  {
+    name: "getPoolDataProvider",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+] as const;
+
+const AAVE_DATA_PROVIDER_ABI = [
+  {
+    name: "getAllReservesTokens",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [
+      {
+        name: "",
+        type: "tuple[]",
+        components: [
+          { name: "symbol", type: "string" },
+          { name: "tokenAddress", type: "address" },
+        ],
+      },
+    ],
+  },
+  {
+    name: "getReserveTokensAddresses",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "asset", type: "address" }],
+    outputs: [
+      { name: "aTokenAddress", type: "address" },
+      { name: "stableDebtTokenAddress", type: "address" },
+      { name: "variableDebtTokenAddress", type: "address" },
+    ],
+  },
+] as const;
+
+interface AaveTestnetDeployment {
+  chainName: string;
+  chainId: number;
+  // Symbols we care about — Aave testnets expose ~12 faucet reserves and
+  // we only want the stablecoins surfaced in the asset explorer. Extend
+  // here when a new strategy adapter needs a new underlying.
+  symbolAllowlist: string[];
+}
+
+const AAVE_TESTNETS: AaveTestnetDeployment[] = [
+  { chainName: "Ethereum Sepolia", chainId: 11155111, symbolAllowlist: ["USDC"] },
+  { chainName: "Base Sepolia", chainId: 84532, symbolAllowlist: ["USDC"] },
+  { chainName: "Arbitrum Sepolia", chainId: 421614, symbolAllowlist: ["USDC"] },
+];
 
 interface VCGamersProduct {
   key: string;
@@ -605,6 +740,36 @@ async function main() {
       },
     }),
     prisma.blockchain.upsert({
+      where: { chainId: 421614 },
+      update: {
+        rpcUrl: "https://arb-sepolia.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+      },
+      create: {
+        name: "Arbitrum Sepolia",
+        chainId: 421614,
+        rpcUrl: "https://arb-sepolia.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        blockExplorer: "https://sepolia.arbiscan.io",
+        isEVM: true,
+        isActive: true,
+        isTestnet: true,
+      },
+    }),
+    prisma.blockchain.upsert({
+      where: { chainId: 17000 },
+      update: {
+        rpcUrl: "https://eth-holesky.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+      },
+      create: {
+        name: "Ethereum Holesky",
+        chainId: 17000,
+        rpcUrl: "https://eth-holesky.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        blockExplorer: "https://holesky.etherscan.io",
+        isEVM: true,
+        isActive: true,
+        isTestnet: true,
+      },
+    }),
+    prisma.blockchain.upsert({
       where: { chainId: 42161 },
       update: {
         rpcUrl: "https://arb-mainnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
@@ -767,6 +932,22 @@ async function main() {
         isTestnet: true,
       },
     }),
+    // Base Mainnet — blockchains[14].
+    prisma.blockchain.upsert({
+      where: { chainId: 8453 },
+      update: {
+        rpcUrl: "https://mainnet.base.org",
+      },
+      create: {
+        name: "Base Mainnet",
+        chainId: 8453,
+        rpcUrl: "https://mainnet.base.org",
+        blockExplorer: "https://basescan.org",
+        isEVM: true,
+        isActive: true,
+        isTestnet: false,
+      },
+    }),
   ]);
 
   await Promise.all([
@@ -813,7 +994,7 @@ async function main() {
       create: {
         id: "smart-contract-payment-base",
         name: "Payment Processor",
-        blockchainId: blockchains[3].id, // Base
+        blockchainId: blockchains[3].id, // Base (Sepolia)
         address: "0x479B0843C3e0627f36551660506dEd5b349Fa968",
         isActive: true,
       },
@@ -825,7 +1006,7 @@ async function main() {
       create: {
         id: "smart-contract-payment-arbitrum",
         name: "Payment Processor",
-        blockchainId: blockchains[5].id, // Arbitrum
+        blockchainId: blockchains[5].id, // Arbitrum Sepolia
         address: "0x479B0843C3e0627f36551660506dEd5b349Fa968",
         isActive: true,
       },
@@ -839,8 +1020,435 @@ async function main() {
       create: {
         id: "smart-contract-payment-solana-devnet",
         name: "TakumiPay Solana",
-        blockchainId: blockchains[7].id, // Solana Devnet
+        blockchainId: blockchains[9].id, // Solana Devnet
         address: "6CCTEtYrk8unNhjYQ7npiLUf1iKQQJU88JSYn8EJLNYy",
+        isActive: true,
+      },
+    }),
+    // ─────────────────────── Aave V3 Pool (mainnet) ──────────────────────
+    // Sources: aave.com/docs/aave-v3/smart-contracts/pool +
+    //          @bgd-labs/aave-address-book.
+    prisma.smartContract.upsert({
+      where: { id: "aave-v3-pool-ethereum" },
+      update: {
+        address: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+      },
+      create: {
+        id: "aave-v3-pool-ethereum",
+        name: "aave_v3_pool",
+        blockchainId: blockchains[0].id, // Ethereum
+        address: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "aave-v3-data-provider-ethereum" },
+      update: {},
+      create: {
+        id: "aave-v3-data-provider-ethereum",
+        name: "aave_v3_data_provider",
+        blockchainId: blockchains[0].id,
+        address: "0x7B4EB56E7CD4b454BA8ff71E4518426369a138a3",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "aave-v3-pool-base" },
+      update: {},
+      create: {
+        id: "aave-v3-pool-base",
+        name: "aave_v3_pool",
+        blockchainId: blockchains[14].id, // Base Mainnet
+        address: "0xA238Dd80C259a72e81d7e4674A983a59f1ad673e",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "aave-v3-data-provider-base" },
+      update: {},
+      create: {
+        id: "aave-v3-data-provider-base",
+        name: "aave_v3_data_provider",
+        blockchainId: blockchains[14].id,
+        address: "0xd82a47fdebB5bf5329b09441C3DaB4b5df2153Ad",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "aave-v3-pool-arbitrum" },
+      update: {},
+      create: {
+        id: "aave-v3-pool-arbitrum",
+        name: "aave_v3_pool",
+        blockchainId: blockchains[7].id, // Arbitrum Mainnet (index 7 — see §5 of seed block)
+        address: "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "aave-v3-data-provider-arbitrum" },
+      update: {},
+      create: {
+        id: "aave-v3-data-provider-arbitrum",
+        name: "aave_v3_data_provider",
+        blockchainId: blockchains[7].id,
+        address: "0x7F23D86Ee20D869112572136221e173428DD740B",
+        isActive: true,
+      },
+    }),
+    // ─────────────── Aave V3 Pool (testnet) ────────────────────────────
+    prisma.smartContract.upsert({
+      where: { id: "aave-v3-pool-sepolia" },
+      update: {},
+      create: {
+        id: "aave-v3-pool-sepolia",
+        name: "aave_v3_pool",
+        blockchainId: blockchains[2].id, // Ethereum Sepolia
+        address: "0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "aave-v3-pool-base-sepolia" },
+      update: {},
+      create: {
+        id: "aave-v3-pool-base-sepolia",
+        name: "aave_v3_pool",
+        blockchainId: blockchains[3].id, // Base Sepolia
+        address: "0x07eA79F68B2B3df564D0A34F8e19D9B1e339814b",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "aave-v3-pool-arbitrum-sepolia" },
+      update: {},
+      create: {
+        id: "aave-v3-pool-arbitrum-sepolia",
+        name: "aave_v3_pool",
+        blockchainId: blockchains[5].id, // Arb Sepolia
+        address: "0xBfC91D59fdAA134A4ED45f7B584cAf96D7792Eff",
+        isActive: true,
+      },
+    }),
+    // ────────────────────────── Lido ───────────────────────────────────
+    // Source: docs.lido.fi/contracts/lido-locator
+    prisma.smartContract.upsert({
+      where: { id: "lido-steth-ethereum" },
+      update: {},
+      create: {
+        id: "lido-steth-ethereum",
+        name: "lido_steth",
+        blockchainId: blockchains[0].id, // Ethereum
+        address: "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "lido-wsteth-ethereum" },
+      update: {},
+      create: {
+        id: "lido-wsteth-ethereum",
+        name: "lido_wsteth",
+        blockchainId: blockchains[0].id,
+        address: "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "lido-withdrawal-queue-ethereum" },
+      update: {},
+      create: {
+        id: "lido-withdrawal-queue-ethereum",
+        name: "lido_withdrawal_queue",
+        blockchainId: blockchains[0].id,
+        address: "0x889edC2eDab5f40e902b864aD4d7AdE8E412F9B1",
+        isActive: true,
+      },
+    }),
+    // Lido on Holesky (testnet)
+    prisma.smartContract.upsert({
+      where: { id: "lido-steth-holesky" },
+      update: {},
+      create: {
+        id: "lido-steth-holesky",
+        name: "lido_steth",
+        blockchainId: blockchains[6].id, // Ethereum Holesky
+        address: "0x3F1c547b21f65e10480dE3ad8E19fAAC46C95034",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "lido-wsteth-holesky" },
+      update: {},
+      create: {
+        id: "lido-wsteth-holesky",
+        name: "lido_wsteth",
+        blockchainId: blockchains[6].id,
+        address: "0x8d09a4502Cc8Cf1547aD300E066060D043f6982D",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "lido-withdrawal-queue-holesky" },
+      update: {},
+      create: {
+        id: "lido-withdrawal-queue-holesky",
+        name: "lido_withdrawal_queue",
+        blockchainId: blockchains[6].id,
+        address: "0xc7cc160b58F8Bb0baC94b80847E2CF2800565C50",
+        isActive: true,
+      },
+    }),
+    // ─────────────────────── Curve 3pool ───────────────────────────────
+    prisma.smartContract.upsert({
+      where: { id: "curve-3pool-ethereum" },
+      update: {},
+      create: {
+        id: "curve-3pool-ethereum",
+        name: "curve_3pool",
+        blockchainId: blockchains[0].id,
+        address: "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "curve-3pool-lp-ethereum" },
+      update: {},
+      create: {
+        id: "curve-3pool-lp-ethereum",
+        name: "curve_3pool_lp",
+        blockchainId: blockchains[0].id,
+        address: "0x6c3F90f043a72FA612cbac8115EE7e52BDe6E490",
+        isActive: true,
+      },
+    }),
+    // ─────────────────────── Morpho Vaults ────────────────────────────
+    // Source: docs.morpho.org. The default seeded vault is Steakhouse
+    // USDC (ETH). Add additional rows per curated vault as needed.
+    prisma.smartContract.upsert({
+      where: { id: "morpho-vault-ethereum" },
+      update: {},
+      create: {
+        id: "morpho-vault-ethereum",
+        name: "morpho_vault",
+        blockchainId: blockchains[0].id,
+        address: "0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "morpho-steakhouse-usdc-ethereum" },
+      update: {},
+      create: {
+        id: "morpho-steakhouse-usdc-ethereum",
+        name: "morpho_steakhouse_usdc",
+        blockchainId: blockchains[0].id,
+        address: "0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "morpho-flagship-usdc-base" },
+      update: {},
+      create: {
+        id: "morpho-flagship-usdc-base",
+        name: "morpho_flagship_usdc",
+        blockchainId: blockchains[14].id, // Base Mainnet
+        address: "0xc1256Ae5FF1cf2719D4937adb3bbCCab2E00A2Ca",
+        isActive: true,
+      },
+    }),
+    // ─────────────────────── Yearn V3 ─────────────────────────────────
+    // Source: docs.yearn.fi. yvUSDC v3 + ERC-4626 router.
+    prisma.smartContract.upsert({
+      where: { id: "yearn-router-ethereum" },
+      update: {},
+      create: {
+        id: "yearn-router-ethereum",
+        name: "yearn_router",
+        blockchainId: blockchains[0].id,
+        address: "0x1112dbCF805682e828606f74AB717abf4b4FD8DE",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "yearn-v3-usdc-ethereum" },
+      update: {},
+      create: {
+        id: "yearn-v3-usdc-ethereum",
+        name: "yearn_v3_usdc",
+        blockchainId: blockchains[0].id,
+        address: "0xBe53A109B494E5c9f97b9Cd39Fe969BE68BF6204",
+        isActive: true,
+      },
+    }),
+    // ───────────────────── EigenLayer ────────────────────────────────
+    // Source: docs.eigencloud.xyz/eigenlayer/developers/concepts/
+    //         eigenlayer-contracts/deployed-contracts
+    prisma.smartContract.upsert({
+      where: { id: "eigenlayer-strategy-manager-ethereum" },
+      update: {},
+      create: {
+        id: "eigenlayer-strategy-manager-ethereum",
+        name: "eigenlayer_strategy_manager",
+        blockchainId: blockchains[0].id,
+        address: "0x858646372CC42E1A627fcE94aa7A7033e7CF075A",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "eigenlayer-delegation-manager-ethereum" },
+      update: {},
+      create: {
+        id: "eigenlayer-delegation-manager-ethereum",
+        name: "eigenlayer_delegation_manager",
+        blockchainId: blockchains[0].id,
+        address: "0x39053D51B77DC0d36036Fc1fCc8Cb819df8Ef37A",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "eigenlayer-steth-strategy-ethereum" },
+      update: {},
+      create: {
+        id: "eigenlayer-steth-strategy-ethereum",
+        name: "eigenlayer_steth_strategy",
+        blockchainId: blockchains[0].id,
+        address: "0x93c4b944D05dfe6df7645A86cd2206016c51564D",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "eigenlayer-strategy-manager-holesky" },
+      update: {},
+      create: {
+        id: "eigenlayer-strategy-manager-holesky",
+        name: "eigenlayer_strategy_manager",
+        blockchainId: blockchains[6].id, // Holesky
+        address: "0xdfB5f6CE42aAA7830E94ECFCcAd411beF4d4D5b6",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "eigenlayer-delegation-manager-holesky" },
+      update: {},
+      create: {
+        id: "eigenlayer-delegation-manager-holesky",
+        name: "eigenlayer_delegation_manager",
+        blockchainId: blockchains[6].id,
+        address: "0xA44151489861Fe9e3055d95adC98FbD462B948e7",
+        isActive: true,
+      },
+    }),
+    // ───────────────────────── Ethena ────────────────────────────────
+    // Source: docs.ethena.fi/solution-design/staking-usde
+    prisma.smartContract.upsert({
+      where: { id: "ethena-susde-ethereum" },
+      update: {},
+      create: {
+        id: "ethena-susde-ethereum",
+        name: "ethena_susde",
+        blockchainId: blockchains[0].id,
+        address: "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "ethena-usde-ethereum" },
+      update: {},
+      create: {
+        id: "ethena-usde-ethereum",
+        name: "ethena_usde",
+        blockchainId: blockchains[0].id,
+        address: "0x4c9EDD5852cd905f086C759E8383e09bff1E68B3",
+        isActive: true,
+      },
+    }),
+    // ───────────────────────── GMX V2 ────────────────────────────────
+    // Source: docs.gmx.io/docs/api/contracts-v2 (Arbitrum)
+    prisma.smartContract.upsert({
+      where: { id: "gmx-v2-exchange-router-arbitrum" },
+      update: {},
+      create: {
+        id: "gmx-v2-exchange-router-arbitrum",
+        name: "gmx_v2_exchange_router",
+        blockchainId: blockchains[7].id, // Arbitrum Mainnet
+        address: "0xb7a9C9D9D7c0e8Db8Df0DCe9eDDFc83AC0a3f74D",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "gmx-v2-deposit-vault-arbitrum" },
+      update: {},
+      create: {
+        id: "gmx-v2-deposit-vault-arbitrum",
+        name: "gmx_v2_deposit_vault",
+        blockchainId: blockchains[7].id,
+        address: "0xF89e77e8Dc11691C9e8757e84aaFbCD8A67d7A55",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "gmx-v2-withdrawal-vault-arbitrum" },
+      update: {},
+      create: {
+        id: "gmx-v2-withdrawal-vault-arbitrum",
+        name: "gmx_v2_withdrawal_vault",
+        blockchainId: blockchains[7].id,
+        address: "0x0628D46b5D145f183AdB6Ef1f2c97eD1C4701C55",
+        isActive: true,
+      },
+    }),
+    // ───────────────────── Maple syrupUSDC ───────────────────────────
+    // Address resolves through chain.smartContracts in the adapter.
+    // Ops should verify the canonical Maple pool address against
+    // syrup.fi / maple.finance before mainnet enablement.
+    prisma.smartContract.upsert({
+      where: { id: "maple-syrup-usdc-ethereum" },
+      update: {},
+      create: {
+        id: "maple-syrup-usdc-ethereum",
+        name: "maple_syrup_usdc",
+        blockchainId: blockchains[0].id,
+        address: "0x80ac24aA929eaF5013f6436cdA2a7ba190f5Cc0b",
+        isActive: true,
+      },
+    }),
+    // Solana program coordinates ride as a tagged-string column on
+    // Blockchain; they're recorded here as a SmartContract row keyed
+    // to Solana mainnet for completeness even though SPL programs
+    // don't need a per-pool registry entry. Read by SolanaJito adapter
+    // via JITO constants in services/defi/constants/addresses.ts.
+    prisma.smartContract.upsert({
+      where: { id: "spl-stake-pool-program" },
+      update: {},
+      create: {
+        id: "spl-stake-pool-program",
+        name: "spl_stake_pool_program",
+        blockchainId: blockchains[8].id, // Solana mainnet
+        address: "SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "jito-stake-pool" },
+      update: {},
+      create: {
+        id: "jito-stake-pool",
+        name: "jito_stake_pool",
+        blockchainId: blockchains[8].id,
+        address: "Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "jito-sol-mint" },
+      update: {},
+      create: {
+        id: "jito-sol-mint",
+        name: "jito_sol_mint",
+        blockchainId: blockchains[8].id,
+        address: "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn",
         isActive: true,
       },
     }),
@@ -907,7 +1515,8 @@ async function main() {
         decimals: 6,
         blockchainId: blockchains[2].id, // Ethereum Sepolia
         contractAddress: "0xA6ffC6d992F4C6e173836035Aebb8AF3dBBB15cd",
-        logoUrl: "https://tether.to/images/logoCircle.svg",
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/325/small/Tether.png",
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "USD",
@@ -929,7 +1538,7 @@ async function main() {
         blockchainId: blockchains[4].id, // Lisk
         contractAddress: "0x53080Db01Ca5C60A36B6eE01436C2f300a31d16A",
         logoUrl:
-          "https://pbs.twimg.com/profile_images/1951205358447501313/7OQgISvo_400x400.jpg",
+          "https://assets.coingecko.com/coins/images/34630/large/idrx.png",
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "IDR",
@@ -951,7 +1560,7 @@ async function main() {
         blockchainId: blockchains[3].id, // Base
         contractAddress: "0x1aC593085Fa34c651E805085da4b2cabAC676F99",
         logoUrl:
-          "https://pbs.twimg.com/profile_images/1951205358447501313/7OQgISvo_400x400.jpg",
+          "https://assets.coingecko.com/coins/images/34630/large/idrx.png",
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "IDR",
@@ -987,7 +1596,7 @@ async function main() {
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[10].id, // Sui mainnet
+          blockchainId: blockchains[12].id, // Sui mainnet
           contractAddress:
             "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC",
         },
@@ -997,7 +1606,7 @@ async function main() {
         name: "USD Coin",
         symbol: "USDC",
         decimals: 6,
-        blockchainId: blockchains[10].id, // Sui mainnet
+        blockchainId: blockchains[12].id, // Sui mainnet
         contractAddress:
           "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC",
         logoUrl:
@@ -1148,7 +1757,7 @@ async function main() {
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[6].id,
+          blockchainId: blockchains[8].id,
           contractAddress: "So11111111111111111111111111111111111111112",
         },
       },
@@ -1157,7 +1766,7 @@ async function main() {
         name: "Solana",
         symbol: "SOL",
         decimals: 9,
-        blockchainId: blockchains[6].id, // Solana mainnet
+        blockchainId: blockchains[8].id, // Solana mainnet
         contractAddress: "So11111111111111111111111111111111111111112",
         logoUrl:
           "https://assets.coingecko.com/coins/images/4128/small/solana.png",
@@ -1170,7 +1779,7 @@ async function main() {
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[7].id,
+          blockchainId: blockchains[9].id,
           contractAddress: "So11111111111111111111111111111111111111112",
         },
       },
@@ -1179,7 +1788,7 @@ async function main() {
         name: "Solana Devnet",
         symbol: "SOL",
         decimals: 9,
-        blockchainId: blockchains[7].id, // Solana Devnet
+        blockchainId: blockchains[9].id, // Solana Devnet
         contractAddress: "So11111111111111111111111111111111111111112",
         logoUrl:
           "https://assets.coingecko.com/coins/images/4128/small/solana.png",
@@ -1192,7 +1801,7 @@ async function main() {
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[7].id,
+          blockchainId: blockchains[9].id,
           contractAddress: "4qFejVSp46Q4SZCGDrXbkFJC1qw5uo1JBnbXLnKZurey",
         },
       },
@@ -1203,7 +1812,7 @@ async function main() {
         name: "USD Coin (Devnet)",
         symbol: "USDC",
         decimals: 6,
-        blockchainId: blockchains[7].id, // Solana Devnet
+        blockchainId: blockchains[9].id, // Solana Devnet
         contractAddress: "4qFejVSp46Q4SZCGDrXbkFJC1qw5uo1JBnbXLnKZurey",
         logoUrl:
           "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
@@ -1217,7 +1826,7 @@ async function main() {
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[6].id,
+          blockchainId: blockchains[8].id,
           contractAddress: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         },
       },
@@ -1226,7 +1835,7 @@ async function main() {
         name: "USD Coin",
         symbol: "USDC",
         decimals: 6,
-        blockchainId: blockchains[6].id, // Solana Mainnet
+        blockchainId: blockchains[8].id, // Solana Mainnet
         contractAddress: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         logoUrl:
           "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
@@ -1244,7 +1853,7 @@ async function main() {
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[8].id, // Arc Testnet
+          blockchainId: blockchains[10].id, // Arc Testnet
           contractAddress: "0x3600000000000000000000000000000000000000",
         },
       },
@@ -1255,10 +1864,10 @@ async function main() {
         name: "USD Coin",
         symbol: "USDC",
         decimals: 18,
-        blockchainId: blockchains[8].id, // Arc Testnet
+        blockchainId: blockchains[10].id, // Arc Testnet
         contractAddress: "0x3600000000000000000000000000000000000000",
         logoUrl:
-          "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
+          "https://pbs.twimg.com/profile_images/1955238194443849732/sHyVRItm_400x400.jpg",
         isStablecoin: true,
         isNativeCurrency: true,
         isActive: true,
@@ -1273,7 +1882,7 @@ async function main() {
   // the row by (blockchainId, isNativeCurrency) instead. Idempotent on re-seed.
   const existingMonToken = await prisma.token.findFirst({
     where: {
-      blockchainId: blockchains[9].id,
+      blockchainId: blockchains[11].id,
       isNativeCurrency: true,
     },
   });
@@ -1290,7 +1899,7 @@ async function main() {
         name: "Monad",
         symbol: "MON",
         decimals: 18,
-        blockchainId: blockchains[9].id, // Monad
+        blockchainId: blockchains[11].id, // Monad
         contractAddress: null,
         logoUrl: "https://files.svgcdn.io/token-branded/monad.png",
         isStablecoin: false,
@@ -1305,8 +1914,8 @@ async function main() {
   // mobile `SuiWalletKit.getTokenBalance` can pass this string verbatim.
   // Decimals: 9 (1 SUI = 10⁹ MIST). One row per network.
   for (const [idx, label] of [
-    [10, "Sui"], // mainnet
-    [11, "Sui Testnet"],
+    [12, "Sui"], // mainnet
+    [13, "Sui Testnet"],
   ] as const) {
     const existing = await prisma.token.findFirst({
       where: {
@@ -1335,6 +1944,263 @@ async function main() {
           isActive: true,
         },
       });
+    }
+  }
+
+  // ────────────────── Aave V3 testnet tokens ────────────────────────────
+  // For each Aave testnet deployment we have a Pool entry seeded above,
+  // discover the underlying reserves + aToken addresses on-chain via the
+  // PoolDataProvider. Surfaces USDC + aUSDC rows in the wallet asset
+  // explorer without hand-typing any testnet token coordinates.
+  //
+  // Failure mode: if the testnet RPC is unreachable, we log and skip —
+  // the seed must not block on a flaky public faucet. Re-running the
+  // seed once RPC is back will fill the missing rows (upsert is
+  // idempotent).
+  for (const deployment of AAVE_TESTNETS) {
+    const blockchain = await prisma.blockchain.findUnique({
+      where: { chainId: deployment.chainId },
+      include: { SmartContract: { where: { name: "aave_v3_pool", isActive: true } } },
+    });
+    if (!blockchain) {
+      console.warn(
+        `[aave-tokens] skipping ${deployment.chainName}: Blockchain row missing — seed it before this block`,
+      );
+      continue;
+    }
+    const poolEntry = blockchain.SmartContract[0];
+    if (!poolEntry) {
+      console.warn(
+        `[aave-tokens] skipping ${deployment.chainName}: no aave_v3_pool SmartContract row — seed it before this block`,
+      );
+      continue;
+    }
+    const poolAddress = poolEntry.address as Address;
+
+    const client = createPublicClient({
+      transport: http(blockchain.rpcUrl),
+    }) as unknown as PublicClient;
+
+    // Resolve the data provider on-chain so we never hand-type a testnet
+    // address. Pool → PoolAddressesProvider → PoolDataProvider.
+    let dataProvider: Address;
+    try {
+      const addressesProvider = (await readContract(client, {
+        address: poolAddress,
+        abi: POOL_ABI,
+        functionName: "ADDRESSES_PROVIDER",
+      })) as Address;
+      dataProvider = (await readContract(client, {
+        address: addressesProvider,
+        abi: POOL_ADDRESSES_PROVIDER_ABI,
+        functionName: "getPoolDataProvider",
+      })) as Address;
+    } catch (err) {
+      console.warn(
+        `[aave-tokens] ${deployment.chainName}: data provider resolution failed — ${(err as Error).message}. Skipping.`,
+      );
+      continue;
+    }
+
+    let reserves: readonly { symbol: string; tokenAddress: Address }[] = [];
+    try {
+      reserves = (await readContract(client, {
+        address: dataProvider,
+        abi: AAVE_DATA_PROVIDER_ABI,
+        functionName: "getAllReservesTokens",
+      })) as readonly { symbol: string; tokenAddress: Address }[];
+    } catch (err) {
+      console.warn(
+        `[aave-tokens] ${deployment.chainName}: getAllReservesTokens failed — ${(err as Error).message}. Skipping.`,
+      );
+      continue;
+    }
+
+    for (const reserve of reserves) {
+      if (!deployment.symbolAllowlist.includes(reserve.symbol)) continue;
+
+      let aToken: Hex = "0x0000000000000000000000000000000000000000";
+      try {
+        const [aTokenAddress] = (await readContract(client, {
+          address: dataProvider,
+          abi: AAVE_DATA_PROVIDER_ABI,
+          functionName: "getReserveTokensAddresses",
+          args: [reserve.tokenAddress],
+        })) as readonly [Hex, Hex, Hex];
+        aToken = aTokenAddress;
+      } catch (err) {
+        console.warn(
+          `[aave-tokens] ${deployment.chainName}: getReserveTokensAddresses(${reserve.symbol}) failed — ${(err as Error).message}`,
+        );
+        continue;
+      }
+
+      let underlyingDecimals = 6;
+      try {
+        underlyingDecimals = await readContract(client, {
+          address: reserve.tokenAddress,
+          abi: erc20Abi,
+          functionName: "decimals",
+        });
+      } catch {
+        // Fallback to 6 (USDC standard).
+      }
+
+      // Underlying ERC-20 (e.g. testnet USDC). Asset explorer reads this
+      // by `(blockchainId, contractAddress)` so the agent's USDC → contract
+      // resolution works without any per-chain hardcode in mobile.
+      await prisma.token.upsert({
+        where: {
+          blockchainId_contractAddress: {
+            blockchainId: blockchain.id,
+            contractAddress: reserve.tokenAddress.toLowerCase(),
+          },
+        },
+        update: { isActive: true },
+        create: {
+          name: `${reserve.symbol} (${deployment.chainName})`,
+          symbol: reserve.symbol,
+          decimals: underlyingDecimals,
+          blockchainId: blockchain.id,
+          contractAddress: reserve.tokenAddress.toLowerCase(),
+          logoUrl:
+            reserve.symbol === "USDC"
+              ? "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png"
+              : null,
+          isStablecoin: reserve.symbol === "USDC" || reserve.symbol === "USDT",
+          isActive: true,
+          peggedCurrency: reserve.symbol === "USDC" ? "USD" : null,
+        },
+      });
+
+      // aToken receipt (e.g. aUSDC). Optional for the deposit flow itself,
+      // surfaced here so the user can see their interest-bearing balance
+      // in the wallet asset explorer alongside the underlying.
+      if (
+        aToken &&
+        aToken !== "0x0000000000000000000000000000000000000000"
+      ) {
+        await prisma.token.upsert({
+          where: {
+            blockchainId_contractAddress: {
+              blockchainId: blockchain.id,
+              contractAddress: aToken.toLowerCase(),
+            },
+          },
+          update: { isActive: true },
+          create: {
+            name: `Aave V3 ${reserve.symbol} (${deployment.chainName})`,
+            symbol: `a${reserve.symbol}`,
+            decimals: underlyingDecimals,
+            blockchainId: blockchain.id,
+            contractAddress: aToken.toLowerCase(),
+            logoUrl: "https://app.aave.com/icons/tokens/ausdc.svg",
+            isStablecoin: reserve.symbol === "USDC" || reserve.symbol === "USDT",
+            isActive: true,
+            peggedCurrency: reserve.symbol === "USDC" ? "USD" : null,
+          },
+        });
+      }
+
+      console.log(
+        `[aave-tokens] ${deployment.chainName}: seeded ${reserve.symbol} (${reserve.tokenAddress}) and a${reserve.symbol} (${aToken})`,
+      );
+
+      // ── Live OpportunityCache row ────────────────────────────────────
+      // DeFiLlama doesn't index testnet pools, so the production scoring
+      // worker leaves testnet wallets with an empty list. We populate
+      // OpportunityCache here from live on-chain reads so the same code
+      // path that serves mainnet opportunities also surfaces testnet
+      // ones. APY + TVL are real; `apyStddev30d` and `tvl7dDelta` stay 0
+      // because we have no history on testnet — these are honest empty
+      // values, not synthetic stubs.
+      const slug = TESTNET_SLUG_BY_CHAIN[deployment.chainId];
+      if (!slug) continue;
+
+      let apy = 0;
+      try {
+        const reserveData = (await readContract(client, {
+          address: poolAddress,
+          abi: POOL_ABI,
+          functionName: "getReserveData",
+          args: [reserve.tokenAddress],
+        })) as { currentLiquidityRate: bigint };
+        apy = rayApyFromLiquidityRate(reserveData.currentLiquidityRate);
+      } catch (err) {
+        console.warn(
+          `[aave-tokens] ${deployment.chainName}: getReserveData(${reserve.symbol}) failed — ${(err as Error).message}`,
+        );
+      }
+
+      let tvlUnderlying = 0;
+      try {
+        const totalSupply = (await readContract(client, {
+          address: aToken,
+          abi: ERC20_TOTAL_SUPPLY_ABI,
+          functionName: "totalSupply",
+        })) as bigint;
+        tvlUnderlying = Number(totalSupply) / 10 ** underlyingDecimals;
+      } catch (err) {
+        console.warn(
+          `[aave-tokens] ${deployment.chainName}: aToken.totalSupply(${reserve.symbol}) failed — ${(err as Error).message}`,
+        );
+      }
+
+      const poolId = `aave-v3-${deployment.chainId}-${reserve.tokenAddress.toLowerCase()}`;
+      const assetContract = reserve.tokenAddress.toLowerCase();
+      await prisma.opportunityCache.upsert({
+        where: { poolId },
+        update: {
+          protocolSlug: slug,
+          chainId: deployment.chainId,
+          namespace: "eip155",
+          assetSymbol: reserve.symbol,
+          assetContract,
+          apy,
+          apy7dAvg: apy,
+          apyStddev30d: 0,
+          tvlUsd: tvlUnderlying, // USDC ≈ $1, underlying units == USD on testnet
+          tvl7dDelta: 0,
+          ilExposure: false,
+          score: 90, // Aave V3 = Conservative tier per spec §8
+          tier: "conservative",
+          raw: {
+            source: "on-chain",
+            pool: poolAddress,
+            asset: reserve.tokenAddress,
+            aToken,
+            apyDecimal: apy,
+          },
+          scoredAt: new Date(),
+        },
+        create: {
+          poolId,
+          protocolSlug: slug,
+          chainId: deployment.chainId,
+          namespace: "eip155",
+          assetSymbol: reserve.symbol,
+          assetContract,
+          apy,
+          apy7dAvg: apy,
+          apyStddev30d: 0,
+          tvlUsd: tvlUnderlying,
+          tvl7dDelta: 0,
+          ilExposure: false,
+          score: 90,
+          tier: "conservative",
+          raw: {
+            source: "on-chain",
+            pool: poolAddress,
+            asset: reserve.tokenAddress,
+            aToken,
+            apyDecimal: apy,
+          },
+          scoredAt: new Date(),
+        },
+      });
+      console.log(
+        `[aave-opportunities] ${deployment.chainName}: ${slug} ${reserve.symbol} APY=${(apy * 100).toFixed(2)}% TVL=${tvlUnderlying.toFixed(2)}`,
+      );
     }
   }
 

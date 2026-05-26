@@ -1,3 +1,15 @@
+import { setDefaultResultOrder } from "node:dns";
+// Prefer IPv4 records on DNS lookup. Some hosts (Cloudflare-fronted APIs like
+// DeFiLlama / api.llama.fi) advertise AAAA records that the deploy host may
+// not be able to reach if its egress lacks IPv6 routing — Node's default
+// (`verbatim`, since v17) then surfaces the IPv6 address first and `fetch`
+// fails with the generic `TypeError: fetch failed` (cause: ENETUNREACH).
+// Setting this before any module-level DNS lookup keeps outbound HTTP working
+// on IPv4-only egress without disabling IPv6 entirely (Node still falls back
+// to AAAA when no A record exists). Equivalent to running with
+// NODE_OPTIONS=--dns-result-order=ipv4first.
+setDefaultResultOrder("ipv4first");
+
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import { setupSwagger } from "./config/swagger.config";

@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
+import { ScheduleModule } from "@nestjs/schedule";
 import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
 import { PrismaModule } from "./prisma/prisma.module";
@@ -36,6 +37,8 @@ import { AdminMerchantsModule } from "./admin/merchants/admin-merchants.module";
 import { AdminPaymentIntentsModule } from "./admin/payment-intents/admin-payment-intents.module";
 import { AuditLogsModule } from "./admin/audit-logs/audit-logs.module";
 import { UserOpModule } from "./userop/userop.module";
+import { StrategiesModule } from "./strategies/strategies.module";
+import { PushModule } from "./push/push.module";
 import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 import { JwtAuthGuard } from "./auth/guards/jwt-auth.guard";
 import { ApiKeyGuard } from "./auth/guards/api-key.guard";
@@ -47,6 +50,7 @@ import { InvalidateCacheInterceptor } from "./valkey/interceptors/invalidate-cac
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    ScheduleModule.forRoot(),
     PrismaModule,
     ProductsModule,
     UsersModule,
@@ -81,6 +85,8 @@ import { InvalidateCacheInterceptor } from "./valkey/interceptors/invalidate-cac
     AdminPaymentIntentsModule,
     AuditLogsModule,
     UserOpModule,
+    StrategiesModule,
+    PushModule,
   ],
   controllers: [AppController],
   providers: [

@@ -132,11 +132,30 @@ model User {
   paymentIntentsAsPayer PaymentIntent[]  @relation("PaymentIntentPayer")
   gatewayDeposits       GatewayDeposit[]
 
+  pushTokens            PushToken[]
+
   @@unique([authProvider, socialId])
   @@index([role])
   @@index([status])
   @@index([email])
   @@index([username])
+}
+
+/// Expo push notification tokens. One row per (user, device) — the
+/// Expo token rotates per app install, so we upsert by token. Used by
+/// the strategies auto-compound watcher and the payout-receipt push
+/// (umkm-usdc-payout-spec.md §6.3).
+model PushToken {
+  token         String   @id
+  userId        String
+  walletAddress String? // optional convenience for wallet-scoped pushes
+  platform      String // "ios" | "android" | "web"
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId])
+  @@index([walletAddress])
 }
 
 model Blockchain {
@@ -867,15 +886,15 @@ model Merchant {
 }
 
 model PaymentIntent {
-  id                    String              @id @default(ulid())
-  payer                 User?               @relation("PaymentIntentPayer", fields: [payerUserId], references: [id], onDelete: SetNull)
-  payerUserId           String?
-  merchant              Merchant            @relation(fields: [merchantId], references: [id])
-  merchantId            String
-  fiatAmountMinor       Int
-  fiatCurrency          String
-  nanopayUsdcAmountMicros   BigInt?
-  nanopayUsdcSourceChainId  Int?
+  id                         String              @id @default(ulid())
+  payer                      User?               @relation("PaymentIntentPayer", fields: [payerUserId], references: [id], onDelete: SetNull)
+  payerUserId                String?
+  merchant                   Merchant            @relation(fields: [merchantId], references: [id])
+  merchantId                 String
+  fiatAmountMinor            Int
+  fiatCurrency               String
+  nanopayUsdcAmountMicros    BigInt?
+  nanopayUsdcSourceChainId   Int?
   nanopayUsdcTreasuryAddress String?
   // Onchain settlement — multi-token + fee fields (Phase 1)
   sourceToken                Token?              @relation(fields: [sourceTokenId], references: [id])
@@ -888,37 +907,37 @@ model PaymentIntent {
   // because TimescaleDB hypertables cannot be FK targets (see CLAUDE.md).
   // Composite (id + createdAt) is mirrored on the snapshot columns below so
   // application-level lookups can locate the source row.
-  exchangeRateId        Int
-  exchangeRateCreatedAt DateTime            @db.Timestamptz()
-  fxRateSnapshot        Decimal             @db.Decimal(36, 18)
-  fxMarkupSnapshot      Decimal             @db.Decimal(36, 18)
-  fxFromCurrency        String
-  fxToCurrency          String
-  fxProvider            String
-  fxQuotedAt            DateTime            @db.Timestamptz()
-  feesNetworkUsdMicros  Int
+  exchangeRateId             Int
+  exchangeRateCreatedAt      DateTime            @db.Timestamptz()
+  fxRateSnapshot             Decimal             @db.Decimal(36, 18)
+  fxMarkupSnapshot           Decimal             @db.Decimal(36, 18)
+  fxFromCurrency             String
+  fxToCurrency               String
+  fxProvider                 String
+  fxQuotedAt                 DateTime            @db.Timestamptz()
+  feesNetworkUsdMicros       Int
   // Payout-side fee snapshot at intent-creation time. Integer minor-units
   // of the intent's `fiatCurrency` (IDR rupiah today; PHP centavos / THB
   // satang when other countries land — currency lives on `fiatCurrency`,
   // not in the column name). Was `feesXenditIdr` until the rename made
   // the schema provider/currency-agnostic.
-  feesPayoutMinor       Int
-  feesPlatformBps       Int
-  path                  PaymentIntentPath
-  nanopayNonce          Bytes               @unique
-  nanopayValidAfter     Int
-  nanopayValidBefore    Int
-  gaslessMode           GaslessMode
-  requiresDeposit       Boolean
-  status                PaymentIntentStatus @default(QUOTED)
-  createdAt             DateTime            @default(now()) @db.Timestamptz()
-  updatedAt             DateTime            @updatedAt @db.Timestamptz()
-  expiresAt             DateTime            @db.Timestamptz()
+  feesPayoutMinor            Int
+  feesPlatformBps            Int
+  path                       PaymentIntentPath
+  nanopayNonce               Bytes               @unique
+  nanopayValidAfter          Int
+  nanopayValidBefore         Int
+  gaslessMode                GaslessMode
+  requiresDeposit            Boolean
+  status                     PaymentIntentStatus @default(QUOTED)
+  createdAt                  DateTime            @default(now()) @db.Timestamptz()
+  updatedAt                  DateTime            @updatedAt @db.Timestamptz()
+  expiresAt                  DateTime            @db.Timestamptz()
 
-  nanopaySubmissions  NanopaySubmission[]
+  nanopaySubmissions NanopaySubmission[]
   // payouts are audit-permanent; deleting an intent must NOT cascade to them.
-  payouts             ProviderPayout[]
-  onchainSettlements  OnchainSettlement[]
+  payouts            ProviderPayout[]
+  onchainSettlements OnchainSettlement[]
 
   @@index([status, expiresAt])
   @@index([merchantId, createdAt(sort: Desc)])
@@ -1059,4 +1078,114 @@ model OnchainSettlement {
 
   @@unique([intentId, txHash])
   @@index([txHash])
+}
+
+model UserStrategy {
+  id                String             @id @default(cuid())
+  userId            String
+  walletAddress     String // lowercased
+  namespace         String // "eip155" | "solana" | "sui"
+  tier              String // "conservative" | "balanced" | "aggressive"
+  assetPreferences  String[] // multi-select: any subset of "stable" | "eth_lst" | "multi"
+  liquidityPref     String // "instant" | "7d" | "30d"
+  chainPref         Json // ["any"] or [1, 8453, 42161]
+  allocationPct     Int // 10/25/50/custom
+  rebalanceTrigger  Json // { kind: "interval", value: "weekly" } | { kind: "yield_drop", thresholdBps: 150 }
+  protocolWhitelist String[] // ["aave-v3","lido","curve-3pool"] — empty MEANS "use curated default" (see §21.2), NOT "any protocol in tier"
+  allowAllInTier    Boolean            @default(false) // §21.2 — opt-out of curation; when true an empty protocolWhitelist means "any protocol in tier"
+  autoCompound      Boolean            @default(false) // §21.3 — opt-in: when true, claimed rewards are redeposited into the same position via `defi_compound`. Still human-in-the-loop (one signature per cycle); no AA.
+  notificationLevel String // "every" | "daily" | "alerts"
+  activatedAt       DateTime?
+  pausedAt          DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  positions         StrategyPosition[]
+
+  @@index([userId])
+  @@index([walletAddress])
+}
+
+model StrategyPosition {
+  id                 String    @id @default(cuid())
+  userStrategyId     String
+  walletAddress      String // lowercased
+  chainId            Int // 0 for non-EVM; carry namespace + slug below
+  namespace          String
+  chainName          String    @default("") // copied from the source OpportunityCache row at create time; mirrors DeFiLlama's `chain` value
+  protocolSlug       String // "aave-v3" | "lido" | "morpho" | ...
+  assetSymbol        String // "USDC" | "ETH" | ...
+  assetContract      String? // lowercased, null for native
+  amountAtDeposit    String // raw units (decimal string for bigint)
+  amountAtDepositUsd Decimal // snapshotted USD value at deposit
+  currentAmountRaw   String? // last observed
+  currentAmountUsd   Decimal? // last observed
+  status             String // "active" | "withdrawn" | "failed"
+  openTxHash         String?
+  closeTxHash        String?
+  openedAt           DateTime
+  closedAt           DateTime?
+
+  // §14.6 — goal tracking. Both optional; set when the LLM extracts a
+  // goal+horizon from the user's natural-language request
+  // ("I want to use it later to buy a laptop after 3 months" → goal:
+  // "Laptop purchase", targetDate: now+90d). Surfaced in the
+  // PositionListCard countdown. Drives the goal-deadline-watcher
+  // worker (§18) that nudges the user when targetDate is near or past.
+  goal       String?
+  targetDate DateTime?
+
+  userStrategy UserStrategy @relation(fields: [userStrategyId], references: [id])
+
+  @@index([walletAddress, status])
+  @@index([targetDate]) // goal-deadline-watcher scans by date
+}
+
+model OpportunityCache {
+  id                   String   @id @default(cuid())
+  protocolSlug         String
+  chainId              Int // 0 for non-EVM (carry namespace below)
+  namespace            String
+  chainName            String   @default("") // DeFiLlama's `chain` field, e.g. "Ethereum", "Arbitrum", "Base", "Solana"
+  assetSymbol          String
+  assetContract        String? // ERC-20 / SPL mint / Sui coin type the protocol's underlying reserve uses; null when not resolvable (e.g. mainnet defillama-scored rows that need a later resolver pass)
+  poolId               String // DeFiLlama pool id
+  apy                  Decimal
+  apy7dAvg             Decimal
+  apyStddev30d         Decimal
+  tvlUsd               Decimal
+  tvl7dDelta           Decimal
+  emissionsToFeesRatio Decimal?
+  ilExposure           Boolean // true if pool can experience IL
+  score                Int // 0–100 composite
+  tier                 String // "conservative" | "balanced" | "aggressive"
+  raw                  Json // upstream payload for debugging
+  scoredAt             DateTime
+
+  @@unique([poolId])
+  @@index([tier, score])
+}
+
+model ProtocolScoreCache {
+  protocolSlug       String   @id
+  safetyScore        Int // 0–100 protocol-safety dimension (slow-moving)
+  auditCount         Int
+  protocolAgeDays    Int
+  exploitHistoryFlag Boolean
+  tvlTrendBps        Int // signed; 7d trend in bps
+  computedAt         DateTime
+}
+
+// Spec §18 — goal-deadline-watcher dedup marker. Each (positionId, kind)
+// pair gets one row when the worker emits a nudge; subsequent runs skip
+// the position when the marker is present and recent. `kind` is the
+// event name: `defi.goal.approaching` (7-day warning) or
+// `defi.goal.reached` (target date hit).
+model StrategyPositionEvent {
+  id         String   @id @default(cuid())
+  positionId String
+  kind       String
+  emittedAt  DateTime @default(now())
+
+  @@unique([positionId, kind])
+  @@index([positionId])
 }

@@ -121,6 +121,14 @@ export class UsdcTokenDto {
   isNativeCurrency: boolean;
 }
 
+export class SmartContractDto {
+  @ApiProperty({ description: "Contract identifier/name.", example: "aave_v3_pool" })
+  name: string;
+
+  @ApiProperty({ description: "On-chain contract address.", example: "0x87870B2ec3Ac922212397103130d32B879899f84" })
+  address: string;
+}
+
 export class BlockchainTokenDto {
   @ApiProperty() id: string;
   @ApiProperty() name: string;
@@ -238,6 +246,13 @@ export class EnrichedBlockchainResponseDto {
     required: false,
   })
   tokens: BlockchainTokenDto[];
+
+  @ApiProperty({
+    description: "Curated list of protocol-specific smart contracts for this chain.",
+    type: [SmartContractDto],
+    required: false,
+  })
+  smartContracts: SmartContractDto[];
 
   @ApiProperty({ description: "Row-level updated timestamp (for ETag debugging).", example: "2024-03-19T12:00:00.000Z" })
   updatedAt: Date;

@@ -139,6 +139,9 @@ export class BlockchainsService {
             isActive: true,
           },
         },
+        SmartContract: {
+          where: { isActive: true },
+        },
       },
       orderBy: { name: "asc" },
     });

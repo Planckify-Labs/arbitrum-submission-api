@@ -26,10 +26,12 @@
     "docker:prod:reset": "docker compose -f docker-compose.prod.yml down -v && docker compose -f docker-compose.prod.yml up -d --build",
     "docker:prod:logs": "docker compose -f docker-compose.prod.yml logs -f",
     "db:setup": "./scripts/setup-db.sh",
-    "db:setup:prod": "./scripts/setup-db-prod.sh"
+    "db:setup:prod": "./scripts/setup-db-prod.sh",
+    "pushNotif:test": "ts-node --transpile-only scripts/push-notif-test.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
+    "@lifi/sdk": "^3.16.3",
     "@mysten/sui": "^2.16.0",
     "@nestjs/bullmq": "^11.0.3",
     "@nestjs/common": "^11.0.1",
@@ -51,6 +53,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
     "compression": "^1.8.1",
+    "expo-server-sdk": "^6.1.0",
     "google-auth-library": "^10.5.0",
     "helmet": "^8.1.0",
     "jose": "^5.10.0",

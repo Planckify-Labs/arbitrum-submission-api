@@ -85,6 +85,27 @@ services:
       NATS_PASS: ${NATS_PASS}
       # Request size
       MAX_REQUEST_SIZE: ${MAX_REQUEST_SIZE:-10mb}
+      # DeFi Strategies — API keys
+      ZERION_API_KEY: ${ZERION_API_KEY}
+      DEBANK_API_KEY: ${DEBANK_API_KEY}
+      DEFILLAMA_API_KEY: ${DEFILLAMA_API_KEY}
+      LIFI_API_KEY: ${LIFI_API_KEY}
+      LIFI_INTEGRATOR: ${LIFI_INTEGRATOR:-takumipay}
+      # DeFi Strategies — base URLs (required at startup)
+      DEFILLAMA_YIELDS_URL: ${DEFILLAMA_YIELDS_URL:-https://yields.llama.fi}
+      DEFILLAMA_API_URL: ${DEFILLAMA_API_URL:-https://api.llama.fi}
+      DEFILLAMA_PRO_URL: ${DEFILLAMA_PRO_URL:-https://pro-api.llama.fi}
+      LIFI_API_URL: ${LIFI_API_URL:-https://li.quest/v1}
+      ZERION_API_URL: ${ZERION_API_URL:-https://api.zerion.io/v1}
+      DEBANK_API_URL: ${DEBANK_API_URL:-https://api.cloud.debank.com/v1}
+      # DeFi Strategies — worker toggles & budgets
+      DEFI_WORKERS_ENABLED: ${DEFI_WORKERS_ENABLED:-true}
+      DEFI_STABLECOIN_DEPEG_THRESHOLD_BPS: ${DEFI_STABLECOIN_DEPEG_THRESHOLD_BPS:-50}
+      DEFI_ZERION_DAILY_BUDGET_REQUESTS: ${DEFI_ZERION_DAILY_BUDGET_REQUESTS:-1000}
+      DEFI_DEBANK_DAILY_BUDGET_CENTS: ${DEFI_DEBANK_DAILY_BUDGET_CENTS:-500}
+      DEFI_AUTO_COMPOUND_INTERVAL_DAYS: ${DEFI_AUTO_COMPOUND_INTERVAL_DAYS:-7}
+      # Push notifications (Expo Push) — leave blank for free anonymous relay
+      EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN}
     depends_on:
       postgres:
         condition: service_healthy
