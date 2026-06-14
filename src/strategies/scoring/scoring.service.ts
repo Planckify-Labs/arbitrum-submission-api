@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { DeFiLlamaYieldPool } from "../external/defillama.client";
 
 export interface ScoringDimensions {
   protocolSafety: number; // 0-100
@@ -52,7 +53,10 @@ export class ScoringService {
    * Map raw DeFiLlama pool data to scoring dimensions.
    * This is a simplified heuristic for Phase 1.
    */
-  mapPoolToDimensions(pool: any, protocolMetadata: any): ScoringDimensions {
+  mapPoolToDimensions(
+    pool: DeFiLlamaYieldPool,
+    protocolMetadata: { auditCount: number },
+  ): ScoringDimensions {
     // Protocol Safety (based on audits and age)
     const protocolSafety = protocolMetadata.auditCount > 0 ? 85 : 40;
 

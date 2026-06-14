@@ -20,11 +20,13 @@ import { SettlementRejectedError } from "../settlement.types";
 export class NanopaySettlementProvider implements IPaymentSettlementProvider {
   readonly key = "nanopay" as const;
 
-  async settle({ intent, payerInput }: SettleArgs): Promise<SettleReceipt> {
+  settle({ intent, payerInput }: SettleArgs): Promise<SettleReceipt> {
     if (payerInput.kind !== "signature") {
-      throw new SettlementRejectedError(
-        "PAYER_INPUT_WRONG_KIND",
-        "Nanopay rail requires a signature, not a txHash",
+      return Promise.reject(
+        new SettlementRejectedError(
+          "PAYER_INPUT_WRONG_KIND",
+          "Nanopay rail requires a signature, not a txHash",
+        ),
       );
     }
     // NOTE: In the full implementation, this would call the Circle Gateway
@@ -32,9 +34,9 @@ export class NanopaySettlementProvider implements IPaymentSettlementProvider {
     // IntentsService.submitNanopay -- this adapter is the future extraction
     // point. The orchestrator currently routes nanopay calls through the
     // existing code path.
-    return {
+    return Promise.resolve({
       settlementId: intent.id,
       status: "SETTLING",
-    };
+    });
   }
 }

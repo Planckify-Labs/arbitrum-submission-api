@@ -6,12 +6,14 @@ function buildHarness() {
   const valkey = {
     get: jest.fn(async (k: string) => store.get(k) ?? null),
     set: jest.fn(async (k: string, v: string) => {
+      await Promise.resolve();
       store.set(k, v);
       return true;
     }),
     del: jest.fn(async (k: string) => store.delete(k)),
     mget: jest.fn(async (keys: string[]) => keys.map((k) => store.get(k) ?? null)),
     mset: jest.fn(async (entries: Record<string, string>) => {
+      await Promise.resolve();
       for (const [k, v] of Object.entries(entries)) store.set(k, v);
       return true;
     }),
@@ -21,9 +23,11 @@ function buildHarness() {
     incr: jest.fn(async () => 1),
     decr: jest.fn(async () => 0),
     unlinkBatch: jest.fn(async (keys: string[]) => {
+      await Promise.resolve();
       for (const k of keys) store.delete(k);
     }),
     customCommand: jest.fn(async (args: string[]) => {
+      await Promise.resolve();
       if (args[0] === "SCAN") {
         return ["0", Array.from(store.keys())];
       }

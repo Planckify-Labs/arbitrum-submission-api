@@ -100,6 +100,7 @@ function buildHarness(d: Defaults = {}) {
 
   const queueService = {
     addPurchaseJob: jest.fn(async () => {
+      await Promise.resolve();
       if (d.queueThrows) throw new Error("queue down");
       return "job_001";
     }),

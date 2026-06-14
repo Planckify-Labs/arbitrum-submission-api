@@ -68,7 +68,7 @@ export class DeBankClient {
 
   private async checkAndIncrementBudget(costCents: number): Promise<boolean> {
     const key = this.getRateLimitKey();
-    let currentSpendStr = await this.valkeyService.get<string>(key);
+    const currentSpendStr = await this.valkeyService.get<string>(key);
     let currentSpend = currentSpendStr ? parseInt(currentSpendStr, 10) : 0;
 
     if (currentSpend + costCents > this.dailyBudgetCents) {
@@ -85,7 +85,7 @@ export class DeBankClient {
    * Fetch user history across all chains.
    * API Ref: GET /v1/user/all_history_list
    */
-  async getUserHistory(walletAddress: string): Promise<any> {
+  async getUserHistory(walletAddress: string): Promise<unknown> {
     const started = Date.now();
     this.logger.log(
       `[getUserHistory] -> DeBank wallet=${walletAddress}`,
@@ -131,7 +131,7 @@ export class DeBankClient {
    * Fetch token approvals (authorizations) for a specific chain.
    * API Ref: GET /v1/user/token_authorized_list
    */
-  async getTokenApprovals(walletAddress: string, chainId: string): Promise<any> {
+  async getTokenApprovals(walletAddress: string, chainId: string): Promise<unknown> {
     const started = Date.now();
     this.logger.log(
       `[getTokenApprovals] -> DeBank wallet=${walletAddress} chain=${chainId}`,

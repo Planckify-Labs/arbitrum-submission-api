@@ -58,6 +58,7 @@ function buildHarness(opts: {
 
   const productInputValidator = {
     validateCustomerInfo: jest.fn(async (_p: string, info: unknown) => {
+      await Promise.resolve();
       if (opts.validateThrows) throw new BadRequestException("invalid");
       return info ?? {};
     }),

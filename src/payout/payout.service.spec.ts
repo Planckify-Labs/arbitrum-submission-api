@@ -108,6 +108,7 @@ describe("PayoutService.triggerPayout", () => {
     });
     const { svc, prisma } = build({
       triggerPayout: jest.fn(async () => {
+        await Promise.resolve();
         throw err;
       }),
     });

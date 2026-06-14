@@ -68,7 +68,7 @@ export class ZerionClient {
 
   private async checkAndIncrementBudget(): Promise<boolean> {
     const key = this.getRateLimitKey();
-    let countStr = await this.valkeyService.get<string>(key);
+    const countStr = await this.valkeyService.get<string>(key);
     let count = countStr ? parseInt(countStr, 10) : 0;
 
     if (count >= this.dailyBudget) {
@@ -81,7 +81,7 @@ export class ZerionClient {
     return true;
   }
 
-  async getPortfolio(walletAddress: string): Promise<any> {
+  async getPortfolio(walletAddress: string): Promise<unknown> {
     const started = Date.now();
     this.logger.log(
       `[getPortfolio] -> Zerion wallet=${walletAddress} (hasKey=${Boolean(this.apiKey)})`,

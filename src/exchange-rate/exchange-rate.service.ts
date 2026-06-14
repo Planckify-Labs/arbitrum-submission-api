@@ -62,7 +62,7 @@ export class ExchangeRateService {
     const result = await this.exchangeRateCache.getLatestRate(
       query.fromCurrency,
       query.toCurrency,
-      async () => {
+      () => {
         const where: Prisma.ExchangeRateWhereInput = {
           fromCurrency: query.fromCurrency,
           toCurrency: query.toCurrency,
@@ -80,7 +80,7 @@ export class ExchangeRateService {
   }
 
   async findOne(id: number) {
-    const result = await this.exchangeRateCache.getRate(id, async () => {
+    const result = await this.exchangeRateCache.getRate(id, () => {
       return this.prisma.exchangeRate.findFirst({
         where: { id },
         include: { sourceProvider: true },
@@ -251,7 +251,7 @@ export class ExchangeRateService {
     }
   }
 
-  async findAllSources() {
+  findAllSources() {
     return this.prisma.exchangeSource.findMany({
       orderBy: { priority: "asc" },
     });
@@ -266,7 +266,7 @@ export class ExchangeRateService {
     return source;
   }
 
-  async createSource(dto: CreateExchangeSourceDto) {
+  createSource(dto: CreateExchangeSourceDto) {
     return this.prisma.exchangeSource.create({ data: dto });
   }
 

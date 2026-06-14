@@ -58,7 +58,7 @@ export class VendorAPICacheService {
       if (cacheReady) {
         try {
           await this.cacheVendorAPI(vendorId, vendorAPI);
-        } catch (cacheError) {
+        } catch {
           this.logger.debug(`Failed to cache vendor API for ${vendorId}, continuing without cache`);
         }
       }

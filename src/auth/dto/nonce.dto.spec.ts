@@ -2,7 +2,7 @@ import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
 import { NonceDto } from "./nonce.dto";
 
-async function run(input: Record<string, unknown>) {
+function run(input: Record<string, unknown>) {
   const dto = plainToInstance(NonceDto, input);
   return validate(dto);
 }

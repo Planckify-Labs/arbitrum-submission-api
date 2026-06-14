@@ -29,7 +29,7 @@ export class ProductCacheService {
   /**
    * Get product details with cache-aside pattern
    */
-  async getProductDetails<T>(
+  getProductDetails<T>(
     productId: number | string,
     fallback: () => Promise<T>,
   ): Promise<T> {
@@ -42,7 +42,7 @@ export class ProductCacheService {
   /**
    * Get product prices with cache-aside pattern
    */
-  async getProductPrices<T>(
+  getProductPrices<T>(
     productId: number | string,
     fallback: () => Promise<T>,
   ): Promise<T> {
@@ -55,7 +55,7 @@ export class ProductCacheService {
   /**
    * Get product variants with cache-aside pattern
    */
-  async getProductVariants<T>(
+  getProductVariants<T>(
     productId: number | string,
     fallback: () => Promise<T>,
   ): Promise<T> {
@@ -68,7 +68,7 @@ export class ProductCacheService {
   /**
    * Get product by code with cache-aside pattern
    */
-  async getProductByCode<T>(
+  getProductByCode<T>(
     code: string,
     fallback: () => Promise<T>,
   ): Promise<T> {
@@ -81,7 +81,7 @@ export class ProductCacheService {
   /**
    * Get paginated product list with cache-aside pattern
    */
-  async getProductList<T>(
+  getProductList<T>(
     cursor: string | number,
     fallback: () => Promise<T>,
   ): Promise<T> {
@@ -94,7 +94,7 @@ export class ProductCacheService {
   /**
    * Get products grouped by category (catalog view)
    */
-  async getCatalogGrouped<T>(fallback: () => Promise<T>): Promise<T> {
+  getCatalogGrouped<T>(fallback: () => Promise<T>): Promise<T> {
     const key = 'catalog:grouped';
     return this.cacheManager.cacheAside(key, fallback, {
       ttl: this.TTL.CATALOG,
@@ -104,7 +104,7 @@ export class ProductCacheService {
   /**
    * Get products by category with cache-aside pattern
    */
-  async getProductsByCategory<T>(
+  getProductsByCategory<T>(
     categoryId: number | string,
     fallback: () => Promise<T>,
   ): Promise<T> {

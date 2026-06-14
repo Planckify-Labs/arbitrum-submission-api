@@ -51,7 +51,7 @@ function providerStub(
   return {
     triggerPayout: jest.fn(),
     getStatus: jest.fn(),
-    verifyWebhookSignature: jest.fn(verifyImpl) as any,
+    verifyWebhookSignature: jest.fn(verifyImpl),
   } as unknown as IPayoutProviderAdapter;
 }
 
@@ -64,7 +64,7 @@ function prismaStub(opts: {
   const findFirst: jest.Mock = jest.fn(async () => opts.findRow ?? null);
   const payoutUpdate: jest.Mock = jest.fn(async () => ({}));
   const intentUpdate: jest.Mock = jest.fn(async () => ({}));
-  const $transaction: jest.Mock = jest.fn(async (cb: any) => {
+  const $transaction: jest.Mock = jest.fn((cb: (tx: unknown) => unknown) => {
     return cb({
       providerPayout: { update: payoutUpdate },
       paymentIntent: { update: intentUpdate },
@@ -288,7 +288,7 @@ describe("mapXenditCallbackStatus", () => {
     [undefined, ProviderPayoutStatus.PENDING],
     ["SOMETHING_NEW", ProviderPayoutStatus.PENDING],
   ])("maps %p → %s", (input, expected) => {
-    expect(mapXenditCallbackStatus(input as any)).toBe(expected);
+    expect(mapXenditCallbackStatus(input)).toBe(expected);
   });
 });
 
@@ -497,6 +497,6 @@ describe("mapFlipCallbackStatus", () => {
     [undefined, ProviderPayoutStatus.PENDING],
     ["SOMETHING_UNKNOWN", ProviderPayoutStatus.PENDING],
   ])("maps %p → %s", (input, expected) => {
-    expect(mapFlipCallbackStatus(input as any)).toBe(expected);
+    expect(mapFlipCallbackStatus(input)).toBe(expected);
   });
 });

@@ -327,7 +327,7 @@ export class CacheManagerService implements TCacheKeyBuilder {
    */
   async writeThrough<T>(
     key: string,
-    data: T,
+    _data: T,
     dbWriter: () => Promise<T>,
     ttl?: number,
   ): Promise<T> {

@@ -48,7 +48,7 @@ export class SettlementOrchestratorService {
     }
   }
 
-  async settleAndKickPayout(
+  settleAndKickPayout(
     intent: PaymentIntent,
     merchant: Merchant,
     payerInput: PayerInput,

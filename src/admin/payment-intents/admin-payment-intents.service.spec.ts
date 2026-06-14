@@ -38,6 +38,7 @@ function buildHarness(opts: {
           where: { id: string };
           select?: { id: boolean };
         }) => {
+          await Promise.resolve();
           if (select) return opts.intentExists ?? null;
           return opts.one ?? null;
         },

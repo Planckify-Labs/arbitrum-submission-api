@@ -232,7 +232,7 @@ export class BookingService {
     return { items, total };
   }
 
-  async getLatestBooking(walletAddress: string) {
+  getLatestBooking(walletAddress: string) {
     return this.bookingCache.getLatestBooking(walletAddress, async () => {
       const booking = await this.prisma.bookingOrder.findFirst({
         where: {
@@ -471,7 +471,7 @@ export class BookingService {
     };
   }
 
-  async getAbandonedBookings(walletAddress: string) {
+  getAbandonedBookings(walletAddress: string) {
     return this.prisma.bookingOrder.findMany({
       where: {
         walletAddress: { equals: walletAddress, mode: "insensitive" },

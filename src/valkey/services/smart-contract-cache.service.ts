@@ -25,7 +25,7 @@ export class SmartContractCacheService {
   /**
    * Get smart contract by ID with cache-aside pattern
    */
-  async getById<T>(contractId: string, fallback: () => Promise<T>): Promise<T> {
+  getById<T>(contractId: string, fallback: () => Promise<T>): Promise<T> {
     const key = this.cacheManager.buildKey('contract', contractId);
     return this.cacheManager.cacheAside(key, fallback, {
       ttl: this.TTL.CONTRACT,
@@ -36,7 +36,7 @@ export class SmartContractCacheService {
    * Get smart contract by blockchain ID and address with cache-aside pattern
    * This is the hot path lookup used in purchase processor
    */
-  async getByBlockchainAndAddress<T>(
+  getByBlockchainAndAddress<T>(
     blockchainId: string,
     address: string,
     fallback: () => Promise<T>,
@@ -56,7 +56,7 @@ export class SmartContractCacheService {
   /**
    * Get smart contract by chain ID with cache-aside pattern
    */
-  async getByChainId<T>(
+  getByChainId<T>(
     chainId: number,
     fallback: () => Promise<T>,
   ): Promise<T> {
@@ -69,7 +69,7 @@ export class SmartContractCacheService {
   /**
    * Get all smart contracts for a blockchain with cache-aside pattern
    */
-  async getByBlockchain<T>(
+  getByBlockchain<T>(
     blockchainId: string,
     fallback: () => Promise<T>,
   ): Promise<T> {
@@ -82,7 +82,7 @@ export class SmartContractCacheService {
   /**
    * Get all smart contracts list with cache-aside pattern
    */
-  async getAllContracts<T>(
+  getAllContracts<T>(
     cursor: string | number | undefined,
     fallback: () => Promise<T>,
   ): Promise<T> {

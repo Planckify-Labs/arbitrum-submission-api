@@ -30,7 +30,7 @@ export class BookingCacheService {
   /**
    * Get booking by ID
    */
-  async getBooking<T>(
+  getBooking<T>(
     bookingId: number | string,
     fallback: () => Promise<T>,
   ): Promise<T> {
@@ -43,7 +43,7 @@ export class BookingCacheService {
   /**
    * Get booking by reference ID
    */
-  async getBookingByRef<T>(
+  getBookingByRef<T>(
     refId: string,
     fallback: () => Promise<T>,
   ): Promise<T> {
@@ -56,7 +56,7 @@ export class BookingCacheService {
   /**
    * Get latest booking for user's wallet
    */
-  async getLatestBooking<T>(
+  getLatestBooking<T>(
     walletAddress: string,
     fallback: () => Promise<T>,
   ): Promise<T> {
@@ -74,7 +74,7 @@ export class BookingCacheService {
   /**
    * Get pending bookings for user
    */
-  async getPendingBookings<T>(
+  getPendingBookings<T>(
     walletAddress: string,
     fallback: () => Promise<T>,
   ): Promise<T> {
@@ -132,7 +132,7 @@ export class BookingCacheService {
   /**
    * Write-through pattern: Update booking and cache together
    */
-  async updateBooking<T>(
+  updateBooking<T>(
     bookingId: number | string,
     updater: () => Promise<T>,
   ): Promise<T> {
@@ -140,7 +140,7 @@ export class BookingCacheService {
 
     return this.cacheManager.writeThrough(
       key,
-      null as any, // Data comes from updater
+      null as unknown as T, // Data comes from updater
       updater,
       this.TTL.BOOKING_DETAILS,
     );
@@ -157,7 +157,7 @@ export class BookingCacheService {
   /**
    * Check if booking is cached (useful for quick checks without DB query)
    */
-  async isBookingCached(bookingId: number | string): Promise<boolean> {
+  isBookingCached(bookingId: number | string): Promise<boolean> {
     const key = this.cacheManager.buildKey('booking', bookingId);
     return this.cacheManager.exists(key);
   }

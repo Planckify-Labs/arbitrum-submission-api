@@ -19,7 +19,7 @@ export class RebalanceTriggerProcessor extends WorkerHost {
     });
 
     for (const strategy of activeStrategies) {
-      const trigger = strategy.rebalanceTrigger as any;
+      const trigger = strategy.rebalanceTrigger as { kind?: string; value?: string } | null;
 
       if (trigger?.kind === "yield_drop") {
         this.logger.debug(

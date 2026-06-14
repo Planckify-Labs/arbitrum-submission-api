@@ -137,7 +137,7 @@ export class X402SupportedService
    * scope item 4 in the backlog file, lives here as the single refresh
    * entry point so the reactive path doesn't stampede Circle).
    */
-  async refreshNow(): Promise<boolean> {
+  refreshNow(): Promise<boolean> {
     return this.refresh("manual");
   }
 

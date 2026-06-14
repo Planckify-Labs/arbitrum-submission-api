@@ -11,7 +11,7 @@ export class StablecoinDepegWatcherProcessor extends WorkerHost {
     super();
   }
 
-  async process(_job: Job): Promise<void> {
+  process(_job: Job): Promise<void> {
     this.logger.log("Checking for stablecoin depegs...");
 
     // Stubbed logic for Phase 1
@@ -26,6 +26,7 @@ export class StablecoinDepegWatcherProcessor extends WorkerHost {
     this.logger.log(
       "Stablecoin peg check complete. All stablecoins within healthy range.",
     );
+    return Promise.resolve();
   }
 
   @OnWorkerEvent("completed")

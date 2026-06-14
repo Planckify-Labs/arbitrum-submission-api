@@ -3,6 +3,7 @@ import type { BlockchainVerificationService } from "../../../blockchain-verifica
 import type { PrismaService } from "../../../prisma/prisma.service";
 import { SettlementRejectedError } from "../settlement.types";
 import type { SettleArgs, PayerInput } from "../settlement.types";
+import type { Merchant, PaymentIntent } from "@generated/prisma";
 import { OnchainSettlementProvider } from "./onchain.settlement.provider";
 import { BadRequestException } from "@nestjs/common";
 
@@ -47,14 +48,14 @@ function makeIntent(overrides: Record<string, unknown> = {}) {
     exchangeRateId: 42,
     sourceChainId: CHAIN_ID,
     ...overrides,
-  } as any;
+  } as unknown as PaymentIntent;
 }
 
 function makeMerchant() {
   return {
     id: "mch_123",
     payoutProvider: "xendit",
-  } as any;
+  } as unknown as Merchant;
 }
 
 function makeTxHashInput(overrides: Partial<{ txHash: string; chainId: number }> = {}): PayerInput {
@@ -66,8 +67,8 @@ function makeTxHashInput(overrides: Partial<{ txHash: string; chainId: number }>
 }
 
 function makeSettleArgs(overrides: {
-  intent?: any;
-  merchant?: any;
+  intent?: PaymentIntent;
+  merchant?: Merchant;
   payerInput?: PayerInput;
 } = {}): SettleArgs {
   return {
@@ -79,12 +80,12 @@ function makeSettleArgs(overrides: {
 
 function configStub(): Pick<ConfigService, "get"> {
   return {
-    get: jest.fn((k: string, defaultVal?: any) => {
+    get: jest.fn((k: string, defaultVal?: unknown) => {
       if (k === "ONCHAIN_MIN_CONFIRMATIONS") return 12;
       if (k === "MIN_CONFIRMATIONS") return 12;
       return defaultVal;
     }),
-  } as any;
+  } as unknown as ConfigService;
 }
 
 function buildMocks() {
@@ -102,7 +103,7 @@ function buildMocks() {
   const mockPrisma = {
     onchainSettlement: {
       findFirst: jest.fn().mockResolvedValue(null),
-      create: jest.fn(async (args: any) => ({
+      create: jest.fn(async (args: { data: Record<string, unknown> }) => ({
         id: "os_01",
         intentId: args.data.intentId,
         txHash: args.data.txHash,
@@ -114,7 +115,7 @@ function buildMocks() {
       })),
     },
     paymentIntent: {
-      update: jest.fn(async (args: any) => ({ id: args.where.id, ...args.data })),
+      update: jest.fn(async (args: { where: { id: unknown }; data: Record<string, unknown> }) => ({ id: args.where.id, ...args.data })),
     },
     blockchain: {
       findFirstOrThrow: jest.fn(async () => ({
@@ -137,7 +138,7 @@ function buildMocks() {
         contractAddress: TOKEN_ADDR,
       })),
     },
-    $transaction: jest.fn(async (fn: any) => fn(mockPrisma)),
+    $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(mockPrisma)),
   };
 
   const mockConfig = configStub();
@@ -146,20 +147,20 @@ function buildMocks() {
 }
 
 function buildProvider(overrides?: {
-  bv?: any;
-  prisma?: any;
-  config?: any;
+  bv?: unknown;
+  prisma?: unknown;
+  config?: unknown;
 }) {
   const { mockBlockchainVerification, mockPrisma, mockConfig } = buildMocks();
   return {
     provider: new OnchainSettlementProvider(
-      (overrides?.bv ?? mockBlockchainVerification) as any,
-      (overrides?.prisma ?? mockPrisma) as any,
-      (overrides?.config ?? mockConfig) as any,
+      (overrides?.bv ?? mockBlockchainVerification) as unknown as BlockchainVerificationService,
+      (overrides?.prisma ?? mockPrisma) as unknown as PrismaService,
+      (overrides?.config ?? mockConfig) as unknown as ConfigService,
     ),
-    bv: overrides?.bv ?? mockBlockchainVerification,
-    prisma: overrides?.prisma ?? mockPrisma,
-    config: overrides?.config ?? mockConfig,
+    bv: (overrides?.bv ?? mockBlockchainVerification) as typeof mockBlockchainVerification,
+    prisma: (overrides?.prisma ?? mockPrisma) as typeof mockPrisma,
+    config: (overrides?.config ?? mockConfig) as typeof mockConfig,
   };
 }
 

@@ -27,7 +27,7 @@ export class InvalidateCacheInterceptor implements NestInterceptor {
     private readonly cacheManager: CacheManagerService,
   ) {}
 
-  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const patterns = this.reflector.get<string | string[]>(
       INVALIDATE_CACHE_METADATA,
       context.getHandler(),
@@ -42,7 +42,7 @@ export class InvalidateCacheInterceptor implements NestInterceptor {
     const methodArgs = context.getArgs();
 
     return next.handle().pipe(
-      tap(async (result) => {
+      tap(() => {
         // Build cache keys from patterns and arguments
         const invalidationPromises = patternsArray.map(async (pattern) => {
           try {

@@ -67,6 +67,7 @@ function buildPrisma(opts: {
     },
     merchant: {
       update: jest.fn(async () => {
+        await Promise.resolve();
         if (opts.merchantUpdateThrows) {
           throw new Error("merchant-update-boom");
         }

@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import type { Prisma } from "@generated/prisma";
 import {
   IsBoolean,
   IsEnum,
@@ -49,7 +50,7 @@ export class CreateStrategyDto {
     example: ["any"],
   })
   @IsArray()
-  chainPref: any;
+  chainPref: Prisma.InputJsonValue;
 
   @ApiProperty({
     description: "Allocation percentage (1-100)",
@@ -65,7 +66,7 @@ export class CreateStrategyDto {
     example: { kind: "interval", value: "weekly" },
   })
   @IsObject()
-  rebalanceTrigger: any;
+  rebalanceTrigger: Prisma.InputJsonValue;
 
   @ApiPropertyOptional({
     description: "Optional whitelist of protocol slugs",

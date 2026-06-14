@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Connection, PublicKey, Commitment, Keypair } from "@solana/web3.js";
 import { Program, AnchorProvider, BN } from "@coral-xyz/anchor";
+import type { Idl, Wallet } from "@coral-xyz/anchor";
 import { PrismaService } from "../prisma/prisma.service";
 import { TAKUMI_PAY_IDL } from "./solana/takumi-pay/idl";
 import {
@@ -24,6 +25,7 @@ import * as nacl from "tweetnacl";
 
 interface SolanaClient {
   connection: Connection;
+  // biome-ignore lint/suspicious/noExplicitAny: Anchor program accessed dynamically by account name; on-chain IDL has no generated TS type, so Program<Idl> drops the account namespace and breaks every call site.
   program: any;
 }
 
@@ -76,13 +78,13 @@ export class SolanaVerificationService implements OnModuleInit {
       const connection = new Connection(chain.rpcUrl, "confirmed");
       const dummyWallet = {
         publicKey: PublicKey.default,
-        signTransaction: async (tx: any) => tx,
-        signAllTransactions: async (txs: any) => txs,
-      } as any;
+        signTransaction: <T>(tx: T) => Promise.resolve(tx),
+        signAllTransactions: <T>(txs: T) => Promise.resolve(txs),
+      } as unknown as Wallet;
       const provider = new AnchorProvider(connection, dummyWallet, {
         commitment: "confirmed",
       });
-      const program = new Program(TAKUMI_PAY_IDL as any, provider as any);
+      const program = new Program(TAKUMI_PAY_IDL as unknown as Idl, provider);
 
       this.clients.set(chain.id, { connection, program });
       this.logger.log(

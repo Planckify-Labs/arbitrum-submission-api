@@ -137,6 +137,7 @@ function buildHarness(opts: PrismaStubOpts = {}) {
 
   const productInputValidator = {
     validateCustomerInfo: jest.fn(async (_pid: string, info: unknown) => {
+      await Promise.resolve();
       if (opts.customerInfoValid === false) {
         throw new BadRequestException("invalid customer info");
       }

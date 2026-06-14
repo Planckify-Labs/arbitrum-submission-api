@@ -25,7 +25,7 @@ export class BlockchainCacheService {
    * Get blockchain by ID with cache-aside pattern
    * This is the most frequently called method (purchase processor, transactions, etc.)
    */
-  async getById<T>(
+  getById<T>(
     blockchainId: string,
     fallback: () => Promise<T>,
   ): Promise<T> {
@@ -38,7 +38,7 @@ export class BlockchainCacheService {
   /**
    * Get blockchain by chain ID with cache-aside pattern
    */
-  async getByChainId<T>(
+  getByChainId<T>(
     chainId: number,
     fallback: () => Promise<T>,
   ): Promise<T> {
@@ -52,7 +52,7 @@ export class BlockchainCacheService {
    * Get blockchain by chain slug with cache-aside pattern.
    * Used by SVM flows where chainId is null and slug is the lookup key.
    */
-  async getByChainSlug<T>(
+  getByChainSlug<T>(
     chainSlug: string,
     fallback: () => Promise<T>,
   ): Promise<T> {
@@ -66,7 +66,7 @@ export class BlockchainCacheService {
    * Get active blockchains list with cache-aside pattern
    * Used by blockchain-verification service on initialization
    */
-  async getActiveBlockchains<T>(fallback: () => Promise<T>): Promise<T> {
+  getActiveBlockchains<T>(fallback: () => Promise<T>): Promise<T> {
     const key = 'blockchains:active';
     return this.cacheManager.cacheAside(key, fallback, {
       ttl: this.TTL.BLOCKCHAIN_LIST,
@@ -76,7 +76,7 @@ export class BlockchainCacheService {
   /**
    * Get all blockchains list with cache-aside pattern
    */
-  async getAllBlockchains<T>(
+  getAllBlockchains<T>(
     cursor: string | number | undefined,
     fallback: () => Promise<T>,
   ): Promise<T> {
@@ -101,7 +101,7 @@ export class BlockchainCacheService {
    * `blockchains:*` pattern sweep — any admin update to a chain row clears this
    * key along with the paginated list caches.
    */
-  async getEnrichedConfig<T>(
+  getEnrichedConfig<T>(
     countrySegment: string,
     fallback: () => Promise<T>,
   ): Promise<T> {

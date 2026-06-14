@@ -124,7 +124,7 @@ export class BookingController {
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: "Get abandoned bookings", description: "Expired bookings without a completed purchase - use to show recovery nudges." })
   @ApiResponse({ status: 200, description: "Abandoned bookings list" })
-  async getAbandonedBookings(
+  getAbandonedBookings(
     @Param("walletAddress") walletAddress: string,
     @Request() req,
   ) {

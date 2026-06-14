@@ -1,4 +1,5 @@
 import type { ConfigService } from "@nestjs/config";
+import type { Merchant, PaymentIntent } from "@generated/prisma";
 import type { IPaymentSettlementProvider } from "./settlement-provider.port";
 import { SettlementOrchestratorService } from "./settlement-orchestrator.service";
 
@@ -40,11 +41,11 @@ function configStub(
   defaultRail = "nanopay",
 ): Pick<ConfigService, "get"> {
   return {
-    get: jest.fn((k: string, defaultVal?: any) => {
+    get: jest.fn((k: string, defaultVal?: unknown) => {
       if (k === "PAYMENT_SETTLEMENT_RAIL") return defaultRail;
       return defaultVal;
     }),
-  } as any;
+  } as unknown as ConfigService;
 }
 
 function build(defaultRail = "nanopay") {
@@ -52,7 +53,7 @@ function build(defaultRail = "nanopay") {
   const onchain = makeOnchainAdapter();
   const config = configStub(defaultRail);
   const svc = new SettlementOrchestratorService(
-    config as any,
+    config as unknown as ConfigService,
     nanopay,
     onchain,
   );
@@ -61,7 +62,7 @@ function build(defaultRail = "nanopay") {
 
 describe("SettlementOrchestratorService.resolveProvider routing", () => {
   it('resolveProvider("nanopay") returns the nanopay adapter', () => {
-    const { svc, nanopay, onchain } = build();
+    const { svc, nanopay } = build();
     const provider = svc.resolveProvider("nanopay");
     expect(provider).toBe(nanopay);
     expect(provider.key).toBe("nanopay");
@@ -99,8 +100,8 @@ describe("SettlementOrchestratorService.resolveProvider routing", () => {
 describe("SettlementOrchestratorService.settleAndKickPayout delegation", () => {
   it("delegates to the correct provider based on intent.path", async () => {
     const { svc, nanopay, onchain } = build();
-    const intent = { id: "pi_01", path: "direct_arc" } as any;
-    const merchant = { id: "mch_01" } as any;
+    const intent = { id: "pi_01", path: "direct_arc" } as unknown as PaymentIntent;
+    const merchant = { id: "mch_01" } as unknown as Merchant;
     const payerInput = { kind: "txHash" as const, txHash: "0xabc", chainId: 1 };
 
     const result = await svc.settleAndKickPayout(intent, merchant, payerInput);
@@ -117,8 +118,8 @@ describe("SettlementOrchestratorService.settleAndKickPayout delegation", () => {
 
   it("delegates nanopay-path intents to the nanopay adapter", async () => {
     const { svc, nanopay, onchain } = build();
-    const intent = { id: "pi_02", path: "nanopay" } as any;
-    const merchant = { id: "mch_01" } as any;
+    const intent = { id: "pi_02", path: "nanopay" } as unknown as PaymentIntent;
+    const merchant = { id: "mch_01" } as unknown as Merchant;
     const payerInput = { kind: "signature" as const, signature: "0xsig" };
 
     const result = await svc.settleAndKickPayout(intent, merchant, payerInput);

@@ -93,7 +93,7 @@ export class AdminPaymentIntentsController {
   }
 
   @Get(":id")
-  async findOne(@Param("id") id: string) {
+  findOne(@Param("id") id: string) {
     return this.service.findOne(id);
   }
 

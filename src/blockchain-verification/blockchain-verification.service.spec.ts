@@ -1,3 +1,5 @@
+import type { ConfigService } from "@nestjs/config";
+import type { PrismaService } from "../prisma/prisma.service";
 import { BlockchainVerificationService } from "./blockchain-verification.service";
 import { SolanaVerificationService } from "./solana-verification.service";
 import type { TTransactionVerificationResult } from "./types/blockchain-verification.types";
@@ -35,7 +37,7 @@ const solanaResult: TTransactionVerificationResult = {
 };
 
 function makePrismaStub() {
-  const rows: Record<string, any> = {
+  const rows: Record<string, unknown> = {
     [SOLANA_BLOCKCHAIN_ID]: {
       id: SOLANA_BLOCKCHAIN_ID,
       name: "Solana Devnet",
@@ -73,7 +75,7 @@ function makeSolanaStub() {
 
 function makeConfigStub() {
   return {
-    get: jest.fn((key: string, defaultVal?: any) => {
+    get: jest.fn((key: string, defaultVal?: unknown) => {
       if (key === "MIN_CONFIRMATIONS") return 12;
       return defaultVal;
     }),
@@ -86,9 +88,9 @@ function buildService() {
   const config = makeConfigStub();
 
   const svc = new BlockchainVerificationService(
-    prisma as any,
-    config as any,
-    solana as any,
+    prisma as unknown as PrismaService,
+    config as unknown as ConfigService,
+    solana as unknown as SolanaVerificationService,
   );
 
   return { svc, prisma, solana };

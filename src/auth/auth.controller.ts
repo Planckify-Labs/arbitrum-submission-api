@@ -158,7 +158,7 @@ export class AuthController {
   })
   @Public()
   @Post("google")
-  async googleLogin(
+  googleLogin(
     @Body() googleLoginDto: GoogleLoginDto,
   ): Promise<AuthResponseDto> {
     return this.authService.googleLogin(

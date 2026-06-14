@@ -1,4 +1,5 @@
 import { Logger } from "@nestjs/common";
+import type { ConfigService } from "@nestjs/config";
 import type { Merchant, PaymentIntent } from "@generated/prisma";
 import type { PrismaService } from "../../prisma/prisma.service";
 import { encryptAccountNumber } from "../account-number-crypto";
@@ -24,7 +25,7 @@ const DUITKU_CREDS = {
   DUITKU_DISB_API_BASE: "https://sandbox.duitku.com/webapi/api/disbursement",
 };
 
-function configStub(overrides: Record<string, string> = {}) {
+function configStub(overrides: Record<string, string> = {}): ConfigService {
   const bag = { ...DUITKU_CREDS, ...overrides };
   return {
     get: (k: string) => bag[k as keyof typeof bag],
@@ -33,7 +34,7 @@ function configStub(overrides: Record<string, string> = {}) {
       if (v === undefined) throw new Error(`missing ${k}`);
       return v;
     },
-  };
+  } as unknown as ConfigService;
 }
 
 function prismaStub(
@@ -91,7 +92,7 @@ function makeFetch(
   const callLog: Array<{ url: string; body: unknown }> = [];
   let i = 0;
   const fn = jest.fn(
-    async (
+    (
       url: string | URL | Request,
       init?: { body?: string },
     ): Promise<Response> => {
@@ -100,9 +101,9 @@ function makeFetch(
       callLog.push({ url: u, body: parsedBody });
       const scriptIdx = Math.min(i++, scripts.length - 1);
       const s = scripts[scriptIdx];
-      if (s.throws) throw s.throws;
+      if (s.throws) return Promise.reject(s.throws);
       const text = s.body === undefined ? "" : JSON.stringify(s.body);
-      return new Response(text, { status: s.status });
+      return Promise.resolve(new Response(text, { status: s.status }));
     },
   );
   return { fn, callLog };
@@ -122,7 +123,7 @@ describe("DuitkuPayoutProvider.triggerPayout", () => {
       { status: 200, body: { responseCode: "00" } },
     ]);
     const provider = new DuitkuPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fn as unknown as typeof fetch,
     );
@@ -165,7 +166,7 @@ describe("DuitkuPayoutProvider.triggerPayout", () => {
       },
     ]);
     const provider = new DuitkuPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fn as unknown as typeof fetch,
     );
@@ -197,7 +198,7 @@ describe("DuitkuPayoutProvider.triggerPayout", () => {
       { status: 200, body: { responseCode: "68" } },
     ]);
     const provider = new DuitkuPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fn as unknown as typeof fetch,
     );
@@ -224,7 +225,7 @@ describe("DuitkuPayoutProvider.triggerPayout", () => {
       { status: 200, body: { responseCode: "TO" } },
     ]);
     const provider = new DuitkuPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fn as unknown as typeof fetch,
     );
@@ -247,7 +248,7 @@ describe("DuitkuPayoutProvider.triggerPayout", () => {
       { status: 200, body: { responseCode: "-100" } },
     ]);
     const provider = new DuitkuPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fn as unknown as typeof fetch,
     );
@@ -271,7 +272,7 @@ describe("DuitkuPayoutProvider.triggerPayout", () => {
       { status: 200, body: { responseCode: "00" } },
     ]);
     const provider = new DuitkuPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fn as unknown as typeof fetch,
     );
@@ -288,7 +289,7 @@ describe("DuitkuPayoutProvider.triggerPayout", () => {
       { status: 503 },
     ]);
     const provider = new DuitkuPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fn as unknown as typeof fetch,
     );
@@ -306,7 +307,7 @@ describe("DuitkuPayoutProvider.getStatus", () => {
   it("happy path — responseCode 00 maps to COMPLETED", async () => {
     const { fn } = makeFetch([{ status: 200, body: { responseCode: "00" } }]);
     const provider = new DuitkuPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fn as unknown as typeof fetch,
     );
@@ -318,7 +319,7 @@ describe("DuitkuPayoutProvider.getStatus", () => {
   it("ambiguous 68 maps to PENDING (no operationalAlert)", async () => {
     const { fn } = makeFetch([{ status: 200, body: { responseCode: "68" } }]);
     const provider = new DuitkuPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fn as unknown as typeof fetch,
     );
@@ -330,7 +331,7 @@ describe("DuitkuPayoutProvider.getStatus", () => {
   it("-100 maps to PENDING + operationalAlert", async () => {
     const { fn } = makeFetch([{ status: 200, body: { responseCode: "-100" } }]);
     const provider = new DuitkuPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fn as unknown as typeof fetch,
     );
@@ -342,7 +343,7 @@ describe("DuitkuPayoutProvider.getStatus", () => {
   it("FAILED terminal code (01) maps to FAILED", async () => {
     const { fn } = makeFetch([{ status: 200, body: { responseCode: "01" } }]);
     const provider = new DuitkuPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fn as unknown as typeof fetch,
     );
@@ -354,7 +355,7 @@ describe("DuitkuPayoutProvider.getStatus", () => {
 describe("DuitkuPayoutProvider.verifyWebhookSignature", () => {
   it("returns false — RTOL has no callback in v1 (research §2.8)", () => {
     const provider = new DuitkuPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
     );
     expect(provider.verifyWebhookSignature({}, "{}")).toBe(false);
@@ -394,7 +395,7 @@ describe("DuitkuPayoutProvider log redaction", () => {
         },
       ]);
       const provider = new DuitkuPayoutProvider(
-        configStub() as any,
+        configStub(),
         prismaStub(),
         fn as unknown as typeof fetch,
       );
@@ -424,7 +425,7 @@ describe("DuitkuPayoutProvider.checkBalance (task 18)", () => {
       { status: 200, body: { responseCode: "00", balance: 5_000_000 } },
     ]);
     const provider = new DuitkuPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fn as unknown as typeof fetch,
     );
@@ -437,7 +438,7 @@ describe("DuitkuPayoutProvider.checkBalance (task 18)", () => {
       { status: 200, body: { responseCode: "-191" } },
     ]);
     const provider = new DuitkuPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fn as unknown as typeof fetch,
     );

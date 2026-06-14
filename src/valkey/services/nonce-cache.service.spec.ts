@@ -7,10 +7,12 @@ describe("NonceCacheService", () => {
 
   const valkey = {
     set: jest.fn(async (key: string, value: string) => {
+      await Promise.resolve();
       store.set(key, JSON.parse(value));
     }),
     get: jest.fn(async (key: string) => store.get(key) ?? null),
     del: jest.fn(async (key: string) => {
+      await Promise.resolve();
       store.delete(key);
     }),
   } as unknown as ValkeyService;

@@ -11,6 +11,10 @@ import type { PrismaService } from "../prisma/prisma.service";
 import type { ValkeyService } from "../valkey/valkey.service";
 import type { ConfigService } from "@nestjs/config";
 import type { QrSigningService } from "../merchants/qr-signing.service";
+import type { BlockchainCacheService } from "../valkey/services/blockchain-cache.service";
+import type { ICircleSettleClient } from "./circle-settle.client";
+import type { BlockchainVerificationService } from "../blockchain-verification/blockchain-verification.service";
+import type { TransactionsService } from "../transactions/transactions.service";
 
 /**
  * Stub for `X402SupportedService`. We inject a ready-to-go Arc entry so
@@ -43,12 +47,14 @@ function valkeyStub(
 ): Pick<ValkeyService, "get" | "set"> {
   const store = new Map(Object.entries(cached));
   return {
-    get: jest.fn(async (key: string) => (store.has(key) ? (store.get(key) as any) : null)),
-    set: jest.fn(async (key: string, value: unknown) => {
+    get: jest.fn((key: string) =>
+      Promise.resolve(store.has(key) ? store.get(key) : null),
+    ),
+    set: jest.fn((key: string, value: unknown) => {
       store.set(key, value);
-      return true;
+      return Promise.resolve(true);
     }),
-  } as any;
+  } as unknown as ValkeyService;
 }
 
 function configStub(treasury = "0x00000000000000000000000000000000abCDef01"): Pick<
@@ -59,7 +65,7 @@ function configStub(treasury = "0x00000000000000000000000000000000abCDef01"): Pi
     get: jest.fn((k: string) =>
       k === "PLATFORM_TREASURY_ADDRESS_EVM" ? treasury : undefined,
     ),
-  } as any;
+  } as unknown as ConfigService;
 }
 
 interface FakePrisma {
@@ -164,15 +170,15 @@ function buildService(overrides: {
   const svc = new IntentsService(
     prisma as unknown as PrismaService,
     valkey as unknown as ValkeyService,
-    bcCache as any,
+    bcCache as unknown as BlockchainCacheService,
     x402 as unknown as X402SupportedService,
     config as unknown as ConfigService,
-    circleSettle as any,
+    circleSettle as unknown as ICircleSettleClient,
     null, // payoutProvider — optional, null is valid.
-    blockchainVerification as any,
+    blockchainVerification as unknown as BlockchainVerificationService,
     null, // circleSettleSvm
     {} as unknown as QrSigningService,
-    { create: jest.fn().mockResolvedValue({}) } as any, // transactionsService
+    { create: jest.fn().mockResolvedValue({}) } as unknown as TransactionsService, // transactionsService
   );
   return { svc, prisma, x402, valkey, config, circleSettle, blockchainVerification, bcCache };
 }
@@ -612,7 +618,7 @@ describe("IntentsService.submitNanopay", () => {
     const intent = opts?.intent === undefined ? storedIntent() : opts.intent;
     const existingSubmission = opts?.existingSubmission ?? null;
 
-    const nanopaySubmissionCreate = jest.fn(async (args: any) => ({
+    const nanopaySubmissionCreate = jest.fn(async (args: { data: Record<string, unknown> }) => ({
       id: "sub_01",
       intentId: args.data.intentId,
       signature: args.data.signature,
@@ -624,7 +630,7 @@ describe("IntentsService.submitNanopay", () => {
       failureCode: args.data.failureCode ?? null,
       failureMessage: args.data.failureMessage ?? null,
     }));
-    const paymentIntentUpdate = jest.fn(async (args: any) => ({
+    const paymentIntentUpdate = jest.fn(async (args: { data: Record<string, unknown> }) => ({
       ...(intent ?? {}),
       status: args.data.status,
     }));
@@ -633,7 +639,7 @@ describe("IntentsService.submitNanopay", () => {
     // has the same shape as the top-level prisma. We hand it the same
     // mocks so assertions on `.toHaveBeenCalled*` work regardless of
     // whether the write happened inside or outside a transaction.
-    const $transaction = jest.fn(async (cb: any) =>
+    const $transaction = jest.fn(async (cb: (tx: unknown) => unknown) =>
       cb({
         nanopaySubmission: { create: nanopaySubmissionCreate },
         paymentIntent: { update: paymentIntentUpdate },
@@ -685,7 +691,7 @@ describe("IntentsService.submitNanopay", () => {
     // Spy the payout provider via the service's internal field. Simpler
     // than rebuilding the whole service just to inject a provider.
     const triggerSpy = jest.fn();
-    (svc as any).payoutProvider = { trigger: triggerSpy };
+    (svc as unknown as { payoutProvider: unknown }).payoutProvider = { trigger: triggerSpy };
 
     const result = await svc.submitNanopay({
       intentId: "pi_01HXYZ",
@@ -942,7 +948,7 @@ describe("IntentsService.submitNanopay", () => {
       prisma: prisma as unknown as FakePrisma,
       circleSettle,
     });
-    const logger = (svc as any).logger as { warn: jest.Mock; error: jest.Mock; log: jest.Mock };
+    const logger = (svc as unknown as { logger: unknown }).logger as { warn: jest.Mock; error: jest.Mock; log: jest.Mock };
     const warnSpy = jest.spyOn(logger, "warn");
     const errorSpy = jest.spyOn(logger, "error");
     const logSpy = jest.spyOn(logger, "log");
@@ -1051,9 +1057,9 @@ describe("IntentsService.recordDepositReceipt", () => {
         : opts.blockchain;
     const gatewayCreateThrows = opts?.gatewayCreateThrows ?? null;
 
-    const gatewayDepositCreate = jest.fn(async (args: any) => {
-      if (gatewayCreateThrows) throw gatewayCreateThrows;
-      return {
+    const gatewayDepositCreate = jest.fn((args: { data: Record<string, unknown> }) => {
+      if (gatewayCreateThrows) return Promise.reject(gatewayCreateThrows);
+      return Promise.resolve({
         id: "gd_01",
         userId: args.data.userId,
         sourceChainId: args.data.sourceChainId,
@@ -1063,14 +1069,14 @@ describe("IntentsService.recordDepositReceipt", () => {
         status: args.data.status,
         createdAt: new Date(),
         confirmedAt: args.data.confirmedAt,
-      };
+      });
     });
-    const paymentIntentUpdate = jest.fn(async (args: any) => ({
+    const paymentIntentUpdate = jest.fn(async (args: { data: Record<string, unknown> }) => ({
       ...(intent ?? {}),
       ...args.data,
     }));
     const gatewayDepositFindUnique = jest.fn(async () => priorDeposit);
-    const $transaction = jest.fn(async (cb: any) =>
+    const $transaction = jest.fn(async (cb: (tx: unknown) => unknown) =>
       cb({
         gatewayDeposit: { create: gatewayDepositCreate },
         paymentIntent: { update: paymentIntentUpdate },
@@ -1107,10 +1113,10 @@ describe("IntentsService.recordDepositReceipt", () => {
     const txTo = opts?.txTo ?? GATEWAY_WALLET;
     const status = opts?.status ?? "success";
     const client = {
-      getTransactionReceipt: jest.fn(async () => {
-        if (opts?.receiptNull) return null;
-        if (opts?.throwOnGet) throw new Error("RPC unreachable");
-        return { status };
+      getTransactionReceipt: jest.fn(() => {
+        if (opts?.receiptNull) return Promise.resolve(null);
+        if (opts?.throwOnGet) return Promise.reject(new Error("RPC unreachable"));
+        return Promise.resolve({ status });
       }),
       getTransaction: jest.fn(async () => ({
         from: txFrom,
@@ -1138,7 +1144,7 @@ describe("IntentsService.recordDepositReceipt", () => {
     const blockchainVerification = bvStub();
     const { svc } = buildService({
       prisma: prisma as unknown as FakePrisma,
-      blockchainVerification: blockchainVerification as any,
+      blockchainVerification: blockchainVerification as { getPublicClient: jest.Mock },
     });
 
     const result = await svc.recordDepositReceipt(validArgs);
@@ -1190,7 +1196,7 @@ describe("IntentsService.recordDepositReceipt", () => {
     const blockchainVerification = bvStub();
     const { svc } = buildService({
       prisma: prisma as unknown as FakePrisma,
-      blockchainVerification: blockchainVerification as any,
+      blockchainVerification: blockchainVerification as { getPublicClient: jest.Mock },
     });
 
     const result = await svc.recordDepositReceipt(validArgs);
@@ -1229,7 +1235,7 @@ describe("IntentsService.recordDepositReceipt", () => {
     const blockchainVerification = bvStub({ status: "reverted" });
     const { svc } = buildService({
       prisma: prisma as unknown as FakePrisma,
-      blockchainVerification: blockchainVerification as any,
+      blockchainVerification: blockchainVerification as { getPublicClient: jest.Mock },
     });
     await expect(
       svc.recordDepositReceipt(validArgs),
@@ -1244,7 +1250,7 @@ describe("IntentsService.recordDepositReceipt", () => {
     });
     const { svc } = buildService({
       prisma: prisma as unknown as FakePrisma,
-      blockchainVerification: blockchainVerification as any,
+      blockchainVerification: blockchainVerification as { getPublicClient: jest.Mock },
     });
     await expect(
       svc.recordDepositReceipt(validArgs),
@@ -1262,7 +1268,7 @@ describe("IntentsService.recordDepositReceipt", () => {
     });
     const { svc } = buildService({
       prisma: prisma as unknown as FakePrisma,
-      blockchainVerification: blockchainVerification as any,
+      blockchainVerification: blockchainVerification as { getPublicClient: jest.Mock },
     });
 
     const result = await svc.recordDepositReceipt({
@@ -1301,7 +1307,7 @@ describe("IntentsService.recordDepositReceipt", () => {
     const blockchainVerification = bvStub();
     const { svc } = buildService({
       prisma: prisma as unknown as FakePrisma,
-      blockchainVerification: blockchainVerification as any,
+      blockchainVerification: blockchainVerification as { getPublicClient: jest.Mock },
     });
     await svc.recordDepositReceipt(validArgs);
     // The deposit row is still persisted for audit — just no intent flip.
@@ -1334,7 +1340,7 @@ describe("IntentsService.recordDepositReceipt", () => {
     const blockchainVerification = bvStub();
     const { svc } = buildService({
       prisma: prisma as unknown as FakePrisma,
-      blockchainVerification: blockchainVerification as any,
+      blockchainVerification: blockchainVerification as { getPublicClient: jest.Mock },
     });
     const result = await svc.recordDepositReceipt(validArgs);
     expect(result.depositId).toBe("gd_WINNER");

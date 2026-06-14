@@ -4,6 +4,8 @@ import type {
   GatewayDepositStatus,
   PaymentIntentStatus,
   ProviderPayoutStatus,
+  TransactionStatus,
+  TransactionType,
 } from "@generated/prisma";
 import {
   BadRequestException,
@@ -1675,7 +1677,7 @@ export class IntentsService {
     // timeout — same retry-safe posture as EVM: mark in-flight (SIGNED in
     // schema; SETTLING on the wire) so mobile keeps polling instead of
     // treating the tx as failed.
-    const submission = await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx) => {
       const created = await tx.nanopaySubmission.create({
         data: {
           intentId: intent.id,
@@ -2222,7 +2224,7 @@ export class IntentsService {
     // timeout — do NOT flip to FAILED. Circle may have received the
     // authorization and may yet settle it. SETTLING tells the polling
     // client "come back in a moment; it's not over yet."
-    const submission = await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx) => {
       const created = await tx.nanopaySubmission.create({
         data: {
           intentId: intent.id,
@@ -2325,8 +2327,8 @@ export class IntentsService {
     this.transactionsService
       .create(intent.payerUserId, {
         tokenId: intent.sourceTokenId,
-        type: "PAYMENT" as any,
-        status: "COMPLETED" as any,
+        type: "PAYMENT" as TransactionType,
+        status: "COMPLETED" as TransactionStatus,
         amount,
         amountInFiat: intent.fiatAmountMinor.toString(),
         fiatCurrency: intent.fiatCurrency,

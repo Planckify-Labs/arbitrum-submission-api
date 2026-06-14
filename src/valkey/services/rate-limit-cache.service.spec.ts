@@ -6,6 +6,7 @@ function buildHarness(opts: { incrCounts?: number[]; ttl?: number } = {}) {
   let i = 0;
   const valkey = {
     incr: jest.fn(async () => {
+      await Promise.resolve();
       const v = incrSequence[i] ?? incrSequence[incrSequence.length - 1];
       i++;
       return v;

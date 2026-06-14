@@ -21,7 +21,7 @@ export class PointsCacheService {
 
   constructor(private readonly cacheManager: CacheManagerService) {}
 
-  async getPointPrice<T>(
+  getPointPrice<T>(
     tokenId: string,
     currency: string,
     fallback: () => Promise<T>,
@@ -30,7 +30,7 @@ export class PointsCacheService {
     return this.cacheManager.cacheAside(key, fallback, { ttl: this.TTL.PRICE });
   }
 
-  async getPointBalance<T>(
+  getPointBalance<T>(
     userId: string,
     fallback: () => Promise<T>,
   ): Promise<T> {
@@ -40,7 +40,7 @@ export class PointsCacheService {
     });
   }
 
-  async getPointConfig<T>(
+  getPointConfig<T>(
     currency: string,
     fallback: () => Promise<T>,
   ): Promise<T> {

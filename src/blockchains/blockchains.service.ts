@@ -88,7 +88,7 @@ export class BlockchainsService {
    *   max(updatedAt) + x402-refresh-timestamp so a chain-row edit or a fresh
    *   Circle x402 refresh both bust 304s cleanly.
    */
-  async getEnrichedConfig(
+  getEnrichedConfig(
     country?: string,
   ): Promise<EnrichedResponsePayload> {
     const countrySegment = country ? country.toUpperCase() : "all";

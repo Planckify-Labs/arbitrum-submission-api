@@ -67,7 +67,7 @@ export class MerchantsController {
   })
   @ApiQuery({ name: "country", required: false, example: "ID" })
   @ApiResponse({ status: 200, type: ChannelResponseDto, isArray: true })
-  async listChannels(
+  listChannels(
     @Query() query: ListChannelsQueryDto,
   ): Promise<ChannelResponseDto[]> {
     // Country defaults to `"ID"` (v1 ships Indonesia only, spec §1).
@@ -82,7 +82,7 @@ export class MerchantsController {
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: "Create merchant profile + sign JWS QR." })
   @ApiResponse({ status: 201, type: MerchantWithQrResponseDto })
-  async signup(
+  signup(
     @Body() dto: CreateMerchantDto,
   ): Promise<MerchantWithQrResponseDto> {
     return this.merchantsService.signup(dto);
@@ -91,7 +91,7 @@ export class MerchantsController {
   @Get("me")
   @ApiOperation({ summary: "Get authenticated user's merchant profile." })
   @ApiResponse({ status: 200, type: MerchantResponseDto })
-  async me(@Request() req: AuthedRequest): Promise<MerchantResponseDto> {
+  me(@Request() req: AuthedRequest): Promise<MerchantResponseDto> {
     const userId = this.requireUserId(req);
     return this.merchantsService.findMeOrThrow(userId);
   }
@@ -102,7 +102,7 @@ export class MerchantsController {
       "Patch merchant profile — re-issues JWS if display name or payout coords change.",
   })
   @ApiResponse({ status: 200, type: MerchantResponseDto })
-  async patchMe(
+  patchMe(
     @Body() dto: PatchMerchantDto,
     @Request() req: AuthedRequest,
   ): Promise<MerchantResponseDto> {
@@ -117,7 +117,7 @@ export class MerchantsController {
       "Manually re-issue the merchant QR JWS — used for operational rotation without touching profile fields.",
   })
   @ApiResponse({ status: 200, type: MerchantWithQrResponseDto })
-  async rotateQr(
+  rotateQr(
     @Request() req: AuthedRequest,
   ): Promise<MerchantWithQrResponseDto> {
     const userId = this.requireUserId(req);

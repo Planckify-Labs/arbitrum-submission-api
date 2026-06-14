@@ -73,7 +73,7 @@ export class QrisDisputesController {
   })
   @ApiResponse({ status: 400, description: "Missing or conflicting filter." })
   @ApiResponse({ status: 403, description: "Not an admin." })
-  async list(
+  list(
     @Query() query: ListClaimsQueryDto,
   ): Promise<QrisClaimResponseDto[]> {
     return this.disputes.listClaims({
@@ -105,7 +105,7 @@ export class QrisDisputesController {
   @ApiResponse({ status: 400, description: "Already-resolved or invalid DTO." })
   @ApiResponse({ status: 403, description: "Not an admin." })
   @ApiResponse({ status: 404, description: "Claim id not found." })
-  async review(
+  review(
     @Param("id") claimId: string,
     @Body() body: ReviewClaimDto,
     @Request() req: AdminRequest,

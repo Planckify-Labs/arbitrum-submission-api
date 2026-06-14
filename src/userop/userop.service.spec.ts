@@ -55,6 +55,7 @@ function prismaStub(
   return {
     blockchain: {
       findUnique: jest.fn(async (args: { where: { chainId: number } }) => {
+        await Promise.resolve();
         const url = urls[args.where.chainId];
         if (url === undefined) return null;
         return { bundlerUrl: url };

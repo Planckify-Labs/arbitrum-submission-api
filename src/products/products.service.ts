@@ -110,7 +110,7 @@ export class ProductsService {
     private readonly cacheManager: CacheManagerService,
   ) {}
 
-  async findAll(paginationDto: CursorPaginationDto) {
+  findAll(paginationDto: CursorPaginationDto) {
     const { cursor, take = 10, skip } = paginationDto;
     const useSkip = typeof skip === "number" && skip > 0;
     const cacheKey = `${cursor ?? "first"}:t${take}:s${skip ?? 0}`;
@@ -326,8 +326,8 @@ export class ProductsService {
     return { items, total };
   }
 
-  async findByCategory(categoryId: string) {
-    return this.productCache.getProductsByCategory(categoryId, async () => {
+  findByCategory(categoryId: string) {
+    return this.productCache.getProductsByCategory(categoryId, () => {
       return this.prisma.product.findMany({
         where: { categoryId },
         include: productInclude,
@@ -336,7 +336,7 @@ export class ProductsService {
   }
 
   async findByCode(code: string) {
-    const product = await this.productCache.getProductByCode(code, async () => {
+    const product = await this.productCache.getProductByCode(code, () => {
       return this.prisma.product.findFirst({
         where: { code },
         include: productInclude,
@@ -351,7 +351,7 @@ export class ProductsService {
   }
 
   async findPrices(id: string) {
-    const product = await this.productCache.getProductPrices(id, async () => {
+    const product = await this.productCache.getProductPrices(id, () => {
       return this.prisma.product.findUnique({
         where: { id },
         include: {
@@ -461,7 +461,7 @@ export class ProductsService {
   }
 
   async findOne(id: string) {
-    const product = await this.productCache.getProductDetails(id, async () => {
+    const product = await this.productCache.getProductDetails(id, () => {
       return this.prisma.product.findUnique({
         where: { id },
         include: productInclude,
@@ -606,7 +606,7 @@ export class ProductsService {
       throw new NotFoundException(`Product with ID ${productId} not found`);
     }
 
-    return this.productCache.getProductVariants(productId, async () => {
+    return this.productCache.getProductVariants(productId, () => {
       return this.prisma.productVariant.findMany({
         where: { productId },
         include: {
@@ -858,7 +858,7 @@ export class ProductsService {
       take: limit * 3, // fetch extra variants to account for deduplication
     });
 
-    let rankedProductIds: string[] = [];
+    const rankedProductIds: string[] = [];
 
     if (purchaseCounts.length > 0) {
       const variantIds = purchaseCounts.map((p) => p.productVariantId);
@@ -1136,7 +1136,7 @@ export class ProductsService {
     );
   }
 
-  async getNewArrivals(limit = 10) {
+  getNewArrivals(limit = 10) {
     return this.cacheManager.cacheAside(
       `${NEW_ARRIVALS_CACHE_KEY}:${limit}`,
       async () => {
@@ -1152,9 +1152,9 @@ export class ProductsService {
     );
   }
 
-  async getSearchSuggestions(query: string) {
+  getSearchSuggestions(query: string) {
     if (!query.trim()) {
-      return [];
+      return Promise.resolve([]);
     }
 
     return this.prisma.product.findMany({

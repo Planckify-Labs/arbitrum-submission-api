@@ -107,6 +107,7 @@ function buildPrismaStub(
   const tx: FakeTx = {
     merchant: {
       create: jest.fn(async (args: { data: Record<string, unknown> }) => {
+        await Promise.resolve();
         if (opts.createRejectsWith) throw opts.createRejectsWith;
         return {
           ...defaultCreated,
@@ -121,6 +122,7 @@ function buildPrismaStub(
   const prisma = {
     merchant: {
       findUnique: jest.fn(async ({ where }: { where: { userId?: string } }) => {
+        await Promise.resolve();
         if (where.userId) return opts.existingMerchantForUser ?? null;
         return opts.existingMerchantRow ?? null;
       }),
@@ -526,6 +528,7 @@ describe("MerchantsService", () => {
           value: unknown,
           _opts?: { ttl?: number },
         ): Promise<boolean> => {
+          await Promise.resolve();
           store.set(key, value);
           return true;
         },
@@ -664,6 +667,7 @@ describe("MerchantsService", () => {
       const prisma = buildChannelsPrisma({ ID: ID_CHANNELS });
       const valkey = {
         get: jest.fn(async () => {
+          await Promise.resolve();
           throw new Error("valkey-down");
         }),
         set: jest.fn(async () => true),

@@ -25,7 +25,7 @@ export class StrategiesService {
     private readonly lifiClient: LifiClient,
   ) {}
 
-  async quoteCrossChain(
+  quoteCrossChain(
     walletAddress: string,
     input: {
       fromChainId: number;
@@ -55,7 +55,7 @@ export class StrategiesService {
     );
   }
 
-  async getCrossChainStatus(input: {
+  getCrossChainStatus(input: {
     fromChainId: number;
     toChainId: number;
     txHash: string;

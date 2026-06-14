@@ -30,7 +30,7 @@ export const INVALIDATE_CACHE_METADATA = 'cache:invalidate';
  */
 export const Cacheable = (keyPattern: string, ttl = 3600) => {
   return (
-    target: any,
+    target: object,
     propertyKey: string,
     descriptor: PropertyDescriptor,
   ) => {
@@ -72,8 +72,8 @@ export const InvalidateCache = (pattern: string | string[]) => {
  */
 export function buildCacheKey(
   pattern: string,
-  args: any[],
-  argNames: string[] = [],
+  args: unknown[],
+  _argNames: string[] = [],
 ): string {
   let key = pattern;
 
@@ -88,7 +88,7 @@ export function buildCacheKey(
 
   // Replace named placeholders {argName}
   if (args.length > 0 && typeof args[0] === 'object') {
-    const firstArg = args[0];
+    const firstArg = args[0] as Record<string, unknown>;
     for (const [argName, argValue] of Object.entries(firstArg)) {
       const placeholder = `{${argName}}`;
       if (key.includes(placeholder)) {

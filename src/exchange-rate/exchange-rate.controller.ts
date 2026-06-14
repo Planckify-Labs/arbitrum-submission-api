@@ -79,25 +79,25 @@ export class ExchangeRateController {
 
   @Get("sources")
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
-  async findAllSources() {
+  findAllSources() {
     return this.exchangeRateService.findAllSources();
   }
 
   @Get("sources/:id")
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
-  async findSourceById(@Param("id") id: string) {
+  findSourceById(@Param("id") id: string) {
     return this.exchangeRateService.findSourceById(id);
   }
 
   @Post("sources")
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
-  async createSource(@Body() dto: CreateExchangeSourceDto) {
+  createSource(@Body() dto: CreateExchangeSourceDto) {
     return this.exchangeRateService.createSource(dto);
   }
 
   @Patch("sources/:id")
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
-  async updateSource(
+  updateSource(
     @Param("id") id: string,
     @Body() dto: UpdateExchangeSourceDto,
   ) {
@@ -107,7 +107,7 @@ export class ExchangeRateController {
   @Delete("sources/:id")
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
-  async deleteSource(@Param("id") id: string) {
+  deleteSource(@Param("id") id: string) {
     return this.exchangeRateService.deleteSource(id);
   }
 

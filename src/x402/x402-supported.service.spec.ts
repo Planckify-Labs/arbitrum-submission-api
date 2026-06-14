@@ -61,6 +61,7 @@ describe("X402SupportedService", () => {
     const valkey = {
       get: jest.fn(async (key: string) => store.get(key) ?? null),
       set: jest.fn(async (key: string, value: unknown) => {
+        await Promise.resolve();
         store.set(key, value);
       }),
     } as unknown as ValkeyService;

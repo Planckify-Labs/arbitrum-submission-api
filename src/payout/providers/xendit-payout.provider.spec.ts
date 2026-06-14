@@ -22,7 +22,7 @@ const xenditRequestBodyFixture = JSON.parse(
 
 function configStub(
   values: Partial<Record<string, string>> = {},
-): Pick<ConfigService, "get"> {
+): ConfigService {
   const defaults: Record<string, string> = {
     XENDIT_SECRET_KEY: "xnd_development_testkey",
     XENDIT_API_BASE: "https://api.xendit.test",
@@ -31,7 +31,7 @@ function configStub(
   };
   return {
     get: jest.fn((k: string) => defaults[k]),
-  } as any;
+  } as unknown as ConfigService;
 }
 
 function intentStub(overrides: Partial<PaymentIntent> = {}): PaymentIntent {
@@ -95,9 +95,9 @@ describe("XenditPayoutProvider wire-format parity (task 17)", () => {
       }),
     );
     const provider = new XenditPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
-      fetchMock as any,
+      fetchMock as unknown as typeof fetch,
     );
     await provider.triggerPayout(intentStub(), merchantStub());
     const [, init] = fetchMock.mock.calls[0];
@@ -116,9 +116,9 @@ describe("XenditPayoutProvider.triggerPayout", () => {
       }),
     );
     const provider = new XenditPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
-      fetchMock as any,
+      fetchMock as unknown as typeof fetch,
     );
     const receipt = await provider.triggerPayout(intentStub(), merchantStub());
 
@@ -163,9 +163,9 @@ describe("XenditPayoutProvider.triggerPayout", () => {
       }),
     );
     const provider = new XenditPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
-      fetchMock as any,
+      fetchMock as unknown as typeof fetch,
     );
 
     await expect(
@@ -185,9 +185,9 @@ describe("XenditPayoutProvider.triggerPayout", () => {
       jsonResponse(503, { message: "upstream timeout" }),
     );
     const provider = new XenditPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
-      fetchMock as any,
+      fetchMock as unknown as typeof fetch,
     );
 
     await expect(
@@ -208,9 +208,9 @@ describe("XenditPayoutProvider.triggerPayout", () => {
         jsonResponse(200, { id: "disb_after_retry", status: "PENDING" }),
       );
     const provider = new XenditPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
-      fetchMock as any,
+      fetchMock as unknown as typeof fetch,
     );
     const receipt = await provider.triggerPayout(intentStub(), merchantStub());
 
@@ -222,14 +222,14 @@ describe("XenditPayoutProvider.triggerPayout", () => {
     // Simulate an abort-triggered AbortError. We don't need the real 60 s
     // clock to fire — we just need fetch to reject with an AbortError and
     // let postOnce's error-mapping branch turn it into kind=timeout.
-    const fetchMock = jest.fn(async () => {
+    const fetchMock = jest.fn(() => {
       const err = new Error("The operation was aborted");
       err.name = "AbortError";
-      throw err;
+      return Promise.reject(err);
     }) as unknown as typeof fetch;
 
     const provider = new XenditPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock,
     );
@@ -247,9 +247,9 @@ describe("XenditPayoutProvider.triggerPayout", () => {
   it("throws a PayoutProviderError when XENDIT_SECRET_KEY is missing", async () => {
     const fetchMock = jest.fn();
     const provider = new XenditPayoutProvider(
-      configStub({ XENDIT_SECRET_KEY: undefined } as any) as any,
+      configStub({ XENDIT_SECRET_KEY: undefined }),
       prismaStub(),
-      fetchMock as any,
+      fetchMock as unknown as typeof fetch,
     );
     await expect(
       provider.triggerPayout(intentStub(), merchantStub()),
@@ -260,7 +260,7 @@ describe("XenditPayoutProvider.triggerPayout", () => {
 
 describe("XenditPayoutProvider.verifyWebhookSignature", () => {
   it("returns true when x-callback-token matches", () => {
-    const provider = new XenditPayoutProvider(configStub() as any);
+    const provider = new XenditPayoutProvider(configStub());
     const ok = provider.verifyWebhookSignature(
       { "x-callback-token": "test-callback-token" },
       "{}",
@@ -269,7 +269,7 @@ describe("XenditPayoutProvider.verifyWebhookSignature", () => {
   });
 
   it("returns false when x-callback-token mismatches", () => {
-    const provider = new XenditPayoutProvider(configStub() as any);
+    const provider = new XenditPayoutProvider(configStub());
     const ok = provider.verifyWebhookSignature(
       { "x-callback-token": "wrong-token" },
       "{}",
@@ -278,14 +278,14 @@ describe("XenditPayoutProvider.verifyWebhookSignature", () => {
   });
 
   it("returns false when x-callback-token is missing", () => {
-    const provider = new XenditPayoutProvider(configStub() as any);
+    const provider = new XenditPayoutProvider(configStub());
     const ok = provider.verifyWebhookSignature({}, "{}");
     expect(ok).toBe(false);
   });
 
   it("returns false when the env var is missing (fail closed)", () => {
     const provider = new XenditPayoutProvider(
-      configStub({ XENDIT_WEBHOOK_TOKEN: undefined } as any) as any,
+      configStub({ XENDIT_WEBHOOK_TOKEN: undefined }),
     );
     const ok = provider.verifyWebhookSignature(
       { "x-callback-token": "anything" },
@@ -295,7 +295,7 @@ describe("XenditPayoutProvider.verifyWebhookSignature", () => {
   });
 
   it("handles an array-shaped header value (takes the first)", () => {
-    const provider = new XenditPayoutProvider(configStub() as any);
+    const provider = new XenditPayoutProvider(configStub());
     const ok = provider.verifyWebhookSignature(
       { "x-callback-token": ["test-callback-token", "spoof"] },
       "{}",
@@ -306,7 +306,7 @@ describe("XenditPayoutProvider.verifyWebhookSignature", () => {
 
 describe("XenditPayoutProvider.getStatus", () => {
   it("returns PENDING as a stub (webhook is source of truth in v1)", async () => {
-    const provider = new XenditPayoutProvider(configStub() as any);
+    const provider = new XenditPayoutProvider(configStub());
     await expect(provider.getStatus("disb_abc")).resolves.toEqual({
       status: "PENDING",
     });

@@ -10,7 +10,7 @@ import type { PrismaService } from "../prisma/prisma.service";
  * Returns `null` when no mapping exists. Callers decide whether that's a
  * 400 (bad config) or a fallback-to-default — the helper stays policy-free.
  */
-export async function getProviderChannel(
+export function getProviderChannel(
   prisma: Pick<PrismaService, "providerChannel">,
   merchant: Pick<Merchant, "country" | "payoutProvider">,
   channelCode: string,
@@ -32,7 +32,7 @@ export async function getProviderChannel(
  * default Merchant.payoutProvider carries — so the wire response stays
  * identical to pre-refactor behaviour.
  */
-export async function getProviderChannelForProvider(
+export function getProviderChannelForProvider(
   prisma: Pick<PrismaService, "providerChannel">,
   channelCode: string,
   country: string,

@@ -36,7 +36,15 @@ export class TreasuryReconciliationService {
    * PlatformFeesSwept and MerchantBacking sweep events on-chain.
    */
   async getOutstandingCustody(): Promise<CustodyBalance[]> {
-    const results = await this.prisma.$queryRaw<any[]>`
+    const results = await this.prisma.$queryRaw<
+      Array<{
+        tokenId: string;
+        tokenSymbol: string;
+        totalSettledMinor: bigint | number | string;
+        totalPlatformFeeMinor: bigint | number | string;
+        totalMerchantBackingMinor: bigint | number | string;
+      }>
+    >`
       SELECT
         pi."sourceTokenId" as "tokenId",
         t."symbol" as "tokenSymbol",
@@ -78,7 +86,14 @@ export class TreasuryReconciliationService {
       intentCount: number;
     }>
   > {
-    const results = await this.prisma.$queryRaw<any[]>`
+    const results = await this.prisma.$queryRaw<
+      Array<{
+        merchantId: string;
+        tokenSymbol: string;
+        totalSettledMinor: bigint | number | string;
+        intentCount: number;
+      }>
+    >`
       SELECT
         pi."merchantId",
         t."symbol" as "tokenSymbol",

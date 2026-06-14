@@ -111,7 +111,7 @@ export class PointsService {
 
   // ── GET /points/balance ────────────────────────────────────────────────────
 
-  async getBalance(userId: string): Promise<{ userId: string; balance: string }> {
+  getBalance(userId: string): Promise<{ userId: string; balance: string }> {
     return this.pointsCache.getPointBalance(userId, async () => {
       const balance = await this.prisma.pointBalance.findUnique({
         where: { userId },
@@ -448,7 +448,7 @@ export class PointsService {
 
   // ── Admin: get balance for a specific user ─────────────────────────────────
 
-  async getBalanceAdmin(userId: string) {
+  getBalanceAdmin(userId: string) {
     return this.getBalance(userId);
   }
 
@@ -506,7 +506,7 @@ export class PointsService {
 
   // ── Admin: get points summary for a specific user ─────────────────────────
 
-  async getSummaryAdmin(userId: string) {
+  getSummaryAdmin(userId: string) {
     return this.getPointsSummary(userId);
   }
 

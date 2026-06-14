@@ -13,7 +13,7 @@ import { ValkeyModule } from "../valkey/valkey.module";
   imports: [
     BullModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => {
+      useFactory: (configService: ConfigService) => {
         const password = configService.get<string>("VALKEY_PASSWORD");
         return {
           connection: {

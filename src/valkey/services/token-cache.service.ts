@@ -26,7 +26,7 @@ export class TokenCacheService {
   /**
    * Get token by ID with cache-aside pattern
    */
-  async getById<T>(tokenId: string, fallback: () => Promise<T>): Promise<T> {
+  getById<T>(tokenId: string, fallback: () => Promise<T>): Promise<T> {
     const key = this.cacheManager.buildKey('token', tokenId);
     return this.cacheManager.cacheAside(key, fallback, {
       ttl: this.TTL.TOKEN,
@@ -36,7 +36,7 @@ export class TokenCacheService {
   /**
    * Get token by blockchain ID and contract address with cache-aside pattern
    */
-  async getByBlockchainAndAddress<T>(
+  getByBlockchainAndAddress<T>(
     blockchainId: string,
     contractAddress: string,
     fallback: () => Promise<T>,
@@ -51,7 +51,7 @@ export class TokenCacheService {
   /**
    * Get token by blockchain ID and symbol with cache-aside pattern
    */
-  async getByBlockchainAndSymbol<T>(
+  getByBlockchainAndSymbol<T>(
     blockchainId: string,
     symbol: string,
     fallback: () => Promise<T>,
@@ -70,7 +70,7 @@ export class TokenCacheService {
   /**
    * Get all tokens for a blockchain with cache-aside pattern
    */
-  async getByBlockchain<T>(
+  getByBlockchain<T>(
     blockchainId: string,
     fallback: () => Promise<T>,
   ): Promise<T> {
@@ -83,7 +83,7 @@ export class TokenCacheService {
   /**
    * Get active tokens for a blockchain with cache-aside pattern
    */
-  async getActiveByBlockchain<T>(
+  getActiveByBlockchain<T>(
     blockchainId: string,
     fallback: () => Promise<T>,
   ): Promise<T> {
@@ -101,7 +101,7 @@ export class TokenCacheService {
   /**
    * Get all tokens list with cache-aside pattern
    */
-  async getAllTokens<T>(
+  getAllTokens<T>(
     cursor: string | number | undefined,
     fallback: () => Promise<T>,
     take?: number,

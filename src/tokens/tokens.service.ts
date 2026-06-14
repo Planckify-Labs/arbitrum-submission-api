@@ -60,7 +60,7 @@ export class TokensService {
     return result;
   }
 
-  async findAll(paginationDto: CursorPaginationDto) {
+  findAll(paginationDto: CursorPaginationDto) {
     const { cursor, take = 10, skip } = paginationDto;
     const useSkip = typeof skip === "number" && skip > 0;
     const cacheKey = `${cursor ?? "first"}:t${take}:s${skip ?? 0}`;

@@ -144,7 +144,7 @@ export class CacheInvalidationService {
     const matchingRules = this.invalidationRules.filter(
       (rule) =>
         rule.models.includes(model) &&
-        rule.operations.includes(operation as any),
+        (rule.operations as string[]).includes(operation),
     );
 
     if (matchingRules.length === 0) {
@@ -218,14 +218,14 @@ export class CacheInvalidationService {
   /**
    * Manual invalidation by pattern (for custom cache keys)
    */
-  async invalidateByPattern(pattern: string): Promise<number> {
+  invalidateByPattern(pattern: string): Promise<number> {
     return this.cacheManager.invalidatePattern(pattern);
   }
 
   /**
    * Manual invalidation by exact key
    */
-  async invalidateByKey(key: string): Promise<void> {
+  invalidateByKey(key: string): Promise<void> {
     return this.cacheManager.invalidate(key);
   }
 

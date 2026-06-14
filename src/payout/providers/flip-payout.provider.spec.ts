@@ -21,7 +21,7 @@ const FLIP_CREDS: Record<string, string> = {
 
 function configStub(
   overrides: Record<string, string | undefined> = {},
-): Pick<ConfigService, "get" | "getOrThrow"> {
+): ConfigService {
   const bag: Record<string, string | undefined> = {
     ...FLIP_CREDS,
     ...overrides,
@@ -33,7 +33,7 @@ function configStub(
       if (v === undefined) throw new Error(`missing ${k}`);
       return v;
     }),
-  } as any;
+  } as unknown as ConfigService;
 }
 
 function prismaStub(
@@ -98,7 +98,7 @@ describe("FlipPayoutProvider.triggerPayout", () => {
       }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -125,7 +125,7 @@ describe("FlipPayoutProvider.triggerPayout", () => {
       jsonResponse(200, { id: 1, status: "PENDING" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -150,9 +150,9 @@ describe("FlipPayoutProvider.triggerPayout", () => {
     const fetchMock = jest.fn().mockResolvedValueOnce(
       jsonResponse(200, { id: 1, status: "PENDING" }),
     );
-    const intent = makeIntent({ id: "pi_unique_idem_key_42" } as any);
+    const intent = makeIntent({ id: "pi_unique_idem_key_42" });
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -170,7 +170,7 @@ describe("FlipPayoutProvider.triggerPayout", () => {
       jsonResponse(200, { id: 1, status: "PENDING" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -195,9 +195,9 @@ describe("FlipPayoutProvider.triggerPayout", () => {
     );
     // Use a long intent id to verify truncation
     const longId = "pi_01HXYZ_ABCDEFGHIJKLMNOPQRSTUVWXYZ_1234567890";
-    const intent = makeIntent({ id: longId } as any);
+    const intent = makeIntent({ id: longId });
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -222,9 +222,9 @@ describe("FlipPayoutProvider.triggerPayout", () => {
     const fetchMock = jest.fn().mockResolvedValueOnce(
       jsonResponse(200, { id: 1, status: "PENDING" }),
     );
-    const merchant = makeMerchant({ payoutChannelCode: "MANDIRI" } as any);
+    const merchant = makeMerchant({ payoutChannelCode: "MANDIRI" });
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prisma,
       fetchMock as unknown as typeof fetch,
     );
@@ -242,7 +242,7 @@ describe("FlipPayoutProvider.triggerPayout", () => {
       jsonResponse(401, { message: "Unauthorized" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -265,7 +265,7 @@ describe("FlipPayoutProvider.triggerPayout", () => {
       }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -284,7 +284,7 @@ describe("FlipPayoutProvider.triggerPayout", () => {
       jsonResponse(503, { message: "service unavailable" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -300,14 +300,14 @@ describe("FlipPayoutProvider.triggerPayout", () => {
   }, 15_000);
 
   it("throws kind=timeout on AbortError", async () => {
-    const fetchMock = jest.fn(async () => {
+    const fetchMock = jest.fn(() => {
       const err = new Error("The operation was aborted");
       err.name = "AbortError";
-      throw err;
+      return Promise.reject(err);
     }) as unknown as typeof fetch;
 
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock,
     );
@@ -326,7 +326,7 @@ describe("FlipPayoutProvider.triggerPayout", () => {
       jsonResponse(200, { id: 10, status: "PENDING" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -339,7 +339,7 @@ describe("FlipPayoutProvider.triggerPayout", () => {
       jsonResponse(200, { id: 11, status: "DONE" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -352,7 +352,7 @@ describe("FlipPayoutProvider.triggerPayout", () => {
       jsonResponse(200, { id: 12, status: "CANCELLED" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -370,7 +370,7 @@ describe("FlipPayoutProvider.triggerPayout", () => {
         jsonResponse(200, { id: 99, status: "PENDING" }),
       );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -383,7 +383,7 @@ describe("FlipPayoutProvider.triggerPayout", () => {
   it("throws when PrismaService is not injected", async () => {
     const fetchMock = jest.fn();
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       undefined,
       fetchMock as unknown as typeof fetch,
     );
@@ -399,7 +399,7 @@ describe("FlipPayoutProvider.triggerPayout", () => {
   it("throws when ProviderChannel row is missing", async () => {
     const fetchMock = jest.fn();
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(null),
       fetchMock as unknown as typeof fetch,
     );
@@ -417,7 +417,7 @@ describe("FlipPayoutProvider.triggerPayout", () => {
       jsonResponse(200, { id: 9876543, status: "DONE" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -431,7 +431,7 @@ describe("FlipPayoutProvider.triggerPayout", () => {
       jsonResponse(200, { status: "PENDING" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -444,7 +444,7 @@ describe("FlipPayoutProvider.triggerPayout", () => {
       jsonResponse(200, { id: 1, status: "PENDING" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub({ FLIP_API_BASE: "https://bigflip.test/api/v3/" }) as any,
+      configStub({ FLIP_API_BASE: "https://bigflip.test/api/v3/" }),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -464,7 +464,7 @@ describe("FlipPayoutProvider.getStatus", () => {
       jsonResponse(200, { id: 123, status: "DONE" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -478,7 +478,7 @@ describe("FlipPayoutProvider.getStatus", () => {
       jsonResponse(200, { id: 456, status: "PENDING" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -492,7 +492,7 @@ describe("FlipPayoutProvider.getStatus", () => {
       jsonResponse(200, { id: 789, status: "CANCELLED" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -506,7 +506,7 @@ describe("FlipPayoutProvider.getStatus", () => {
       jsonResponse(200, { id: 100, status: "done" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -519,7 +519,7 @@ describe("FlipPayoutProvider.getStatus", () => {
       jsonResponse(200, { id: 200, status: "SOME_NEW_STATUS" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -532,7 +532,7 @@ describe("FlipPayoutProvider.getStatus", () => {
       jsonResponse(404, { message: "Disbursement not found" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -550,7 +550,7 @@ describe("FlipPayoutProvider.getStatus", () => {
       jsonResponse(200, { id: 555, status: "PENDING" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -568,7 +568,7 @@ describe("FlipPayoutProvider.getStatus", () => {
       jsonResponse(500, { message: "internal error" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -586,7 +586,7 @@ describe("FlipPayoutProvider.getStatus", () => {
       jsonResponse(200, responseBody),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -604,7 +604,7 @@ describe("FlipPayoutProvider.getStatusByIdempotencyKey", () => {
       jsonResponse(200, { id: 777, status: "DONE" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -620,7 +620,7 @@ describe("FlipPayoutProvider.getStatusByIdempotencyKey", () => {
       jsonResponse(200, { id: 888, status: "PENDING" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -641,7 +641,7 @@ describe("FlipPayoutProvider.getStatusByIdempotencyKey", () => {
       jsonResponse(200, { status: "PENDING" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -654,7 +654,7 @@ describe("FlipPayoutProvider.getStatusByIdempotencyKey", () => {
       jsonResponse(404, { message: "not found" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -678,7 +678,7 @@ describe("FlipPayoutProvider.checkBalance", () => {
       jsonResponse(200, { balance: 1_234_567 }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -691,7 +691,7 @@ describe("FlipPayoutProvider.checkBalance", () => {
       jsonResponse(200, { balance: 500_000 }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -706,7 +706,7 @@ describe("FlipPayoutProvider.checkBalance", () => {
       jsonResponse(401, { message: "Unauthorized" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -722,7 +722,7 @@ describe("FlipPayoutProvider.checkBalance", () => {
       jsonResponse(200, { balance: "9876543" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -735,7 +735,7 @@ describe("FlipPayoutProvider.checkBalance", () => {
       jsonResponse(200, { other_field: "no balance" }),
     );
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
       fetchMock as unknown as typeof fetch,
     );
@@ -752,7 +752,7 @@ describe("FlipPayoutProvider.checkBalance", () => {
 describe("FlipPayoutProvider.verifyWebhookSignature", () => {
   it("returns true when token in body matches FLIP_VALIDATION_TOKEN", () => {
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
     );
     const body = `token=${FLIP_CREDS.FLIP_VALIDATION_TOKEN}&data=%7B%22id%22%3A123%7D`;
@@ -762,7 +762,7 @@ describe("FlipPayoutProvider.verifyWebhookSignature", () => {
 
   it("returns false when token does not match", () => {
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
     );
     const body = "token=wrong-token&data=%7B%7D";
@@ -772,7 +772,7 @@ describe("FlipPayoutProvider.verifyWebhookSignature", () => {
 
   it("returns false when token is missing from body", () => {
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
     );
     const body = "data=%7B%7D";
@@ -782,7 +782,7 @@ describe("FlipPayoutProvider.verifyWebhookSignature", () => {
 
   it("returns false when body is empty string", () => {
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
     );
     const result = provider.verifyWebhookSignature({}, "");
@@ -791,7 +791,7 @@ describe("FlipPayoutProvider.verifyWebhookSignature", () => {
 
   it("returns false when FLIP_VALIDATION_TOKEN env var is missing", () => {
     const provider = new FlipPayoutProvider(
-      configStub({ FLIP_VALIDATION_TOKEN: undefined }) as any,
+      configStub({ FLIP_VALIDATION_TOKEN: undefined }),
       prismaStub(),
     );
     const body = `token=anything`;
@@ -801,7 +801,7 @@ describe("FlipPayoutProvider.verifyWebhookSignature", () => {
 
   it("returns false for tokens with different lengths (timing-safe)", () => {
     const provider = new FlipPayoutProvider(
-      configStub() as any,
+      configStub(),
       prismaStub(),
     );
     const body = "token=short";

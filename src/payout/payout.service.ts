@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import type { Merchant, PaymentIntent } from "@generated/prisma";
+import type { Merchant, PaymentIntent, Prisma } from "@generated/prisma";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   PAYOUT_PROVIDER_DUITKU,
@@ -157,7 +157,7 @@ export class PayoutService {
   /**
    * Convenience for ops dashboards / reconciliation.
    */
-  async getXenditStatus(
+  getXenditStatus(
     providerReferenceId: string,
   ): Promise<TProviderStatusResult> {
     return this.xenditProvider.getStatus(providerReferenceId);
@@ -201,7 +201,9 @@ export class PayoutService {
         status: receipt.status,
         requestedAt: receipt.requestedAt,
         providerResponseBody:
-          receipt.rawResponse === null ? undefined : (receipt.rawResponse as any),
+          receipt.rawResponse === null
+            ? undefined
+            : (receipt.rawResponse as Prisma.InputJsonValue),
       },
     });
 
@@ -243,7 +245,10 @@ export class PayoutService {
         providerResponseBody:
           failure.rawResponse === null
             ? { error: failure.message }
-            : ({ error: failure.message, body: failure.rawResponse } as any),
+            : ({
+                error: failure.message,
+                body: failure.rawResponse,
+              } as unknown as Prisma.InputJsonValue),
       },
     });
   }

@@ -15,6 +15,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import type { ConfigService } from "@nestjs/config";
 import type { Merchant, PaymentIntent } from "@generated/prisma";
 import type { PrismaService } from "../../prisma/prisma.service";
 import { encryptAccountNumber } from "../account-number-crypto";
@@ -41,7 +42,9 @@ function nextIdempotencyKey(): string {
  * Minimal ConfigService stub that reads the three FLIP_* keys from
  * `process.env`. No NestJS bootstrapping needed.
  */
-function sandboxConfigService(overrides: Record<string, string> = {}) {
+function sandboxConfigService(
+  overrides: Record<string, string> = {},
+): ConfigService {
   const bag: Record<string, string | undefined> = {
     FLIP_SECRET_KEY: process.env.FLIP_SECRET_KEY,
     FLIP_VALIDATION_TOKEN: process.env.FLIP_VALIDATION_TOKEN,
@@ -57,7 +60,7 @@ function sandboxConfigService(overrides: Record<string, string> = {}) {
         throw new Error(`Missing env var: ${key}`);
       return v;
     },
-  };
+  } as unknown as ConfigService;
 }
 
 /**
@@ -115,7 +118,7 @@ function makeMerchant(overrides: Partial<Merchant> = {}): Merchant {
 
     beforeAll(() => {
       provider = new FlipPayoutProvider(
-        sandboxConfigService() as any,
+        sandboxConfigService(),
         prismaStub(),
         // real fetch — no mock
       );
@@ -162,7 +165,7 @@ function makeMerchant(overrides: Partial<Merchant> = {}): Merchant {
       expect(createdProviderPayoutId).toBeTruthy();
 
       // Re-use the same intent.id (idempotency key) as Test 1.
-      const intent = makeIntent({ id: idempotencyKeyForRetry! } as any);
+      const intent = makeIntent({ id: idempotencyKeyForRetry! });
       const receipt = await provider.triggerPayout(intent, makeMerchant());
 
       expect(receipt.providerPayoutId).toBe(createdProviderPayoutId);
@@ -200,7 +203,7 @@ function makeMerchant(overrides: Partial<Merchant> = {}): Merchant {
       const badProvider = new FlipPayoutProvider(
         sandboxConfigService({
           FLIP_SECRET_KEY: "totally_invalid_key",
-        }) as any,
+        }),
         prismaStub(),
       );
 

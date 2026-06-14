@@ -45,13 +45,13 @@ export class StrategiesController {
 
   @Get()
   @ApiOperation({ summary: "Get current user strategy" })
-  async getStrategy(@Request() req: AuthedRequest) {
+  getStrategy(@Request() req: AuthedRequest) {
     return this.strategiesService.getStrategy(this.getWalletAddress(req));
   }
 
   @Post()
   @ApiOperation({ summary: "Create a new user strategy" })
-  async createStrategy(
+  createStrategy(
     @Request() req: AuthedRequest,
     @Body() dto: CreateStrategyDto,
   ) {
@@ -68,7 +68,7 @@ export class StrategiesController {
 
   @Patch()
   @ApiOperation({ summary: "Update current user strategy" })
-  async updateStrategy(
+  updateStrategy(
     @Request() req: AuthedRequest,
     @Body() dto: UpdateStrategyDto,
   ) {
@@ -87,7 +87,7 @@ export class StrategiesController {
 
   @Get("opportunities")
   @ApiOperation({ summary: "Get available yield opportunities" })
-  async getOpportunities(
+  getOpportunities(
     @Request() req: AuthedRequest,
     @Query("tier") tier?: string,
     @Query("asset_symbol") assetSymbol?: string,
@@ -114,7 +114,7 @@ export class StrategiesController {
 
   @Get("opportunities/:slug")
   @ApiOperation({ summary: "Get details for a specific opportunity" })
-  async getOpportunity(@Param("slug") slug: string) {
+  getOpportunity(@Param("slug") slug: string) {
     return this.strategiesService.getOpportunity(slug);
   }
 
@@ -123,19 +123,19 @@ export class StrategiesController {
     summary:
       "List curated protocol slugs available for the given tier (drives the onboarding whitelist picker)",
   })
-  async getProtocols(@Query("tier") tier?: string) {
+  getProtocols(@Query("tier") tier?: string) {
     return this.strategiesService.getProtocols(tier);
   }
 
   @Get("positions")
   @ApiOperation({ summary: "Get user's strategy positions" })
-  async getPositions(@Request() req: AuthedRequest) {
+  getPositions(@Request() req: AuthedRequest) {
     return this.strategiesService.getPositions(this.getWalletAddress(req));
   }
 
   @Post("positions")
   @ApiOperation({ summary: "Record a new strategy position" })
-  async createPosition(
+  createPosition(
     @Request() req: AuthedRequest,
     @Body()
     dto: {
@@ -159,13 +159,13 @@ export class StrategiesController {
 
   @Get("positions/:id")
   @ApiOperation({ summary: "Get details for a specific position" })
-  async getPosition(@Request() req: AuthedRequest, @Param("id") id: string) {
+  getPosition(@Request() req: AuthedRequest, @Param("id") id: string) {
     return this.strategiesService.getPosition(id, this.getWalletAddress(req));
   }
 
   @Post("positions/:id/refresh")
   @ApiOperation({ summary: "Trigger a refresh for a specific position" })
-  async refreshPosition(
+  refreshPosition(
     @Request() req: AuthedRequest,
     @Param("id") id: string,
   ) {
@@ -181,7 +181,7 @@ export class StrategiesController {
       "Fetch a LI.FI bridge quote (prebuilt transactionRequest) for a cross-chain deposit",
   })
   @ApiResponse({ status: 200, description: "Quote returned" })
-  async quoteCrossChain(
+  quoteCrossChain(
     @Request() req: AuthedRequest,
     @Body() dto: CrossChainQuoteDto,
   ) {
@@ -195,7 +195,7 @@ export class StrategiesController {
   @ApiOperation({
     summary: "Poll LI.FI status for a previously-submitted bridge tx hash",
   })
-  async getCrossChainStatus(
+  getCrossChainStatus(
     @Query("from_chain_id") fromChainId: string,
     @Query("to_chain_id") toChainId: string,
     @Query("tx_hash") txHash: string,

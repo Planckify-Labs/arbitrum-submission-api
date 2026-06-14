@@ -90,12 +90,12 @@ export class AdminMerchantsController {
   }
 
   @Get(":id")
-  async findOne(@Param("id") id: string) {
+  findOne(@Param("id") id: string) {
     return this.service.findOne(id);
   }
 
   @Patch(":id")
-  async update(
+  update(
     @Param("id") id: string,
     @Body() body: UpdateAdminMerchantDto,
   ) {

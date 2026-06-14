@@ -27,12 +27,13 @@ export class OnchainRetryProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<OnchainRetryJobData>): Promise<void> {
-    const { intentId, txHash, chainId, attempt } = job.data;
+  process(job: Job<OnchainRetryJobData>): Promise<void> {
+    const { intentId, txHash, attempt } = job.data;
     this.logger.log(
       `Retrying onchain settlement verification: intentId=${intentId} txHash=${txHash} attempt=${attempt}`,
     );
     // The actual retry logic will call OnchainSettlementProvider.settle
     // This is wired via the settlement module in a follow-up
+    return Promise.resolve();
   }
 }

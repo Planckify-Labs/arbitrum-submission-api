@@ -11,6 +11,7 @@ function buildHarness(opts: {
     addressBook: {
       findUnique: jest.fn(
         async ({ where }: { where: { userId_address?: unknown; id?: string } }) => {
+          await Promise.resolve();
           if (where.userId_address) return opts.existing ?? null;
           if (where.id) return opts.byId ?? null;
           return null;

@@ -24,7 +24,7 @@ export class ExchangeRateCacheService {
   /**
    * Get latest exchange rate for currency pair
    */
-  async getLatestRate<T>(
+  getLatestRate<T>(
     fromCurrency: string,
     toCurrency: string,
     fallback: () => Promise<T>,
@@ -44,7 +44,7 @@ export class ExchangeRateCacheService {
   /**
    * Get specific exchange rate by ID
    */
-  async getRate<T>(
+  getRate<T>(
     rateId: number | string,
     fallback: () => Promise<T>,
   ): Promise<T> {
@@ -57,7 +57,7 @@ export class ExchangeRateCacheService {
   /**
    * Get average exchange rate for currency pair over period
    */
-  async getAverageRate<T>(
+  getAverageRate<T>(
     fromCurrency: string,
     toCurrency: string,
     days: number,
@@ -188,7 +188,7 @@ export class ExchangeRateCacheService {
    * Get cached rate if available, return null if not cached (no DB fallback)
    * Useful for read-through scenarios where you want to check cache first
    */
-  async getCachedRateOnly<T>(
+  getCachedRateOnly<T>(
     fromCurrency: string,
     toCurrency: string,
   ): Promise<T | null> {

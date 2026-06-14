@@ -59,6 +59,7 @@ function buildHarness(opts: {
     pointTransaction: {
       findFirst: jest.fn(
         async ({ where }: { where: { txHash?: string; refId?: string } }) => {
+          await Promise.resolve();
           if (where.txHash) return opts.existingByHash ?? null;
           return opts.existingPointTx ?? null;
         },
@@ -73,6 +74,7 @@ function buildHarness(opts: {
     },
     referenceId: {
       create: jest.fn(async () => {
+        await Promise.resolve();
         if (opts.refIdCreateError) {
           throw Object.assign(new Error("dup"), opts.refIdCreateError);
         }
@@ -111,6 +113,7 @@ function buildHarness(opts: {
   const { Prisma } = require("@generated/prisma");
   if (opts.refIdCreateError) {
     (prisma.referenceId.create as jest.Mock).mockImplementation(async () => {
+      await Promise.resolve();
       const err = new Prisma.PrismaClientKnownRequestError("dup", {
         code: opts.refIdCreateError!.code,
         clientVersion: "0",

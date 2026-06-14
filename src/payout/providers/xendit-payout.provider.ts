@@ -185,12 +185,12 @@ export class XenditPayoutProvider implements IPayoutProviderAdapter {
     );
   }
 
-  async getStatus(_providerReferenceId: string): Promise<TProviderStatusResult> {
+  getStatus(_providerReferenceId: string): Promise<TProviderStatusResult> {
     // v1 deliberately stubs this to PENDING — webhook (task 30) is the
     // source of truth for status transitions. Leaving a concrete reconcile
     // call for a future task (49 refund runbook) once Xendit's
     // `GET /v2/payouts/{id}` contract is locked.
-    return { status: "PENDING" };
+    return Promise.resolve({ status: "PENDING" });
   }
 
   verifyWebhookSignature(

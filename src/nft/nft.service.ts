@@ -10,7 +10,7 @@ import { readContract } from 'viem/actions';
 import { PrismaService } from '../prisma/prisma.service';
 import { BlockchainVerificationService } from '../blockchain-verification/blockchain-verification.service';
 import { AddNftDto } from './dto/add-nft.dto';
-import { NftTokenType } from '@generated/prisma';
+import { NftTokenType, Prisma } from '@generated/prisma';
 
 const ERC721_ABI = [
   {
@@ -231,7 +231,7 @@ export class NftService {
         description,
         imageUrl,
         tokenUri,
-        attributes: attributes as any,
+        attributes: attributes as Prisma.InputJsonValue,
         isOwned: true,
         lastVerifiedAt: new Date(),
       },
@@ -241,7 +241,7 @@ export class NftService {
         description,
         imageUrl,
         tokenUri,
-        attributes: attributes as any,
+        attributes: attributes as Prisma.InputJsonValue,
         isOwned: true,
         lastVerifiedAt: new Date(),
       },
@@ -295,7 +295,12 @@ export class NftService {
 
   private async resolveMetadata(
     tokenUri: string,
-  ): Promise<Record<string, any> | null> {
+  ): Promise<{
+    name?: string;
+    description?: string;
+    image?: string;
+    attributes?: unknown;
+  } | null> {
     if (!tokenUri) return null;
 
     // Inline base64 data URI

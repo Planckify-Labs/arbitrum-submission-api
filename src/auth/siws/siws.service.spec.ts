@@ -22,13 +22,16 @@ function buildNonceMock(): {
   const store = new Map<string, string>();
   const cache = {
     setNonce: jest.fn(async (ns: string, addr: string, nonce: string) => {
+      await Promise.resolve();
       store.set(`${ns}:${addr}`, nonce);
     }),
     getNonce: jest.fn(async (ns: string, addr: string) => {
+      await Promise.resolve();
       const n = store.get(`${ns}:${addr}`);
       return n ? { nonce: n, expires: Date.now() + 300_000 } : null;
     }),
     deleteNonce: jest.fn(async (ns: string, addr: string) => {
+      await Promise.resolve();
       store.delete(`${ns}:${addr}`);
     }),
   } as unknown as NonceCacheService;

@@ -76,7 +76,7 @@ export class OnchainSettlementProvider implements IPaymentSettlementProvider {
         expectedPayer: payer.walletAddress,
         expectedMerchantId: intent.merchantId,
         expectedTokenAddress,
-        expectedAmount: (intent as any).tokenAmountMinor?.toString() ?? "0",
+        expectedAmount: (intent as { tokenAmountMinor?: bigint | number | null }).tokenAmountMinor?.toString() ?? "0",
         expectedFiatAmountMinor: intent.fiatAmountMinor,
         expectedFiatCurrency: intent.fiatCurrency,
         expectedExchangeRateId: intent.exchangeRateId,
@@ -135,8 +135,8 @@ export class OnchainSettlementProvider implements IPaymentSettlementProvider {
       ?? this.configService.get<number>("MIN_CONFIRMATIONS", 12);
   }
 
-  private extractFailureCode(error: any): string {
-    const msg = error?.message ?? "";
+  private extractFailureCode(error: unknown): string {
+    const msg = (error as { message?: string })?.message ?? "";
     if (msg.includes("reverted")) return "TX_REVERTED";
     if (msg.includes("Sender address mismatch")) return "SENDER_MISMATCH";
     if (msg.includes("Recipient address mismatch")) return "RECIPIENT_MISMATCH";

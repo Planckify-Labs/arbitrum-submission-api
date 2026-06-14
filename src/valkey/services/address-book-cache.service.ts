@@ -22,7 +22,7 @@ export class AddressBookCacheService {
   /**
    * Get address book entry by ID
    */
-  async getById<T>(
+  getById<T>(
     entryId: string,
     fallback: () => Promise<T>,
   ): Promise<T> {
@@ -35,7 +35,7 @@ export class AddressBookCacheService {
   /**
    * Get all address book entries for a user
    */
-  async getUserAddressBook<T>(
+  getUserAddressBook<T>(
     userId: string,
     fallback: () => Promise<T>,
   ): Promise<T> {

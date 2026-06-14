@@ -2,6 +2,7 @@ import { Processor, WorkerHost, OnWorkerEvent } from "@nestjs/bullmq";
 import { Logger } from "@nestjs/common";
 import { Job } from "bullmq";
 import { PrismaService } from "../../prisma/prisma.service";
+import { Prisma } from "@generated/prisma";
 import { ScoringService } from "../scoring/scoring.service";
 import {
   DeFiLlamaClient,
@@ -90,7 +91,7 @@ export class ScoreOpportunitiesProcessor extends WorkerHost {
           ilExposure: pool.ilRisk === "yes",
           score,
           tier,
-          raw: pool as any,
+          raw: pool as unknown as Prisma.InputJsonValue,
           scoredAt: new Date(),
         },
         create: {
@@ -108,7 +109,7 @@ export class ScoreOpportunitiesProcessor extends WorkerHost {
           ilExposure: pool.ilRisk === "yes",
           score,
           tier,
-          raw: pool as any,
+          raw: pool as unknown as Prisma.InputJsonValue,
           scoredAt: new Date(),
         },
       });

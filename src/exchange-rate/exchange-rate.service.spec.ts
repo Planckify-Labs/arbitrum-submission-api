@@ -38,6 +38,7 @@ function buildHarness(opts: {
       findFirst: jest.fn(async () => opts.rate ?? rates[0] ?? null),
       findMany: jest.fn(async () => rates),
       count: jest.fn(async ({ where }: { where?: Record<string, unknown> } = {}) => {
+        await Promise.resolve();
         if (where?.sourceProviderId) return opts.ratesUsingSourceCount ?? 0;
         return rates.length;
       }),

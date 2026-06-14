@@ -10,6 +10,9 @@ import type { PrismaService } from "../prisma/prisma.service";
 import type { ValkeyService } from "../valkey/valkey.service";
 import type { X402SupportedService } from "../x402/x402-supported.service";
 import type { ICircleSettleSvmClient } from "./circle-settle-svm.client";
+import type { ICircleSettleClient } from "./circle-settle.client";
+import type { BlockchainCacheService } from "../valkey/services/blockchain-cache.service";
+import type { TransactionsService } from "../transactions/transactions.service";
 import { IntentsService } from "./intents.service";
 
 /**
@@ -73,11 +76,11 @@ function valkeyStub(): Pick<ValkeyService, "get" | "set"> {
   const store = new Map<string, unknown>();
   return {
     get: jest.fn(async (k: string) => (store.has(k) ? store.get(k) : null)),
-    set: jest.fn(async (k: string, v: unknown) => {
+    set: jest.fn((k: string, v: unknown) => {
       store.set(k, v);
-      return true;
+      return Promise.resolve(true);
     }),
-  } as any;
+  } as unknown as ValkeyService;
 }
 
 function configStub(env: Record<string, string | undefined>): ConfigService {
@@ -143,7 +146,7 @@ function svmPrismaStub(opts?: {
         }
       : opts.fxRow;
 
-  const nanopaySubmissionCreate = jest.fn(async (args: any) => ({
+  const nanopaySubmissionCreate = jest.fn(async (args: { data: Record<string, unknown> }) => ({
     id: "sub_svm_01",
     intentId: args.data.intentId,
     signature: args.data.signature,
@@ -155,12 +158,12 @@ function svmPrismaStub(opts?: {
     failureCode: args.data.failureCode ?? null,
     failureMessage: args.data.failureMessage ?? null,
   }));
-  const paymentIntentUpdate = jest.fn(async (args: any) => ({
+  const paymentIntentUpdate = jest.fn(async (args: { data: Record<string, unknown> }) => ({
     ...(intent ?? {}),
     status: args.data.status,
   }));
 
-  const $transaction = jest.fn(async (cb: any) =>
+  const $transaction = jest.fn(async (cb: (tx: unknown) => unknown) =>
     cb({
       nanopaySubmission: { create: nanopaySubmissionCreate },
       paymentIntent: { update: paymentIntentUpdate },
@@ -231,15 +234,15 @@ function buildSvmService(overrides: {
   const svc = new IntentsService(
     prisma as unknown as PrismaService,
     valkeyStub() as unknown as ValkeyService,
-    bcCache as any,
+    bcCache as unknown as BlockchainCacheService,
     x402Stub(),
     configStub(env),
-    evmCircleSettleStub() as any,
+    evmCircleSettleStub() as unknown as ICircleSettleClient,
     null,
     null,
     svmSettle,
     {} as unknown as QrSigningService,
-    { create: jest.fn().mockResolvedValue({}) } as any, // transactionsService
+    { create: jest.fn().mockResolvedValue({}) } as unknown as TransactionsService, // transactionsService
   );
   return { svc, prisma, svmSettle };
 }
@@ -392,7 +395,7 @@ describe("IntentsService.submitNanopaySvm", () => {
     });
 
     expect(result.status).toBe("SETTLED");
-    expect((svmSettle as any).settle).toHaveBeenCalledTimes(1);
+    expect((svmSettle as { settle: jest.Mock }).settle).toHaveBeenCalledTimes(1);
     // Intent flipped to SETTLED.
     expect(prisma.paymentIntent.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { status: "SETTLED" } }),
@@ -422,7 +425,7 @@ describe("IntentsService.submitNanopaySvm", () => {
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
     // MUST NOT hit the facilitator on wrong-chain.
-    expect((svmSettle as any).settle).not.toHaveBeenCalled();
+    expect((svmSettle as { settle: jest.Mock }).settle).not.toHaveBeenCalled();
   });
 
   it("404s when the intent is missing", async () => {
@@ -449,7 +452,7 @@ describe("IntentsService.submitNanopaySvm", () => {
         signedTransaction: SIGNED_TX_BASE64,
       }),
     ).rejects.toBeInstanceOf(ConflictException);
-    expect((svmSettle as any).settle).not.toHaveBeenCalled();
+    expect((svmSettle as { settle: jest.Mock }).settle).not.toHaveBeenCalled();
   });
 
   it("facilitator 5xx → FAILED with CIRCLE_UPSTREAM_ERROR", async () => {
@@ -552,7 +555,7 @@ describe("IntentsService.submitNanopaySvm", () => {
 
     expect(result.status).toBe("SETTLED");
     expect(result.attestation?.id).toBe("svm-sig-prior");
-    expect((svmSettle as any).settle).not.toHaveBeenCalled();
+    expect((svmSettle as { settle: jest.Mock }).settle).not.toHaveBeenCalled();
     expect(prisma.nanopaySubmission.create).not.toHaveBeenCalled();
   });
 });

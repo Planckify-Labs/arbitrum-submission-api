@@ -28,7 +28,7 @@ export class CacheInterceptor implements NestInterceptor {
     private readonly cacheManager: CacheManagerService,
   ) {}
 
-  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const keyPattern = this.reflector.get<string>(
       CACHE_KEY_METADATA,
       context.getHandler(),
