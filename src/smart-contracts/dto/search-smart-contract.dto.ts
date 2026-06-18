@@ -6,6 +6,7 @@ import {
   IsInt,
 } from "class-validator";
 import { Transform } from "class-transformer";
+import { ToBoolean } from "../../decorators/to-boolean.decorator";
 
 export class SearchSmartContractDto {
   @ApiProperty({
@@ -52,11 +53,7 @@ export class SearchSmartContractDto {
   })
   @IsBoolean()
   @IsOptional()
-  @Transform(({ value }) => {
-    if (value === "true") return true;
-    if (value === "false") return false;
-    return value;
-  })
+  @ToBoolean()
   isBlockchainEVM?: boolean;
 
   @ApiProperty({
@@ -75,10 +72,6 @@ export class SearchSmartContractDto {
   })
   @IsBoolean()
   @IsOptional()
-  @Transform(({ value }) => {
-    if (value === "true") return true;
-    if (value === "false") return false;
-    return value;
-  })
+  @ToBoolean()
   isActive?: boolean;
 }

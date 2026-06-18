@@ -1130,6 +1130,33 @@ async function main() {
         isActive: true,
       },
     }),
+    // ───── Sui Intent Engine — intent_receipt audit-log package (§10) ─────
+    // On-chain audit-log Move package. The mobile app resolves this Package ID
+    // from the API (never hardcoded) via the active `intent_receipt` row on the
+    // Sui blockchain. Source: contract/sui/deployed.json (testnet publish).
+    // `update` carries the address so a re-seed after a package rotation moves
+    // the pointer in place (one stable row, no duplicates).
+    prisma.smartContract.upsert({
+      where: { id: "intent-receipt-sui-testnet" },
+      // Resolve the Sui Testnet row by chainSlug — index refs drift as
+      // blockchains are appended (blockchains[11] is Monad, not Sui). `update`
+      // carries blockchainId/address so a re-seed corrects/rotates in place.
+      update: {
+        name: "intent_receipt",
+        blockchainId: blockchains.find((b) => b.chainSlug === "sui-testnet")!.id,
+        address:
+          "0x0bea3f1e47e213a95dc3d47148ace7047310e2d14dbc10dcb9eda6226a4ba301",
+        isActive: true,
+      },
+      create: {
+        id: "intent-receipt-sui-testnet",
+        name: "intent_receipt",
+        blockchainId: blockchains.find((b) => b.chainSlug === "sui-testnet")!.id,
+        address:
+          "0x0bea3f1e47e213a95dc3d47148ace7047310e2d14dbc10dcb9eda6226a4ba301",
+        isActive: true,
+      },
+    }),
     // ────────────────────────── Lido ───────────────────────────────────
     // Source: docs.lido.fi/contracts/lido-locator
     prisma.smartContract.upsert({
