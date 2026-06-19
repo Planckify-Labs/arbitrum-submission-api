@@ -1157,6 +1157,26 @@ async function main() {
         isActive: true,
       },
     }),
+    // Mainnet counterpart — same package, sui-mainnet chain.
+    // Source: contract/sui/deployments/mainnet/v1.json
+    prisma.smartContract.upsert({
+      where: { id: "intent-receipt-sui-mainnet" },
+      update: {
+        name: "intent_receipt",
+        blockchainId: blockchains.find((b) => b.chainSlug === "sui-mainnet")!.id,
+        address:
+          "0x68e6de85ba7178056ca70c4900e9cb3d87838248d83334a1b8e16ffd8dcb0f03",
+        isActive: true,
+      },
+      create: {
+        id: "intent-receipt-sui-mainnet",
+        name: "intent_receipt",
+        blockchainId: blockchains.find((b) => b.chainSlug === "sui-mainnet")!.id,
+        address:
+          "0x68e6de85ba7178056ca70c4900e9cb3d87838248d83334a1b8e16ffd8dcb0f03",
+        isActive: true,
+      },
+    }),
     // ────────────────────────── Lido ───────────────────────────────────
     // Source: docs.lido.fi/contracts/lido-locator
     prisma.smartContract.upsert({
