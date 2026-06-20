@@ -950,6 +950,9 @@ async function main() {
     }),
   ]);
 
+  // Remove stale generic entry superseded by morpho-steakhouse-usdc-ethereum (same address).
+  await prisma.smartContract.deleteMany({ where: { id: "morpho-vault-ethereum" } });
+
   await Promise.all([
     // Payment Processor on Polygon
     prisma.smartContract.upsert({
