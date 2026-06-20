@@ -1273,17 +1273,6 @@ async function main() {
     // Source: docs.morpho.org. The default seeded vault is Steakhouse
     // USDC (ETH). Add additional rows per curated vault as needed.
     prisma.smartContract.upsert({
-      where: { id: "morpho-vault-ethereum" },
-      update: {},
-      create: {
-        id: "morpho-vault-ethereum",
-        name: "morpho_vault",
-        blockchainId: blockchains[0].id,
-        address: "0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB",
-        isActive: true,
-      },
-    }),
-    prisma.smartContract.upsert({
       where: { id: "morpho-steakhouse-usdc-ethereum" },
       update: {},
       create: {
