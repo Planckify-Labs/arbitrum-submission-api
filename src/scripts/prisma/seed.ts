@@ -11,7 +11,14 @@ import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 import * as argon2 from "argon2";
-import { createPublicClient, erc20Abi, http, type Address, type Hex, type PublicClient } from "viem";
+import {
+  createPublicClient,
+  erc20Abi,
+  http,
+  type Address,
+  type Hex,
+  type PublicClient,
+} from "viem";
 import { readContract } from "viem/actions";
 import { DUITKU_CHANNEL_CODES } from "../../payout/duitku-channels";
 import { FLIP_CHANNEL_CODES } from "../../payout/flip-channels";
@@ -82,7 +89,8 @@ const ERC20_TOTAL_SUPPLY_ABI = [
 const SECONDS_PER_YEAR = 31_536_000n;
 const RAY = 10n ** 27n;
 function rayApyFromLiquidityRate(currentLiquidityRate: bigint): number {
-  const ratePerSecond = Number(currentLiquidityRate) / Number(RAY) / Number(SECONDS_PER_YEAR);
+  const ratePerSecond =
+    Number(currentLiquidityRate) / Number(RAY) / Number(SECONDS_PER_YEAR);
   const apy = (1 + ratePerSecond) ** Number(SECONDS_PER_YEAR) - 1;
   return apy;
 }
@@ -145,7 +153,11 @@ interface AaveTestnetDeployment {
 }
 
 const AAVE_TESTNETS: AaveTestnetDeployment[] = [
-  { chainName: "Ethereum Sepolia", chainId: 11155111, symbolAllowlist: ["USDC"] },
+  {
+    chainName: "Ethereum Sepolia",
+    chainId: 11155111,
+    symbolAllowlist: ["USDC"],
+  },
   { chainName: "Base Sepolia", chainId: 84532, symbolAllowlist: ["USDC"] },
   { chainName: "Arbitrum Sepolia", chainId: 421614, symbolAllowlist: ["USDC"] },
 ];
@@ -681,12 +693,14 @@ async function main() {
     prisma.blockchain.upsert({
       where: { chainId: 137 },
       update: {
-        rpcUrl: "https://polygon-mainnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        rpcUrl:
+          "https://polygon-mainnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
       },
       create: {
         name: "Polygon",
         chainId: 137,
-        rpcUrl: "https://polygon-mainnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        rpcUrl:
+          "https://polygon-mainnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
         blockExplorer: "https://polygonscan.com",
         isEVM: true,
         isActive: true,
@@ -878,7 +892,7 @@ async function main() {
     // Monad mainnet — sourced from staging-api.takumiaiwallet.xyz /blockchains.
     // EVM chain 143, native currency MON. No Gateway / Paymaster / x402 on
     // Monad — those fields stay null. Appended last to keep existing
-    // `blockchains[N]` indices stable; Monad is `blockchains[9]`.
+    // Monad — keyed by chainId 143 (resolved via evmChain()).
     prisma.blockchain.upsert({
       where: { chainId: 143 },
       update: {
@@ -897,7 +911,7 @@ async function main() {
     }),
     // Sui mainnet — keyed by chainSlug (no EIP-155 chainId, same posture
     // as Solana). Public Mysten fullnode for v1; swap in Alchemy/Triton
-    // when traffic warrants. blockchains[10].
+    // when traffic warrants. Keyed by chainSlug (slugChain()).
     // See docs/sui-chain-support-spec.md §3.8.
     prisma.blockchain.upsert({
       where: { chainSlug: "sui-mainnet" },
@@ -915,7 +929,7 @@ async function main() {
         isTestnet: false,
       },
     }),
-    // Sui testnet — blockchains[11].
+    // Sui testnet — keyed by chainSlug (slugChain()).
     prisma.blockchain.upsert({
       where: { chainSlug: "sui-testnet" },
       update: {
@@ -932,7 +946,7 @@ async function main() {
         isTestnet: true,
       },
     }),
-    // Base Mainnet — blockchains[14].
+    // Base Mainnet — keyed by chainId 8453 (evmChain()).
     prisma.blockchain.upsert({
       where: { chainId: 8453 },
       update: {
@@ -950,8 +964,35 @@ async function main() {
     }),
   ]);
 
+  // Stable chain lookups — resolve rows by their canonical chainId /
+  // chainSlug instead of array position. Positional `blockchains[N]` refs
+  // silently drift whenever a row is inserted above them: that is exactly
+  // how the native-token block below ended up attaching the "Arbitrum"
+  // tokens to Arbitrum Sepolia and skipping Base Mainnet / Holesky / Arbitrum
+  // mainnet entirely (their rows were appended after the refs were written).
+  // New token entries MUST use these helpers, never `blockchains[N]`.
+  const chainByEvmId = new Map<number, (typeof blockchains)[number]>();
+  const chainBySlug = new Map<string, (typeof blockchains)[number]>();
+  for (const b of blockchains) {
+    if (typeof b.chainId === "number") chainByEvmId.set(b.chainId, b);
+    if (b.chainSlug) chainBySlug.set(b.chainSlug, b);
+  }
+  const evmChain = (chainId: number) => {
+    const row = chainByEvmId.get(chainId);
+    if (!row) throw new Error(`seed: no blockchain row for chainId ${chainId}`);
+    return row;
+  };
+  const slugChain = (chainSlug: string) => {
+    const row = chainBySlug.get(chainSlug);
+    if (!row)
+      throw new Error(`seed: no blockchain row for chainSlug ${chainSlug}`);
+    return row;
+  };
+
   // Remove stale generic entry superseded by morpho-steakhouse-usdc-ethereum (same address).
-  await prisma.smartContract.deleteMany({ where: { id: "morpho-vault-ethereum" } });
+  await prisma.smartContract.deleteMany({
+    where: { id: "morpho-vault-ethereum" },
+  });
 
   await Promise.all([
     // Payment Processor on Polygon
@@ -961,7 +1002,7 @@ async function main() {
       create: {
         id: "smart-contract-payment",
         name: "Payment Processor",
-        blockchainId: blockchains[1].id, // Polygon
+        blockchainId: evmChain(137).id, // Polygon
         address: "0x1234567890123456789012345678901234567890",
         isActive: true,
       },
@@ -973,7 +1014,7 @@ async function main() {
       create: {
         id: "smart-contract-payment-sepolia",
         name: "Payment Processor Sepolia",
-        blockchainId: blockchains[2].id, // Ethereum Sepolia
+        blockchainId: evmChain(11155111).id, // Ethereum Sepolia
         address: "0xf64BA8EEBD3f9e268bC1989Af0dde77ab2418779",
         isActive: true,
       },
@@ -985,7 +1026,7 @@ async function main() {
       create: {
         id: "smart-contract-payment-lisk",
         name: "Payment Processor",
-        blockchainId: blockchains[4].id, // Lisk
+        blockchainId: evmChain(4202).id, // Lisk
         address: "0x39EDabDd022C39B6cfeB3161Ac77c439F325D6a0",
         isActive: true,
       },
@@ -997,7 +1038,7 @@ async function main() {
       create: {
         id: "smart-contract-payment-base",
         name: "Payment Processor",
-        blockchainId: blockchains[3].id, // Base (Sepolia)
+        blockchainId: evmChain(84532).id, // Base (Sepolia)
         address: "0x479B0843C3e0627f36551660506dEd5b349Fa968",
         isActive: true,
       },
@@ -1009,7 +1050,7 @@ async function main() {
       create: {
         id: "smart-contract-payment-arbitrum",
         name: "Payment Processor",
-        blockchainId: blockchains[5].id, // Arbitrum Sepolia
+        blockchainId: evmChain(421614).id, // Arbitrum Sepolia
         address: "0x479B0843C3e0627f36551660506dEd5b349Fa968",
         isActive: true,
       },
@@ -1023,7 +1064,7 @@ async function main() {
       create: {
         id: "smart-contract-payment-solana-devnet",
         name: "TakumiPay Solana",
-        blockchainId: blockchains[9].id, // Solana Devnet
+        blockchainId: slugChain("solana-devnet").id, // Solana Devnet
         address: "6CCTEtYrk8unNhjYQ7npiLUf1iKQQJU88JSYn8EJLNYy",
         isActive: true,
       },
@@ -1039,7 +1080,7 @@ async function main() {
       create: {
         id: "aave-v3-pool-ethereum",
         name: "aave_v3_pool",
-        blockchainId: blockchains[0].id, // Ethereum
+        blockchainId: evmChain(1).id, // Ethereum
         address: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
         isActive: true,
       },
@@ -1050,7 +1091,7 @@ async function main() {
       create: {
         id: "aave-v3-data-provider-ethereum",
         name: "aave_v3_data_provider",
-        blockchainId: blockchains[0].id,
+        blockchainId: evmChain(1).id,
         address: "0x7B4EB56E7CD4b454BA8ff71E4518426369a138a3",
         isActive: true,
       },
@@ -1061,7 +1102,7 @@ async function main() {
       create: {
         id: "aave-v3-pool-base",
         name: "aave_v3_pool",
-        blockchainId: blockchains[14].id, // Base Mainnet
+        blockchainId: evmChain(8453).id, // Base Mainnet
         address: "0xA238Dd80C259a72e81d7e4674A983a59f1ad673e",
         isActive: true,
       },
@@ -1072,7 +1113,7 @@ async function main() {
       create: {
         id: "aave-v3-data-provider-base",
         name: "aave_v3_data_provider",
-        blockchainId: blockchains[14].id,
+        blockchainId: evmChain(8453).id,
         address: "0xd82a47fdebB5bf5329b09441C3DaB4b5df2153Ad",
         isActive: true,
       },
@@ -1083,7 +1124,7 @@ async function main() {
       create: {
         id: "aave-v3-pool-arbitrum",
         name: "aave_v3_pool",
-        blockchainId: blockchains[7].id, // Arbitrum Mainnet (index 7 — see §5 of seed block)
+        blockchainId: evmChain(42161).id, // Arbitrum Mainnet (index 7 — see §5 of seed block)
         address: "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
         isActive: true,
       },
@@ -1094,7 +1135,7 @@ async function main() {
       create: {
         id: "aave-v3-data-provider-arbitrum",
         name: "aave_v3_data_provider",
-        blockchainId: blockchains[7].id,
+        blockchainId: evmChain(42161).id,
         address: "0x7F23D86Ee20D869112572136221e173428DD740B",
         isActive: true,
       },
@@ -1106,7 +1147,7 @@ async function main() {
       create: {
         id: "aave-v3-pool-sepolia",
         name: "aave_v3_pool",
-        blockchainId: blockchains[2].id, // Ethereum Sepolia
+        blockchainId: evmChain(11155111).id, // Ethereum Sepolia
         address: "0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951",
         isActive: true,
       },
@@ -1117,7 +1158,7 @@ async function main() {
       create: {
         id: "aave-v3-pool-base-sepolia",
         name: "aave_v3_pool",
-        blockchainId: blockchains[3].id, // Base Sepolia
+        blockchainId: evmChain(84532).id, // Base Sepolia
         address: "0x07eA79F68B2B3df564D0A34F8e19D9B1e339814b",
         isActive: true,
       },
@@ -1128,7 +1169,7 @@ async function main() {
       create: {
         id: "aave-v3-pool-arbitrum-sepolia",
         name: "aave_v3_pool",
-        blockchainId: blockchains[5].id, // Arb Sepolia
+        blockchainId: evmChain(421614).id, // Arb Sepolia
         address: "0xBfC91D59fdAA134A4ED45f7B584cAf96D7792Eff",
         isActive: true,
       },
@@ -1146,7 +1187,8 @@ async function main() {
       // carries blockchainId/address so a re-seed corrects/rotates in place.
       update: {
         name: "intent_receipt",
-        blockchainId: blockchains.find((b) => b.chainSlug === "sui-testnet")!.id,
+        blockchainId: blockchains.find((b) => b.chainSlug === "sui-testnet")!
+          .id,
         address:
           "0x0bea3f1e47e213a95dc3d47148ace7047310e2d14dbc10dcb9eda6226a4ba301",
         isActive: true,
@@ -1154,7 +1196,8 @@ async function main() {
       create: {
         id: "intent-receipt-sui-testnet",
         name: "intent_receipt",
-        blockchainId: blockchains.find((b) => b.chainSlug === "sui-testnet")!.id,
+        blockchainId: blockchains.find((b) => b.chainSlug === "sui-testnet")!
+          .id,
         address:
           "0x0bea3f1e47e213a95dc3d47148ace7047310e2d14dbc10dcb9eda6226a4ba301",
         isActive: true,
@@ -1166,7 +1209,8 @@ async function main() {
       where: { id: "intent-receipt-sui-mainnet" },
       update: {
         name: "intent_receipt",
-        blockchainId: blockchains.find((b) => b.chainSlug === "sui-mainnet")!.id,
+        blockchainId: blockchains.find((b) => b.chainSlug === "sui-mainnet")!
+          .id,
         address:
           "0x68e6de85ba7178056ca70c4900e9cb3d87838248d83334a1b8e16ffd8dcb0f03",
         isActive: true,
@@ -1174,7 +1218,8 @@ async function main() {
       create: {
         id: "intent-receipt-sui-mainnet",
         name: "intent_receipt",
-        blockchainId: blockchains.find((b) => b.chainSlug === "sui-mainnet")!.id,
+        blockchainId: blockchains.find((b) => b.chainSlug === "sui-mainnet")!
+          .id,
         address:
           "0x68e6de85ba7178056ca70c4900e9cb3d87838248d83334a1b8e16ffd8dcb0f03",
         isActive: true,
@@ -1188,7 +1233,7 @@ async function main() {
       create: {
         id: "lido-steth-ethereum",
         name: "lido_steth",
-        blockchainId: blockchains[0].id, // Ethereum
+        blockchainId: evmChain(1).id, // Ethereum
         address: "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",
         isActive: true,
       },
@@ -1199,7 +1244,7 @@ async function main() {
       create: {
         id: "lido-wsteth-ethereum",
         name: "lido_wsteth",
-        blockchainId: blockchains[0].id,
+        blockchainId: evmChain(1).id,
         address: "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0",
         isActive: true,
       },
@@ -1210,7 +1255,7 @@ async function main() {
       create: {
         id: "lido-withdrawal-queue-ethereum",
         name: "lido_withdrawal_queue",
-        blockchainId: blockchains[0].id,
+        blockchainId: evmChain(1).id,
         address: "0x889edC2eDab5f40e902b864aD4d7AdE8E412F9B1",
         isActive: true,
       },
@@ -1222,7 +1267,7 @@ async function main() {
       create: {
         id: "lido-steth-holesky",
         name: "lido_steth",
-        blockchainId: blockchains[6].id, // Ethereum Holesky
+        blockchainId: evmChain(17000).id, // Ethereum Holesky
         address: "0x3F1c547b21f65e10480dE3ad8E19fAAC46C95034",
         isActive: true,
       },
@@ -1233,7 +1278,7 @@ async function main() {
       create: {
         id: "lido-wsteth-holesky",
         name: "lido_wsteth",
-        blockchainId: blockchains[6].id,
+        blockchainId: evmChain(17000).id,
         address: "0x8d09a4502Cc8Cf1547aD300E066060D043f6982D",
         isActive: true,
       },
@@ -1244,7 +1289,7 @@ async function main() {
       create: {
         id: "lido-withdrawal-queue-holesky",
         name: "lido_withdrawal_queue",
-        blockchainId: blockchains[6].id,
+        blockchainId: evmChain(17000).id,
         address: "0xc7cc160b58F8Bb0baC94b80847E2CF2800565C50",
         isActive: true,
       },
@@ -1256,7 +1301,7 @@ async function main() {
       create: {
         id: "curve-3pool-ethereum",
         name: "curve_3pool",
-        blockchainId: blockchains[0].id,
+        blockchainId: evmChain(1).id,
         address: "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
         isActive: true,
       },
@@ -1267,7 +1312,7 @@ async function main() {
       create: {
         id: "curve-3pool-lp-ethereum",
         name: "curve_3pool_lp",
-        blockchainId: blockchains[0].id,
+        blockchainId: evmChain(1).id,
         address: "0x6c3F90f043a72FA612cbac8115EE7e52BDe6E490",
         isActive: true,
       },
@@ -1281,7 +1326,7 @@ async function main() {
       create: {
         id: "morpho-steakhouse-usdc-ethereum",
         name: "morpho_steakhouse_usdc",
-        blockchainId: blockchains[0].id,
+        blockchainId: evmChain(1).id,
         address: "0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB",
         isActive: true,
       },
@@ -1292,7 +1337,7 @@ async function main() {
       create: {
         id: "morpho-flagship-usdc-base",
         name: "morpho_flagship_usdc",
-        blockchainId: blockchains[14].id, // Base Mainnet
+        blockchainId: evmChain(8453).id, // Base Mainnet
         address: "0xc1256Ae5FF1cf2719D4937adb3bbCCab2E00A2Ca",
         isActive: true,
       },
@@ -1305,7 +1350,7 @@ async function main() {
       create: {
         id: "yearn-router-ethereum",
         name: "yearn_router",
-        blockchainId: blockchains[0].id,
+        blockchainId: evmChain(1).id,
         address: "0x1112dbCF805682e828606f74AB717abf4b4FD8DE",
         isActive: true,
       },
@@ -1316,7 +1361,7 @@ async function main() {
       create: {
         id: "yearn-v3-usdc-ethereum",
         name: "yearn_v3_usdc",
-        blockchainId: blockchains[0].id,
+        blockchainId: evmChain(1).id,
         address: "0xBe53A109B494E5c9f97b9Cd39Fe969BE68BF6204",
         isActive: true,
       },
@@ -1330,7 +1375,7 @@ async function main() {
       create: {
         id: "eigenlayer-strategy-manager-ethereum",
         name: "eigenlayer_strategy_manager",
-        blockchainId: blockchains[0].id,
+        blockchainId: evmChain(1).id,
         address: "0x858646372CC42E1A627fcE94aa7A7033e7CF075A",
         isActive: true,
       },
@@ -1341,7 +1386,7 @@ async function main() {
       create: {
         id: "eigenlayer-delegation-manager-ethereum",
         name: "eigenlayer_delegation_manager",
-        blockchainId: blockchains[0].id,
+        blockchainId: evmChain(1).id,
         address: "0x39053D51B77DC0d36036Fc1fCc8Cb819df8Ef37A",
         isActive: true,
       },
@@ -1352,7 +1397,7 @@ async function main() {
       create: {
         id: "eigenlayer-steth-strategy-ethereum",
         name: "eigenlayer_steth_strategy",
-        blockchainId: blockchains[0].id,
+        blockchainId: evmChain(1).id,
         address: "0x93c4b944D05dfe6df7645A86cd2206016c51564D",
         isActive: true,
       },
@@ -1363,7 +1408,7 @@ async function main() {
       create: {
         id: "eigenlayer-strategy-manager-holesky",
         name: "eigenlayer_strategy_manager",
-        blockchainId: blockchains[6].id, // Holesky
+        blockchainId: evmChain(17000).id, // Holesky
         address: "0xdfB5f6CE42aAA7830E94ECFCcAd411beF4d4D5b6",
         isActive: true,
       },
@@ -1374,7 +1419,7 @@ async function main() {
       create: {
         id: "eigenlayer-delegation-manager-holesky",
         name: "eigenlayer_delegation_manager",
-        blockchainId: blockchains[6].id,
+        blockchainId: evmChain(17000).id,
         address: "0xA44151489861Fe9e3055d95adC98FbD462B948e7",
         isActive: true,
       },
@@ -1387,7 +1432,7 @@ async function main() {
       create: {
         id: "ethena-susde-ethereum",
         name: "ethena_susde",
-        blockchainId: blockchains[0].id,
+        blockchainId: evmChain(1).id,
         address: "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497",
         isActive: true,
       },
@@ -1398,7 +1443,7 @@ async function main() {
       create: {
         id: "ethena-usde-ethereum",
         name: "ethena_usde",
-        blockchainId: blockchains[0].id,
+        blockchainId: evmChain(1).id,
         address: "0x4c9EDD5852cd905f086C759E8383e09bff1E68B3",
         isActive: true,
       },
@@ -1411,7 +1456,7 @@ async function main() {
       create: {
         id: "gmx-v2-exchange-router-arbitrum",
         name: "gmx_v2_exchange_router",
-        blockchainId: blockchains[7].id, // Arbitrum Mainnet
+        blockchainId: evmChain(42161).id, // Arbitrum Mainnet
         address: "0xb7a9C9D9D7c0e8Db8Df0DCe9eDDFc83AC0a3f74D",
         isActive: true,
       },
@@ -1422,7 +1467,7 @@ async function main() {
       create: {
         id: "gmx-v2-deposit-vault-arbitrum",
         name: "gmx_v2_deposit_vault",
-        blockchainId: blockchains[7].id,
+        blockchainId: evmChain(42161).id,
         address: "0xF89e77e8Dc11691C9e8757e84aaFbCD8A67d7A55",
         isActive: true,
       },
@@ -1433,7 +1478,7 @@ async function main() {
       create: {
         id: "gmx-v2-withdrawal-vault-arbitrum",
         name: "gmx_v2_withdrawal_vault",
-        blockchainId: blockchains[7].id,
+        blockchainId: evmChain(42161).id,
         address: "0x0628D46b5D145f183AdB6Ef1f2c97eD1C4701C55",
         isActive: true,
       },
@@ -1448,7 +1493,7 @@ async function main() {
       create: {
         id: "maple-syrup-usdc-ethereum",
         name: "maple_syrup_usdc",
-        blockchainId: blockchains[0].id,
+        blockchainId: evmChain(1).id,
         address: "0x80ac24aA929eaF5013f6436cdA2a7ba190f5Cc0b",
         isActive: true,
       },
@@ -1464,7 +1509,7 @@ async function main() {
       create: {
         id: "spl-stake-pool-program",
         name: "spl_stake_pool_program",
-        blockchainId: blockchains[8].id, // Solana mainnet
+        blockchainId: slugChain("solana-mainnet").id, // Solana mainnet
         address: "SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy",
         isActive: true,
       },
@@ -1475,7 +1520,7 @@ async function main() {
       create: {
         id: "jito-stake-pool",
         name: "jito_stake_pool",
-        blockchainId: blockchains[8].id,
+        blockchainId: slugChain("solana-mainnet").id,
         address: "Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb",
         isActive: true,
       },
@@ -1486,7 +1531,7 @@ async function main() {
       create: {
         id: "jito-sol-mint",
         name: "jito_sol_mint",
-        blockchainId: blockchains[8].id,
+        blockchainId: slugChain("solana-mainnet").id,
         address: "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn",
         isActive: true,
       },
@@ -1499,16 +1544,25 @@ async function main() {
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[0].id,
+          blockchainId: evmChain(1).id,
           contractAddress: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
         },
       },
-      update: {},
+      update: {
+        name: "USD Coin",
+        symbol: "USDC",
+        decimals: 6,
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
+        isStablecoin: true,
+        isActive: true,
+        peggedCurrency: "USD",
+      },
       create: {
         name: "USD Coin",
         symbol: "USDC",
         decimals: 6,
-        blockchainId: blockchains[0].id, // Ethereum
+        blockchainId: evmChain(1).id, // Ethereum
         contractAddress: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
         logoUrl:
           "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
@@ -1521,16 +1575,25 @@ async function main() {
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[0].id,
+          blockchainId: evmChain(1).id,
           contractAddress: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
         },
       },
-      update: {},
+      update: {
+        name: "Tether USD",
+        symbol: "USDT",
+        decimals: 6,
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/325/small/Tether.png",
+        isStablecoin: true,
+        isActive: true,
+        peggedCurrency: "USD",
+      },
       create: {
         name: "Tether USD",
         symbol: "USDT",
         decimals: 6,
-        blockchainId: blockchains[0].id, // Ethereum
+        blockchainId: evmChain(1).id, // Ethereum
         contractAddress: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
         logoUrl:
           "https://assets.coingecko.com/coins/images/325/small/Tether.png",
@@ -1543,16 +1606,25 @@ async function main() {
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[2].id,
+          blockchainId: evmChain(11155111).id,
           contractAddress: "0xA6ffC6d992F4C6e173836035Aebb8AF3dBBB15cd",
         },
       },
-      update: {},
+      update: {
+        name: "Tether USD",
+        symbol: "USDT",
+        decimals: 6,
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/325/small/Tether.png",
+        isStablecoin: true,
+        isActive: true,
+        peggedCurrency: "USD",
+      },
       create: {
         name: "Tether USD",
         symbol: "USDT",
         decimals: 6,
-        blockchainId: blockchains[2].id, // Ethereum Sepolia
+        blockchainId: evmChain(11155111).id, // Ethereum Sepolia
         contractAddress: "0xA6ffC6d992F4C6e173836035Aebb8AF3dBBB15cd",
         logoUrl:
           "https://assets.coingecko.com/coins/images/325/small/Tether.png",
@@ -1565,16 +1637,25 @@ async function main() {
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[4].id,
+          blockchainId: evmChain(4202).id,
           contractAddress: "0x53080Db01Ca5C60A36B6eE01436C2f300a31d16A",
         },
       },
-      update: {},
+      update: {
+        name: "IDRX Stablecoin",
+        symbol: "IDRX",
+        decimals: 2,
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/34630/large/idrx.png",
+        isStablecoin: true,
+        isActive: true,
+        peggedCurrency: "IDR",
+      },
       create: {
         name: "IDRX Stablecoin",
         symbol: "IDRX",
         decimals: 2,
-        blockchainId: blockchains[4].id, // Lisk
+        blockchainId: evmChain(4202).id, // Lisk
         contractAddress: "0x53080Db01Ca5C60A36B6eE01436C2f300a31d16A",
         logoUrl:
           "https://assets.coingecko.com/coins/images/34630/large/idrx.png",
@@ -1587,16 +1668,25 @@ async function main() {
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[3].id,
+          blockchainId: evmChain(84532).id,
           contractAddress: "0x1aC593085Fa34c651E805085da4b2cabAC676F99",
         },
       },
-      update: {},
+      update: {
+        name: "IDRX Stablecoin",
+        symbol: "IDRX",
+        decimals: 2,
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/34630/large/idrx.png",
+        isStablecoin: true,
+        isActive: true,
+        peggedCurrency: "IDR",
+      },
       create: {
         name: "IDRX Stablecoin",
         symbol: "IDRX",
         decimals: 2,
-        blockchainId: blockchains[3].id, // Base
+        blockchainId: evmChain(84532).id, // Base
         contractAddress: "0x1aC593085Fa34c651E805085da4b2cabAC676F99",
         logoUrl:
           "https://assets.coingecko.com/coins/images/34630/large/idrx.png",
@@ -1605,20 +1695,31 @@ async function main() {
         peggedCurrency: "IDR",
       },
     }),
-    // USDT on Arbitrum
+    // USDT on Arbitrum (mainnet) — contract `0xFd08…` is Arbitrum One USDT.
+    // Previously pointed at blockchains[5] (Arbitrum Sepolia) due to index
+    // drift; resolved by chainId so it always lands on Arbitrum mainnet.
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[5].id,
+          blockchainId: evmChain(42161).id,
           contractAddress: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",
         },
       },
-      update: {},
+      update: {
+        name: "Tether USD",
+        symbol: "USDT",
+        decimals: 6,
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/325/small/Tether.png",
+        isStablecoin: true,
+        isActive: true,
+        peggedCurrency: "USD",
+      },
       create: {
         name: "Tether USD",
         symbol: "USDT",
         decimals: 6,
-        blockchainId: blockchains[5].id, // Arbitrum
+        blockchainId: evmChain(42161).id, // Arbitrum mainnet
         contractAddress: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",
         logoUrl:
           "https://assets.coingecko.com/coins/images/325/small/Tether.png",
@@ -1635,17 +1736,26 @@ async function main() {
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[12].id, // Sui mainnet
+          blockchainId: slugChain("sui-mainnet").id, // Sui mainnet
           contractAddress:
             "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC",
         },
       },
-      update: {},
+      update: {
+        name: "USD Coin",
+        symbol: "USDC",
+        decimals: 6,
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
+        isStablecoin: true,
+        isActive: true,
+        peggedCurrency: "USD",
+      },
       create: {
         name: "USD Coin",
         symbol: "USDC",
         decimals: 6,
-        blockchainId: blockchains[12].id, // Sui mainnet
+        blockchainId: slugChain("sui-mainnet").id, // Sui mainnet
         contractAddress:
           "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC",
         logoUrl:
@@ -1663,16 +1773,25 @@ async function main() {
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[0].id,
+          blockchainId: evmChain(1).id,
           contractAddress: "0x0000000000000000000000000000000000000000",
         },
       },
-      update: {},
+      update: {
+        name: "Ethereum",
+        symbol: "ETH",
+        decimals: 18,
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/279/small/ethereum.png",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
+      },
       create: {
         name: "Ethereum",
         symbol: "ETH",
         decimals: 18,
-        blockchainId: blockchains[0].id, // Ethereum
+        blockchainId: evmChain(1).id, // Ethereum
         contractAddress: "0x0000000000000000000000000000000000000000",
         logoUrl:
           "https://assets.coingecko.com/coins/images/279/small/ethereum.png",
@@ -1685,16 +1804,25 @@ async function main() {
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[1].id,
+          blockchainId: evmChain(137).id,
           contractAddress: "0x1230000000000000000000000000000000000000",
         },
       },
-      update: {},
+      update: {
+        name: "Polygon",
+        symbol: "MATIC",
+        decimals: 18,
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/4713/small/matic-token-icon.png",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
+      },
       create: {
         name: "Polygon",
         symbol: "MATIC",
         decimals: 18,
-        blockchainId: blockchains[1].id, // Polygon
+        blockchainId: evmChain(137).id, // Polygon
         contractAddress: "0x1230000000000000000000000000000000000000",
         logoUrl:
           "https://assets.coingecko.com/coins/images/4713/small/matic-token-icon.png",
@@ -1707,16 +1835,24 @@ async function main() {
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[3].id,
+          blockchainId: evmChain(84532).id,
           contractAddress: "0x0000000000000000000000000000000000000001",
         },
       },
-      update: {},
+      update: {
+        name: "Base",
+        symbol: "ETH",
+        decimals: 18,
+        logoUrl: "https://avatars.githubusercontent.com/u/108554348?s=200&v=4",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
+      },
       create: {
         name: "Base",
         symbol: "ETH",
         decimals: 18,
-        blockchainId: blockchains[3].id, // Base
+        blockchainId: evmChain(84532).id, // Base
         contractAddress: "0x0000000000000000000000000000000000000001",
         logoUrl: "https://avatars.githubusercontent.com/u/108554348?s=200&v=4",
         isStablecoin: false,
@@ -1728,18 +1864,25 @@ async function main() {
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[2].id,
+          blockchainId: evmChain(11155111).id,
           contractAddress: "0x0000000000000000000000000000000000000002",
         },
       },
       update: {
+        name: "Sepolia Ether",
         symbol: "ETH",
+        decimals: 18,
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/279/small/ethereum.png",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
       },
       create: {
         name: "Sepolia Ether",
         symbol: "ETH",
         decimals: 18,
-        blockchainId: blockchains[2].id, // Ethereum Sepolia
+        blockchainId: evmChain(11155111).id, // Ethereum Sepolia
         contractAddress: "0x0000000000000000000000000000000000000002",
         logoUrl:
           "https://assets.coingecko.com/coins/images/279/small/ethereum.png",
@@ -1752,16 +1895,24 @@ async function main() {
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[4].id,
+          blockchainId: evmChain(4202).id,
           contractAddress: "0x0000000000000000000000000000000000000003",
         },
       },
-      update: {},
+      update: {
+        name: "Lisk",
+        symbol: "ETH",
+        decimals: 18,
+        logoUrl: "https://avatars.githubusercontent.com/u/16600915?s=200&v=4",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
+      },
       create: {
         name: "Lisk",
         symbol: "ETH",
         decimals: 18,
-        blockchainId: blockchains[4].id, // Lisk
+        blockchainId: evmChain(4202).id, // Lisk
         contractAddress: "0x0000000000000000000000000000000000000003",
         logoUrl: "https://avatars.githubusercontent.com/u/16600915?s=200&v=4",
         isStablecoin: false,
@@ -1769,24 +1920,126 @@ async function main() {
         isActive: true,
       },
     }),
-    // ETH on Arbitrum
+    // ETH on Arbitrum Sepolia (testnet). logoUrl is the Arbitrum brand mark
+    // (used as the chain icon in the mobile chain selector).
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[5].id,
+          blockchainId: evmChain(421614).id,
           contractAddress: "0x0000000000000000000000000000000000000004",
         },
       },
       update: {
+        name: "Arbitrum Sepolia",
+        symbol: "ETH",
+        decimals: 18,
         logoUrl: "https://cryptologos.cc/logos/arbitrum-arb-logo.png?v=040",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
+      },
+      create: {
+        name: "Arbitrum Sepolia",
+        symbol: "ETH",
+        decimals: 18,
+        blockchainId: evmChain(421614).id, // Arbitrum Sepolia
+        contractAddress: "0x0000000000000000000000000000000000000004",
+        logoUrl: "https://cryptologos.cc/logos/arbitrum-arb-logo.png?v=040",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
+      },
+    }),
+    // ETH on Arbitrum (mainnet). Previously missing — the single "Arbitrum"
+    // entry above had drifted onto the Sepolia row, leaving mainnet without a
+    // native token (placeholder icon + "N/A" symbol app-wide).
+    prisma.token.upsert({
+      where: {
+        blockchainId_contractAddress: {
+          blockchainId: evmChain(42161).id,
+          contractAddress: "0x0000000000000000000000000000000000000004",
+        },
+      },
+      update: {
+        name: "Arbitrum",
+        symbol: "ETH",
+        decimals: 18,
+        logoUrl: "https://cryptologos.cc/logos/arbitrum-arb-logo.png?v=040",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
       },
       create: {
         name: "Arbitrum",
         symbol: "ETH",
         decimals: 18,
-        blockchainId: blockchains[5].id, // Arbitrum
+        blockchainId: evmChain(42161).id, // Arbitrum mainnet
         contractAddress: "0x0000000000000000000000000000000000000004",
         logoUrl: "https://cryptologos.cc/logos/arbitrum-arb-logo.png?v=040",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
+      },
+    }),
+    // ETH on Ethereum Holesky (testnet). Previously missing — Holesky was
+    // inserted at blockchains[6] after the token refs were written, so it
+    // never got a native row. logoUrl is the Ethereum mark.
+    prisma.token.upsert({
+      where: {
+        blockchainId_contractAddress: {
+          blockchainId: evmChain(17000).id,
+          contractAddress: "0x0000000000000000000000000000000000000000",
+        },
+      },
+      update: {
+        name: "Ethereum Holesky",
+        symbol: "ETH",
+        decimals: 18,
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/279/small/ethereum.png",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
+      },
+      create: {
+        name: "Ethereum Holesky",
+        symbol: "ETH",
+        decimals: 18,
+        blockchainId: evmChain(17000).id, // Ethereum Holesky
+        contractAddress: "0x0000000000000000000000000000000000000000",
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/279/small/ethereum.png",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
+      },
+    }),
+    // ETH on Base Mainnet. Previously missing — Base Mainnet was appended at
+    // blockchains[14] with no paired native token. logoUrl is the Base brand
+    // mark (matches the Base Sepolia row, used as the chain icon).
+    prisma.token.upsert({
+      where: {
+        blockchainId_contractAddress: {
+          blockchainId: evmChain(8453).id,
+          contractAddress: "0x0000000000000000000000000000000000000000",
+        },
+      },
+      update: {
+        name: "Base",
+        symbol: "ETH",
+        decimals: 18,
+        logoUrl: "https://avatars.githubusercontent.com/u/108554348?s=200&v=4",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
+      },
+      create: {
+        name: "Base",
+        symbol: "ETH",
+        decimals: 18,
+        blockchainId: evmChain(8453).id, // Base Mainnet
+        contractAddress: "0x0000000000000000000000000000000000000000",
+        logoUrl: "https://avatars.githubusercontent.com/u/108554348?s=200&v=4",
         isStablecoin: false,
         isNativeCurrency: true,
         isActive: true,
@@ -1796,16 +2049,25 @@ async function main() {
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[8].id,
+          blockchainId: slugChain("solana-mainnet").id,
           contractAddress: "So11111111111111111111111111111111111111112",
         },
       },
-      update: {},
+      update: {
+        name: "Solana",
+        symbol: "SOL",
+        decimals: 9,
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/4128/small/solana.png",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
+      },
       create: {
         name: "Solana",
         symbol: "SOL",
         decimals: 9,
-        blockchainId: blockchains[8].id, // Solana mainnet
+        blockchainId: slugChain("solana-mainnet").id, // Solana mainnet
         contractAddress: "So11111111111111111111111111111111111111112",
         logoUrl:
           "https://assets.coingecko.com/coins/images/4128/small/solana.png",
@@ -1818,16 +2080,25 @@ async function main() {
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[9].id,
+          blockchainId: slugChain("solana-devnet").id,
           contractAddress: "So11111111111111111111111111111111111111112",
         },
       },
-      update: {},
+      update: {
+        name: "Solana Devnet",
+        symbol: "SOL",
+        decimals: 9,
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/4128/small/solana.png",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
+      },
       create: {
         name: "Solana Devnet",
         symbol: "SOL",
         decimals: 9,
-        blockchainId: blockchains[9].id, // Solana Devnet
+        blockchainId: slugChain("solana-devnet").id, // Solana Devnet
         contractAddress: "So11111111111111111111111111111111111111112",
         logoUrl:
           "https://assets.coingecko.com/coins/images/4128/small/solana.png",
@@ -1840,18 +2111,26 @@ async function main() {
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[9].id,
+          blockchainId: slugChain("solana-devnet").id,
           contractAddress: "4qFejVSp46Q4SZCGDrXbkFJC1qw5uo1JBnbXLnKZurey",
         },
       },
       update: {
+        name: "USD Coin (Devnet)",
+        symbol: "USDC",
+        decimals: 6,
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
+        isStablecoin: true,
+        isActive: true,
         isPaymentEnabled: true,
+        peggedCurrency: "USD",
       },
       create: {
         name: "USD Coin (Devnet)",
         symbol: "USDC",
         decimals: 6,
-        blockchainId: blockchains[9].id, // Solana Devnet
+        blockchainId: slugChain("solana-devnet").id, // Solana Devnet
         contractAddress: "4qFejVSp46Q4SZCGDrXbkFJC1qw5uo1JBnbXLnKZurey",
         logoUrl:
           "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
@@ -1865,16 +2144,25 @@ async function main() {
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[8].id,
+          blockchainId: slugChain("solana-mainnet").id,
           contractAddress: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         },
       },
-      update: {},
+      update: {
+        name: "USD Coin",
+        symbol: "USDC",
+        decimals: 6,
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
+        isStablecoin: true,
+        isActive: true,
+        peggedCurrency: "USD",
+      },
       create: {
         name: "USD Coin",
         symbol: "USDC",
         decimals: 6,
-        blockchainId: blockchains[8].id, // Solana Mainnet
+        blockchainId: slugChain("solana-mainnet").id, // Solana Mainnet
         contractAddress: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         logoUrl:
           "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
@@ -1892,18 +2180,26 @@ async function main() {
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
-          blockchainId: blockchains[10].id, // Arc Testnet
+          blockchainId: evmChain(5042002).id, // Arc Testnet
           contractAddress: "0x3600000000000000000000000000000000000000",
         },
       },
       update: {
+        name: "USD Coin",
+        symbol: "USDC",
         decimals: 18,
+        logoUrl:
+          "https://pbs.twimg.com/profile_images/1955238194443849732/sHyVRItm_400x400.jpg",
+        isStablecoin: true,
+        isNativeCurrency: true,
+        isActive: true,
+        peggedCurrency: "USD",
       },
       create: {
         name: "USD Coin",
         symbol: "USDC",
         decimals: 18,
-        blockchainId: blockchains[10].id, // Arc Testnet
+        blockchainId: evmChain(5042002).id, // Arc Testnet
         contractAddress: "0x3600000000000000000000000000000000000000",
         logoUrl:
           "https://pbs.twimg.com/profile_images/1955238194443849732/sHyVRItm_400x400.jpg",
@@ -1921,7 +2217,7 @@ async function main() {
   // the row by (blockchainId, isNativeCurrency) instead. Idempotent on re-seed.
   const existingMonToken = await prisma.token.findFirst({
     where: {
-      blockchainId: blockchains[11].id,
+      blockchainId: evmChain(143).id,
       isNativeCurrency: true,
     },
   });
@@ -1929,7 +2225,13 @@ async function main() {
     await prisma.token.update({
       where: { id: existingMonToken.id },
       data: {
+        name: "Monad",
+        symbol: "MON",
+        decimals: 18,
         logoUrl: "https://files.svgcdn.io/token-branded/monad.png",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
       },
     });
   } else {
@@ -1938,7 +2240,7 @@ async function main() {
         name: "Monad",
         symbol: "MON",
         decimals: 18,
-        blockchainId: blockchains[11].id, // Monad
+        blockchainId: evmChain(143).id, // Monad
         contractAddress: null,
         logoUrl: "https://files.svgcdn.io/token-branded/monad.png",
         isStablecoin: false,
@@ -1952,13 +2254,14 @@ async function main() {
   // Mirrors how Solana stores Wrapped SOL (`So11…112`) on the native row:
   // mobile `SuiWalletKit.getTokenBalance` can pass this string verbatim.
   // Decimals: 9 (1 SUI = 10⁹ MIST). One row per network.
-  for (const [idx, label] of [
-    [12, "Sui"], // mainnet
-    [13, "Sui Testnet"],
+  for (const [slug, label] of [
+    ["sui-mainnet", "Sui"],
+    ["sui-testnet", "Sui Testnet"],
   ] as const) {
+    const suiChainId = slugChain(slug).id;
     const existing = await prisma.token.findFirst({
       where: {
-        blockchainId: blockchains[idx].id,
+        blockchainId: suiChainId,
         isNativeCurrency: true,
       },
     });
@@ -1966,7 +2269,13 @@ async function main() {
       await prisma.token.update({
         where: { id: existing.id },
         data: {
+          name: label,
+          symbol: "SUI",
+          decimals: 9,
           logoUrl: "https://cryptologos.cc/logos/sui-sui-logo.png",
+          isStablecoin: false,
+          isNativeCurrency: true,
+          isActive: true,
         },
       });
     } else {
@@ -1975,7 +2284,7 @@ async function main() {
           name: label,
           symbol: "SUI",
           decimals: 9,
-          blockchainId: blockchains[idx].id,
+          blockchainId: suiChainId,
           contractAddress: "0x2::sui::SUI",
           logoUrl: "https://cryptologos.cc/logos/sui-sui-logo.png",
           isStablecoin: false,
@@ -1999,7 +2308,9 @@ async function main() {
   for (const deployment of AAVE_TESTNETS) {
     const blockchain = await prisma.blockchain.findUnique({
       where: { chainId: deployment.chainId },
-      include: { SmartContract: { where: { name: "aave_v3_pool", isActive: true } } },
+      include: {
+        SmartContract: { where: { name: "aave_v3_pool", isActive: true } },
+      },
     });
     if (!blockchain) {
       console.warn(
@@ -2095,7 +2406,18 @@ async function main() {
             contractAddress: reserve.tokenAddress.toLowerCase(),
           },
         },
-        update: { isActive: true },
+        update: {
+          name: `${reserve.symbol} (${deployment.chainName})`,
+          symbol: reserve.symbol,
+          decimals: underlyingDecimals,
+          logoUrl:
+            reserve.symbol === "USDC"
+              ? "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png"
+              : null,
+          isStablecoin: reserve.symbol === "USDC" || reserve.symbol === "USDT",
+          isActive: true,
+          peggedCurrency: reserve.symbol === "USDC" ? "USD" : null,
+        },
         create: {
           name: `${reserve.symbol} (${deployment.chainName})`,
           symbol: reserve.symbol,
@@ -2115,10 +2437,7 @@ async function main() {
       // aToken receipt (e.g. aUSDC). Optional for the deposit flow itself,
       // surfaced here so the user can see their interest-bearing balance
       // in the wallet asset explorer alongside the underlying.
-      if (
-        aToken &&
-        aToken !== "0x0000000000000000000000000000000000000000"
-      ) {
+      if (aToken && aToken !== "0x0000000000000000000000000000000000000000") {
         await prisma.token.upsert({
           where: {
             blockchainId_contractAddress: {
@@ -2126,7 +2445,16 @@ async function main() {
               contractAddress: aToken.toLowerCase(),
             },
           },
-          update: { isActive: true },
+          update: {
+            name: `Aave V3 ${reserve.symbol} (${deployment.chainName})`,
+            symbol: `a${reserve.symbol}`,
+            decimals: underlyingDecimals,
+            logoUrl: "https://app.aave.com/icons/tokens/ausdc.svg",
+            isStablecoin:
+              reserve.symbol === "USDC" || reserve.symbol === "USDT",
+            isActive: true,
+            peggedCurrency: reserve.symbol === "USDC" ? "USD" : null,
+          },
           create: {
             name: `Aave V3 ${reserve.symbol} (${deployment.chainName})`,
             symbol: `a${reserve.symbol}`,
@@ -2134,7 +2462,8 @@ async function main() {
             blockchainId: blockchain.id,
             contractAddress: aToken.toLowerCase(),
             logoUrl: "https://app.aave.com/icons/tokens/ausdc.svg",
-            isStablecoin: reserve.symbol === "USDC" || reserve.symbol === "USDT",
+            isStablecoin:
+              reserve.symbol === "USDC" || reserve.symbol === "USDT",
             isActive: true,
             peggedCurrency: reserve.symbol === "USDC" ? "USD" : null,
           },
@@ -2264,15 +2593,39 @@ async function main() {
     region: string;
     markup: number;
   }> = [
-    { fromCurrency: "USDT", toCurrency: "IDR", rate: 15700, region: "ID", markup: 1.5 },
-    { fromCurrency: "USDC", toCurrency: "SGD", rate: 1.35, region: "SG", markup: 1 },
-    { fromCurrency: "IDRX", toCurrency: "IDR", rate: 1, region: "ID", markup: 0 },
+    {
+      fromCurrency: "USDT",
+      toCurrency: "IDR",
+      rate: 15700,
+      region: "ID",
+      markup: 1.5,
+    },
+    {
+      fromCurrency: "USDC",
+      toCurrency: "SGD",
+      rate: 1.35,
+      region: "SG",
+      markup: 1,
+    },
+    {
+      fromCurrency: "IDRX",
+      toCurrency: "IDR",
+      rate: 1,
+      region: "ID",
+      markup: 0,
+    },
     // UMKM USDC → IDR payout (spec §6.6 FX prerequisites, task 26).
     // Rate ≈ mid-market early-2026 (USDC ≈ USD, USD/IDR ~16,200-16,300).
     // `markup: 1.5` absorbs drift per §12 Q10 — no live FX cron in v1,
     // ops re-runs `pnpm prisma db seed` to tune. TODO: wire a scheduled
     // refresh (Wise / OpenExchangeRates / Chainlink) post-v1.
-    { fromCurrency: "USDC", toCurrency: "IDR", rate: 16234.5, region: "ID", markup: 1.5 },
+    {
+      fromCurrency: "USDC",
+      toCurrency: "IDR",
+      rate: 16234.5,
+      region: "ID",
+      markup: 1.5,
+    },
   ];
 
   await Promise.all(
@@ -2324,20 +2677,111 @@ async function main() {
     maxAmountIdr: number;
     feeIdr: number;
   }> = [
-    { channelCode: "GOPAY",     country: "ID", label: "GoPay",     kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 10, iconUrl: "https://assets.takumipay.com/channels/gopay.png",     minAmountIdr: 10_000, maxAmountIdr: 20_000_000, feeIdr: 2500 },
-    { channelCode: "OVO",       country: "ID", label: "OVO",       kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 11, iconUrl: "https://assets.takumipay.com/channels/ovo.png",       minAmountIdr: 10_000, maxAmountIdr: 10_000_000, feeIdr: 2500 },
-    { channelCode: "DANA",      country: "ID", label: "DANA",      kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 12, iconUrl: "https://assets.takumipay.com/channels/dana.png",      minAmountIdr: 10_000, maxAmountIdr: 10_000_000, feeIdr: 2500 },
-    { channelCode: "SHOPEEPAY", country: "ID", label: "ShopeePay", kind: ChannelKind.ewallet, accountFormat: "phone_id",  priority: 13, iconUrl: "https://assets.takumipay.com/channels/shopeepay.png", minAmountIdr: 10_000, maxAmountIdr: 10_000_000, feeIdr: 2500 },
-    { channelCode: "BCA",       country: "ID", label: "BCA",       kind: ChannelKind.bank,    accountFormat: "digits:10", priority: 20, iconUrl: "https://assets.takumipay.com/channels/bca.png",       minAmountIdr: 10_000, maxAmountIdr: 50_000_000, feeIdr: 5000 },
-    { channelCode: "MANDIRI",   country: "ID", label: "Mandiri",   kind: ChannelKind.bank,    accountFormat: "digits:13", priority: 21, iconUrl: "https://assets.takumipay.com/channels/mandiri.png",   minAmountIdr: 10_000, maxAmountIdr: 50_000_000, feeIdr: 5000 },
-    { channelCode: "BNI",       country: "ID", label: "BNI",       kind: ChannelKind.bank,    accountFormat: "digits:10", priority: 22, iconUrl: "https://assets.takumipay.com/channels/bni.png",       minAmountIdr: 10_000, maxAmountIdr: 50_000_000, feeIdr: 5000 },
-    { channelCode: "BRI",       country: "ID", label: "BRI",       kind: ChannelKind.bank,    accountFormat: "digits:15", priority: 23, iconUrl: "https://assets.takumipay.com/channels/bri.png",       minAmountIdr: 10_000, maxAmountIdr: 50_000_000, feeIdr: 5000 },
+    {
+      channelCode: "GOPAY",
+      country: "ID",
+      label: "GoPay",
+      kind: ChannelKind.ewallet,
+      accountFormat: "phone_id",
+      priority: 10,
+      iconUrl: "https://assets.takumipay.com/channels/gopay.png",
+      minAmountIdr: 10_000,
+      maxAmountIdr: 20_000_000,
+      feeIdr: 2500,
+    },
+    {
+      channelCode: "OVO",
+      country: "ID",
+      label: "OVO",
+      kind: ChannelKind.ewallet,
+      accountFormat: "phone_id",
+      priority: 11,
+      iconUrl: "https://assets.takumipay.com/channels/ovo.png",
+      minAmountIdr: 10_000,
+      maxAmountIdr: 10_000_000,
+      feeIdr: 2500,
+    },
+    {
+      channelCode: "DANA",
+      country: "ID",
+      label: "DANA",
+      kind: ChannelKind.ewallet,
+      accountFormat: "phone_id",
+      priority: 12,
+      iconUrl: "https://assets.takumipay.com/channels/dana.png",
+      minAmountIdr: 10_000,
+      maxAmountIdr: 10_000_000,
+      feeIdr: 2500,
+    },
+    {
+      channelCode: "SHOPEEPAY",
+      country: "ID",
+      label: "ShopeePay",
+      kind: ChannelKind.ewallet,
+      accountFormat: "phone_id",
+      priority: 13,
+      iconUrl: "https://assets.takumipay.com/channels/shopeepay.png",
+      minAmountIdr: 10_000,
+      maxAmountIdr: 10_000_000,
+      feeIdr: 2500,
+    },
+    {
+      channelCode: "BCA",
+      country: "ID",
+      label: "BCA",
+      kind: ChannelKind.bank,
+      accountFormat: "digits:10",
+      priority: 20,
+      iconUrl: "https://assets.takumipay.com/channels/bca.png",
+      minAmountIdr: 10_000,
+      maxAmountIdr: 50_000_000,
+      feeIdr: 5000,
+    },
+    {
+      channelCode: "MANDIRI",
+      country: "ID",
+      label: "Mandiri",
+      kind: ChannelKind.bank,
+      accountFormat: "digits:13",
+      priority: 21,
+      iconUrl: "https://assets.takumipay.com/channels/mandiri.png",
+      minAmountIdr: 10_000,
+      maxAmountIdr: 50_000_000,
+      feeIdr: 5000,
+    },
+    {
+      channelCode: "BNI",
+      country: "ID",
+      label: "BNI",
+      kind: ChannelKind.bank,
+      accountFormat: "digits:10",
+      priority: 22,
+      iconUrl: "https://assets.takumipay.com/channels/bni.png",
+      minAmountIdr: 10_000,
+      maxAmountIdr: 50_000_000,
+      feeIdr: 5000,
+    },
+    {
+      channelCode: "BRI",
+      country: "ID",
+      label: "BRI",
+      kind: ChannelKind.bank,
+      accountFormat: "digits:15",
+      priority: 23,
+      iconUrl: "https://assets.takumipay.com/channels/bri.png",
+      minAmountIdr: 10_000,
+      maxAmountIdr: 50_000_000,
+      feeIdr: 5000,
+    },
   ];
 
   for (const ch of seedChannels) {
     await prisma.channel.upsert({
       where: {
-        channelCode_country: { channelCode: ch.channelCode, country: ch.country },
+        channelCode_country: {
+          channelCode: ch.channelCode,
+          country: ch.country,
+        },
       },
       update: {
         label: ch.label,
@@ -3385,7 +3829,9 @@ async function seedPointPriceConfigs() {
       },
     });
 
-    console.log(`  ✅ ${config.currency}: 1 point = ${config.baseRate} ${config.currency}`);
+    console.log(
+      `  ✅ ${config.currency}: 1 point = ${config.baseRate} ${config.currency}`,
+    );
   }
 }
 
