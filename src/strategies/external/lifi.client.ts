@@ -66,8 +66,17 @@ export class LifiClient {
 
     // `createConfig` is global to the SDK; calling it once per process
     // is correct. The Nest singleton lifecycle guarantees that.
+    //
+    // `preloadChains: false` is deliberate: the SDK otherwise fires an
+    // eager, detached `getChains()` at config time. When li.quest 404s
+    // (public endpoint / transient), that background promise rejects with
+    // nothing awaiting it and Node's unhandled-rejection handler takes the
+    // whole API process down. Quotes (`getQuote`) still resolve chains
+    // lazily, and those calls are already wrapped in try/catch — so a LI.FI
+    // outage degrades cross-chain quotes instead of crashing the server.
     createConfig({
       integrator: this.integrator,
+      preloadChains: false,
       ...(this.apiKey ? { apiKey: this.apiKey } : {}),
     });
 
