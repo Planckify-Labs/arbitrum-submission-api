@@ -113,7 +113,11 @@ export class ProductsController {
   @Get("trending")
   @Public()
   @ApiKey()
-  @ApiOperation({ summary: "Get trending products", description: "Products with most purchases and redemptions in the last 24 hours." })
+  @ApiOperation({
+    summary: "Get trending products",
+    description:
+      "Products with most purchases and redemptions in the last 24 hours.",
+  })
   @ApiQuery({ name: "limit", required: false, type: "number", example: 10 })
   @ApiResponse({ status: 200, description: "Trending products" })
   getTrending(@Query("limit") limit?: string) {
@@ -124,7 +128,10 @@ export class ProductsController {
   @Get("new-arrivals")
   @Public()
   @ApiKey()
-  @ApiOperation({ summary: "Get new arrivals", description: "Most recently added active products." })
+  @ApiOperation({
+    summary: "Get new arrivals",
+    description: "Most recently added active products.",
+  })
   @ApiQuery({ name: "limit", required: false, type: "number", example: 10 })
   @ApiResponse({ status: 200, description: "New arrivals" })
   getNewArrivals(@Query("limit") limit?: string) {
@@ -135,7 +142,10 @@ export class ProductsController {
   @Get("search/suggestions")
   @Public()
   @ApiKey()
-  @ApiOperation({ summary: "Search suggestions", description: "Fast prefix-match suggestions for the search bar." })
+  @ApiOperation({
+    summary: "Search suggestions",
+    description: "Fast prefix-match suggestions for the search bar.",
+  })
   @ApiQuery({ name: "q", required: true, type: "string", example: "ml" })
   @ApiResponse({ status: 200, description: "Search suggestions" })
   getSearchSuggestions(@Query("q") q?: string) {
@@ -209,12 +219,23 @@ export class ProductsController {
 
   @Get("categories")
   @ApiGetCategories()
+  @ApiQuery({
+    name: "includeInactive",
+    required: false,
+    type: "boolean",
+    description:
+      "Admin opt-in to also return inactive categories. Defaults to false " +
+      "(active categories only).",
+  })
   async findAllCategories(
     @Query() paginationDto: CursorPaginationDto,
+    @Query("includeInactive") includeInactive: string | undefined,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const { items, total } =
-      await this.productsService.findAllCategories(paginationDto);
+    const { items, total } = await this.productsService.findAllCategories(
+      paginationDto,
+      includeInactive === "true",
+    );
     res.setHeader("X-Total-Count", String(total));
     return items;
   }
@@ -244,7 +265,11 @@ export class ProductsController {
   @Get(":id/stats")
   @Public()
   @ApiKey()
-  @ApiOperation({ summary: "Get product sales stats", description: "Total purchases + redemptions count for a product, including today's count." })
+  @ApiOperation({
+    summary: "Get product sales stats",
+    description:
+      "Total purchases + redemptions count for a product, including today's count.",
+  })
   @ApiResponse({ status: 200, description: "Product stats" })
   getProductStats(@Param("id") id: string) {
     return this.productsService.getProductStats(id);

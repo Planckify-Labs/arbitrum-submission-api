@@ -123,12 +123,15 @@ function buildHarness(
   } as unknown as ProductCacheService;
 
   const cacheManager = {
-    cacheAside: jest.fn(
-      async (_key: string, fn: () => unknown) => fn(),
-    ),
+    cacheAside: jest.fn(async (_key: string, fn: () => unknown) => fn()),
   } as unknown as CacheManagerService;
 
-  const svc = new ProductsService(prisma, vcGamersService, productCache, cacheManager);
+  const svc = new ProductsService(
+    prisma,
+    vcGamersService,
+    productCache,
+    cacheManager,
+  );
   return { svc, prisma, productCache, cacheManager };
 }
 
@@ -168,20 +171,41 @@ describe("ProductsService.search", () => {
     );
     const findMany = (prisma.product.findMany as jest.Mock).mock.calls[0][0];
     expect(findMany.where.id).toBe("p1");
-    expect(findMany.where.code).toEqual({ contains: "ML", mode: "insensitive" });
-    expect(findMany.where.name).toEqual({ contains: "Mobile", mode: "insensitive" });
+    expect(findMany.where.code).toEqual({
+      contains: "ML",
+      mode: "insensitive",
+    });
+    expect(findMany.where.name).toEqual({
+      contains: "Mobile",
+      mode: "insensitive",
+    });
     expect(findMany.where.isActive).toBe(true);
     expect(findMany.where.isVoucher).toBe(false);
-    expect(findMany.where.variants.some.ProductPrice.some.vendor.name.contains).toBe(
-      "VC",
-    );
+    expect(
+      findMany.where.variants.some.ProductPrice.some.vendor.name.contains,
+    ).toBe("VC");
   });
 
   it("uses generic OR query only when no specific filter is given", async () => {
     const { svc, prisma } = buildHarness();
     await svc.search({ query: "MLBB" } as never, {});
     const findMany = (prisma.product.findMany as jest.Mock).mock.calls[0][0];
-    expect(findMany.where.OR).toHaveLength(3);
+    // OR spans name, code, category name, and vendor name.
+    expect(findMany.where.OR).toHaveLength(4);
+    expect(findMany.where.OR).toContainEqual({
+      category: { name: { contains: "MLBB", mode: "insensitive" } },
+    });
+  });
+
+  it("filters by categoryId and categoryName when provided", async () => {
+    const { svc, prisma } = buildHarness();
+    await svc.search(
+      { categoryId: "cat-1", categoryName: "gaming" } as never,
+      {},
+    );
+    const findMany = (prisma.product.findMany as jest.Mock).mock.calls[0][0];
+    expect(findMany.where.categoryId).toBe("cat-1");
+    expect(findMany.where.category.name.contains).toBe("gaming");
   });
 
   it("does NOT add OR query when id/code/name is also given (specific wins)", async () => {
@@ -197,12 +221,102 @@ describe("ProductsService.search", () => {
     const findMany = (prisma.product.findMany as jest.Mock).mock.calls[0][0];
     expect(findMany.where.variants.some.ProductPrice.some.vendorId).toBe("v1");
   });
+
+  it("filters by a points range on active variant prices", async () => {
+    const { svc, prisma } = buildHarness();
+    await svc.search({ minPoints: 1000, maxPoints: 2300 } as never, {});
+    const findMany = (prisma.product.findMany as jest.Mock).mock.calls[0][0];
+    expect(findMany.where.AND[0]).toEqual({
+      variants: {
+        some: {
+          isActive: true,
+          ProductPrice: {
+            some: { isActive: true, sellPrice: { gte: 1000, lte: 2300 } },
+          },
+        },
+      },
+    });
+  });
+
+  it("supports an open-ended max points filter ('under N points')", async () => {
+    const { svc, prisma } = buildHarness();
+    await svc.search({ maxPoints: 2300 } as never, {});
+    const findMany = (prisma.product.findMany as jest.Mock).mock.calls[0][0];
+    const sellPrice =
+      findMany.where.AND[0].variants.some.ProductPrice.some.sellPrice;
+    expect(sellPrice).toEqual({ lte: 2300 });
+  });
+
+  it("composes points range with a text query (AND + OR coexist)", async () => {
+    const { svc, prisma } = buildHarness();
+    await svc.search({ query: "diamond", maxPoints: 5000 } as never, {});
+    const findMany = (prisma.product.findMany as jest.Mock).mock.calls[0][0];
+    expect(findMany.where.OR).toHaveLength(4);
+    expect(
+      findMany.where.AND[0].variants.some.ProductPrice.some.sellPrice,
+    ).toEqual({ lte: 5000 });
+  });
+
+  it("orders results cheapest-first for a points query", async () => {
+    const mk = (id: string, points: number) => ({
+      id,
+      variants: [
+        {
+          isActive: true,
+          ProductPrice: [{ isActive: true, sellPrice: points }],
+        },
+      ],
+    });
+    const { svc } = buildHarness({
+      products: [mk("a", 5000), mk("b", 1000), mk("c", 3000)],
+    });
+    const { items } = await svc.search({ maxPoints: 5000 } as never, {});
+    expect(items.map((i: { id: string }) => i.id)).toEqual(["b", "c", "a"]);
+  });
+
+  it("sorts unpriced products last in a points query", async () => {
+    const priced = {
+      id: "priced",
+      variants: [
+        { isActive: true, ProductPrice: [{ isActive: true, sellPrice: 2000 }] },
+      ],
+    };
+    const unpriced = { id: "unpriced", variants: [] };
+    const { svc } = buildHarness({ products: [unpriced, priced] });
+    const { items } = await svc.search({ maxPoints: 5000 } as never, {});
+    expect(items.map((i: { id: string }) => i.id)).toEqual([
+      "priced",
+      "unpriced",
+    ]);
+  });
+});
+
+describe("ProductsService.findAllCategories", () => {
+  it("returns only active categories by default", async () => {
+    const { svc, prisma } = buildHarness();
+    await svc.findAllCategories({});
+    const findMany = (prisma.category.findMany as jest.Mock).mock.calls[0][0];
+    const count = (prisma.category.count as jest.Mock).mock.calls[0][0];
+    expect(findMany.where).toEqual({ isActive: true });
+    expect(count.where).toEqual({ isActive: true });
+  });
+
+  it("includes inactive categories when opted in", async () => {
+    const { svc, prisma } = buildHarness();
+    await svc.findAllCategories({}, true);
+    const findMany = (prisma.category.findMany as jest.Mock).mock.calls[0][0];
+    const count = (prisma.category.count as jest.Mock).mock.calls[0][0];
+    expect(findMany.where).toEqual({});
+    expect(count.where).toEqual({});
+  });
 });
 
 describe("ProductsService.findByCode", () => {
   it("404s when not found", async () => {
     const { svc } = buildHarness({ productByCode: null });
-    await expect(svc.findByCode("NONE")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.findByCode("NONE")).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 
   it("returns the product when found", async () => {
@@ -267,7 +381,9 @@ describe("ProductsService.createPrice / updatePrice / removePrice", () => {
 describe("ProductsService.findOne", () => {
   it("404s when not found", async () => {
     const { svc } = buildHarness({ productById: null });
-    await expect(svc.findOne("missing")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.findOne("missing")).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 
   it("returns the product when found", async () => {
@@ -300,7 +416,9 @@ describe("ProductsService.create / update / remove", () => {
 describe("ProductsService.findVariants", () => {
   it("404s when product missing", async () => {
     const { svc } = buildHarness({ productById: null });
-    await expect(svc.findVariants("p_x")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.findVariants("p_x")).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 
   it("returns variants when product exists", async () => {
@@ -313,7 +431,9 @@ describe("ProductsService.findVariants", () => {
 describe("ProductsService.findOneVariant", () => {
   it("404s when variant missing", async () => {
     const { svc } = buildHarness({ variant: null });
-    await expect(svc.findOneVariant("v_x")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.findOneVariant("v_x")).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 });
 
@@ -329,7 +449,8 @@ describe("ProductsService.searchVariants", () => {
       } as never,
       {},
     );
-    const findMany = (prisma.productVariant.findMany as jest.Mock).mock.calls[0][0];
+    const findMany = (prisma.productVariant.findMany as jest.Mock).mock
+      .calls[0][0];
     expect(findMany.where.variantCode).toEqual({
       contains: "ML",
       mode: "insensitive",
@@ -341,7 +462,8 @@ describe("ProductsService.searchVariants", () => {
   it("uses OR query only when neither variantCode nor name is given", async () => {
     const { svc, prisma } = buildHarness();
     await svc.searchVariants({ query: "X" } as never, {});
-    const findMany = (prisma.productVariant.findMany as jest.Mock).mock.calls[0][0];
+    const findMany = (prisma.productVariant.findMany as jest.Mock).mock
+      .calls[0][0];
     expect(findMany.where.OR).toHaveLength(2);
   });
 });
@@ -365,7 +487,9 @@ describe("ProductsService.updateProductInputField / deleteProductInputField", ()
   it("update 404s when field missing for that product", async () => {
     const { svc } = buildHarness({ productInputField: null });
     await expect(
-      svc.updateProductInputField("p", "f", { fields: [{ key: "x" }] } as never),
+      svc.updateProductInputField("p", "f", {
+        fields: [{ key: "x" }],
+      } as never),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
@@ -380,9 +504,9 @@ describe("ProductsService.updateProductInputField / deleteProductInputField", ()
 
   it("delete 404s when field missing", async () => {
     const { svc } = buildHarness({ productInputField: null });
-    await expect(
-      svc.deleteProductInputField("p", "f"),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.deleteProductInputField("p", "f")).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 });
 
@@ -440,7 +564,9 @@ describe("ProductsService.getSearchSuggestions", () => {
 describe("ProductsService.getProductStats", () => {
   it("404s when product missing", async () => {
     const { svc } = buildHarness({ productById: null });
-    await expect(svc.getProductStats("p_x")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.getProductStats("p_x")).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 
   it("returns zeroed stats when product has no active variants", async () => {

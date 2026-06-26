@@ -10,7 +10,12 @@ import {
   UpdateProductPriceDto,
 } from "./dto/product-price.dto";
 import { CreateCategoryDto, UpdateCategoryDto } from "./dto/category.dto";
-import { BookingStatus, Prisma, PurchaseStatus, RedemptionStatus } from "@generated/prisma";
+import {
+  BookingStatus,
+  Prisma,
+  PurchaseStatus,
+  RedemptionStatus,
+} from "@generated/prisma";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import { SearchProductVariantDto } from "./dto/search-product-variant.dto";
 import { VCGamersService } from "../providers/vendor-api/implementations/vcgamers/vcgamers.service";
@@ -79,6 +84,33 @@ type RecommendationRaw = Prisma.ProductGetPayload<{
   select: typeof recommendationSelect;
 }>;
 
+// Upper bound on the candidate set fetched for in-memory cheapest-first
+// sorting of points queries. Generous for a curated redemption catalog;
+// beyond this, cheapest-first holds within the first N matches only.
+const POINTS_SORT_CANDIDATE_CAP = 200;
+
+// A product's lowest active variant price ("from X points"). Mirrors the
+// figure surfaced to the agent/UI, so cheapest-first ordering matches the
+// "from" cost the user sees. Returns +Infinity for unpriced products so
+// they sort last.
+function lowestActivePoints(product: {
+  variants: {
+    isActive: boolean;
+    ProductPrice: { isActive: boolean; sellPrice: Prisma.Decimal }[];
+  }[];
+}): number {
+  let min = Number.POSITIVE_INFINITY;
+  for (const variant of product.variants) {
+    if (!variant.isActive) continue;
+    for (const price of variant.ProductPrice) {
+      if (!price.isActive) continue;
+      const n = Number(price.sellPrice);
+      if (Number.isFinite(n) && n < min) min = n;
+    }
+  }
+  return min;
+}
+
 function toRecommendationDto(product: RecommendationRaw) {
   const lowestPrice = product.variants
     .flatMap((v) => v.ProductPrice)
@@ -140,8 +172,20 @@ export class ProductsService {
   async search(params: SearchProductDto, paginationDto: CursorPaginationDto) {
     const { cursor, take = 10, skip } = paginationDto;
     const useSkip = typeof skip === "number" && skip > 0;
-    const { query, vendorId, active, code, id, name, vendorName, isVoucher } =
-      params;
+    const {
+      query,
+      vendorId,
+      active,
+      code,
+      id,
+      name,
+      categoryId,
+      categoryName,
+      vendorName,
+      isVoucher,
+      minPoints,
+      maxPoints,
+    } = params;
 
     const where: Prisma.ProductWhereInput = {};
 
@@ -160,6 +204,19 @@ export class ProductsService {
       where.name = {
         contains: name,
         mode: "insensitive",
+      };
+    }
+
+    if (categoryId) {
+      where.categoryId = categoryId;
+    }
+
+    if (categoryName) {
+      where.category = {
+        name: {
+          contains: categoryName,
+          mode: "insensitive",
+        },
       };
     }
 
@@ -184,6 +241,9 @@ export class ProductsService {
       where.OR = [
         { name: { contains: query, mode: "insensitive" } },
         { code: { contains: query, mode: "insensitive" } },
+        {
+          category: { name: { contains: query, mode: "insensitive" } },
+        },
         {
           variants: {
             some: {
@@ -221,6 +281,48 @@ export class ProductsService {
 
     if (isVoucher !== undefined) {
       where.isVoucher = isVoucher;
+    }
+
+    // Points range — `ProductPrice.sellPrice` is the points cost. A product
+    // matches if it has at least one active variant with an active price in
+    // range. Applied via `AND` (not `where.variants`) so it composes with
+    // the vendor/query filters above instead of overwriting them.
+    const isPointsQuery = minPoints !== undefined || maxPoints !== undefined;
+    if (isPointsQuery) {
+      const sellPrice: Prisma.DecimalFilter = {};
+      if (minPoints !== undefined) sellPrice.gte = minPoints;
+      if (maxPoints !== undefined) sellPrice.lte = maxPoints;
+      where.AND = [
+        {
+          variants: {
+            some: {
+              isActive: true,
+              ProductPrice: { some: { isActive: true, sellPrice } },
+            },
+          },
+        },
+      ];
+    }
+
+    // Cheapest-first for points queries. "Cheapest" = the product's lowest
+    // active variant price, which Prisma can't express as a relation
+    // `orderBy`. The redemption catalog is small, so fetch the matching set
+    // (bounded) and sort + page it in memory. Non-points searches keep the
+    // existing cursor-paginated, name-ordered path untouched.
+    if (isPointsQuery) {
+      const [candidates, total] = await Promise.all([
+        this.prisma.product.findMany({
+          where,
+          include: productInclude,
+          orderBy: { name: "asc" },
+          take: POINTS_SORT_CANDIDATE_CAP,
+        }),
+        this.prisma.product.count({ where }),
+      ]);
+      candidates.sort((a, b) => lowestActivePoints(a) - lowestActivePoints(b));
+      const start = useSkip ? skip : 0;
+      const items = candidates.slice(start, start + take);
+      return { items, total };
     }
 
     const findArgs = {
@@ -303,9 +405,19 @@ export class ProductsService {
     return { items, total };
   }
 
-  async findAllCategories(paginationDto: CursorPaginationDto) {
+  async findAllCategories(
+    paginationDto: CursorPaginationDto,
+    includeInactive = false,
+  ) {
     const { cursor, take = 10, skip } = paginationDto;
     const useSkip = typeof skip === "number" && skip > 0;
+
+    // Default to active categories only — inactive ones are an admin/CMS
+    // concern and should not leak into the agent catalog or storefront.
+    // Admin tooling opts back in with `includeInactive`.
+    const where: Prisma.CategoryWhereInput = includeInactive
+      ? {}
+      : { isActive: true };
 
     const findArgs = {
       take,
@@ -316,11 +428,12 @@ export class ProductsService {
     const [items, total] = await Promise.all([
       this.prisma.category.findMany({
         ...findArgs,
+        where,
         orderBy: {
           name: "asc",
         },
       }),
-      this.prisma.category.count(),
+      this.prisma.category.count({ where }),
     ]);
 
     return { items, total };
@@ -448,7 +561,9 @@ export class ProductsService {
 
       // Invalidate product cache after price deletion
       if (existingPrice) {
-        await this.productCache.invalidateProduct(existingPrice.productVariant.productId);
+        await this.productCache.invalidateProduct(
+          existingPrice.productVariant.productId,
+        );
       }
 
       return result;
@@ -926,8 +1041,7 @@ export class ProductsService {
     const cacheKey = `recommendations:personalized:${userId}:${limit}`;
     return this.cacheManager.cacheAside(
       cacheKey,
-      () =>
-        this.fetchPersonalizedRecommendations(userId, walletAddress, limit),
+      () => this.fetchPersonalizedRecommendations(userId, walletAddress, limit),
       { ttl: PERSONALIZED_RECOMMENDATIONS_CACHE_TTL },
     );
   }
