@@ -92,6 +92,7 @@ export class StrategiesController {
     @Query("tier") tier?: string,
     @Query("asset_symbol") assetSymbol?: string,
     @Query("chain_id") chainId?: string,
+    @Query("namespace") namespace?: string,
     @Query("liquidity_profile") liquidityProfile?: string,
     @Query("amount_usd") amountUsd?: string,
   ) {
@@ -101,6 +102,7 @@ export class StrategiesController {
       ...(chainId !== undefined && chainId !== ""
         ? { chainId: Number(chainId) }
         : {}),
+      ...(namespace ? { namespace } : {}),
       ...(liquidityProfile ? { liquidityProfile } : {}),
       ...(amountUsd !== undefined && amountUsd !== ""
         ? { amountUsd: Number(amountUsd) }

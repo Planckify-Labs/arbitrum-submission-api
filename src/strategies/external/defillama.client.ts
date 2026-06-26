@@ -47,12 +47,27 @@ interface DeFiLlamaProtocol {
   tvl?: number;
 }
 
-const POOLS_CACHE_KEY = "defillama:pools:filtered:v1";
+// v4: per-chain TVL floor + per-chain top-N cap (50) + round-robin fair
+// selection under a 300 ceiling, plus "SUI" in the symbol set. Bumped so the
+// new selection takes effect on next poll instead of serving the stale set.
+const POOLS_CACHE_KEY = "defillama:pools:filtered:v4";
 const DEFAULT_POOLS_CACHE_TTL_SEC = 30 * 60; // 30 min — matches the cron tick
 const DEFAULT_PROTOCOL_CACHE_TTL_SEC = 6 * 60 * 60; // 6 h — slow-moving metadata
 const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 const DEFAULT_MIN_TVL_USD = 5_000_000;
-const DEFAULT_MAX_POOLS = 100;
+// Overall ceiling on cached pools. Sized so the per-chain cap below is the
+// real limiter (sum across chains stays under it) and no chain gets trimmed.
+const DEFAULT_MAX_POOLS = 300;
+// Per-chain cap. Keeps each chain's top-N by TVL. Set high enough that
+// smaller-TVL venues on a chain still make the cut — e.g. Scallop's USDC pool
+// on Sui (~$660K) ranks ~36th among Sui pools, so a cap of 50 keeps it.
+const DEFAULT_MAX_POOLS_PER_CHAIN = 50;
+// Non-EVM chains (Sui, Solana) run at structurally smaller TVL than the
+// Ethereum L1/L2 set, so a single $5M floor erases them entirely. They get
+// their own lower floor; EVM keeps DEFAULT_MIN_TVL_USD. Keyed by chain, not
+// protocol — no venue is special-cased.
+const DEFAULT_MIN_TVL_USD_NON_EVM = 250_000;
+const NON_EVM_CHAINS = new Set(["solana", "sui"]);
 
 // Chains we score (mirrors the wallet's supported namespaces + L2s users hold).
 const RELEVANT_CHAINS = new Set([
@@ -88,6 +103,10 @@ const RELEVANT_SYMBOL_TOKENS = [
   "BTC",
   "WBTC",
   "TBTC",
+  // Native SUI (and SUI-LST variants: haSUI/vSUI/afSUI) — surfaces Sui
+  // staking/lending pools, e.g. Scallop's $2M SUI supply pool. Substring
+  // match adds no non-Sui-chain pools (verified against the live feed).
+  "SUI",
 ];
 
 function stripTrailingSlash(value: string): string {
@@ -152,7 +171,9 @@ export class DeFiLlamaClient {
   private readonly protocolCacheTtlSec: number;
   private readonly requestTimeoutMs: number;
   private readonly minTvlUsd: number;
+  private readonly minTvlUsdNonEvm: number;
   private readonly maxPools: number;
+  private readonly maxPoolsPerChain: number;
 
   constructor(
     private readonly configService: ConfigService,
@@ -181,9 +202,17 @@ export class DeFiLlamaClient {
       this.configService.get<string>("DEFILLAMA_MIN_TVL_USD"),
       DEFAULT_MIN_TVL_USD,
     );
+    this.minTvlUsdNonEvm = positiveIntFromEnv(
+      this.configService.get<string>("DEFILLAMA_MIN_TVL_USD_NON_EVM"),
+      DEFAULT_MIN_TVL_USD_NON_EVM,
+    );
     this.maxPools = positiveIntFromEnv(
       this.configService.get<string>("DEFILLAMA_MAX_POOLS"),
       DEFAULT_MAX_POOLS,
+    );
+    this.maxPoolsPerChain = positiveIntFromEnv(
+      this.configService.get<string>("DEFILLAMA_MAX_POOLS_PER_CHAIN"),
+      DEFAULT_MAX_POOLS_PER_CHAIN,
     );
     if (!this.apiKey) {
       this.logger.log(
@@ -304,42 +333,89 @@ export class DeFiLlamaClient {
     }
   }
 
+  /** Per-chain TVL floor: non-EVM chains get the lower threshold. */
+  private minTvlForChain(chain: string): number {
+    return NON_EVM_CHAINS.has(chain) ? this.minTvlUsdNonEvm : this.minTvlUsd;
+  }
+
   private filterPools(
     pools: DeFiLlamaPoolsResponse["data"],
   ): DeFiLlamaYieldPool[] {
     const seen = new Set<string>();
-    return pools
-      .filter((p) => {
-        if (!p.pool || seen.has(p.pool)) return false;
-        if (typeof p.tvlUsd !== "number" || p.tvlUsd < this.minTvlUsd) return false;
-        if (typeof p.apy !== "number" || p.apy <= 0) return false;
-        if (!RELEVANT_CHAINS.has(p.chain?.toLowerCase?.() ?? "")) return false;
-        const symbolUpper = (p.symbol ?? "").toUpperCase();
-        const isRelevantSymbol = RELEVANT_SYMBOL_TOKENS.some((token) =>
-          symbolUpper.includes(token),
-        );
-        if (!isRelevantSymbol) return false;
-        seen.add(p.pool);
-        return true;
-      })
-      .sort((a, b) => b.tvlUsd - a.tvlUsd)
-      .slice(0, this.maxPools)
-      .map((p) => ({
-        pool: p.pool,
-        chain: p.chain,
-        project: p.project,
-        symbol: p.symbol,
-        tvlUsd: p.tvlUsd,
-        apy: p.apy as number,
-        apy7d:
-          (typeof p.apyPct7D === "number"
-            ? (p.apy as number) + p.apyPct7D
-            : undefined) ?? p.apyMean30d ?? undefined,
-        apyBase: p.apyBase ?? undefined,
-        apyReward: p.apyReward ?? undefined,
-        ilRisk: p.ilRisk ?? "no",
-        exposure: p.exposure ?? "single",
-      }));
+    const eligible = pools.filter((p) => {
+      if (!p.pool || seen.has(p.pool)) return false;
+      const chain = p.chain?.toLowerCase?.() ?? "";
+      if (!RELEVANT_CHAINS.has(chain)) return false;
+      // Per-chain floor — a single Ethereum-scale threshold erases Sui/Solana.
+      if (typeof p.tvlUsd !== "number" || p.tvlUsd < this.minTvlForChain(chain))
+        return false;
+      if (typeof p.apy !== "number" || p.apy <= 0) return false;
+      const symbolUpper = (p.symbol ?? "").toUpperCase();
+      const isRelevantSymbol = RELEVANT_SYMBOL_TOKENS.some((token) =>
+        symbolUpper.includes(token),
+      );
+      if (!isRelevantSymbol) return false;
+      seen.add(p.pool);
+      return true;
+    });
+
+    // Fair selection across chains. A plain global TVL sort + slice(maxPools)
+    // let the hundreds of high-TVL Ethereum pools crowd out every Sui/Solana
+    // pool (Sui ranked 173+ globally → 0 cached). Instead group by chain,
+    // sort each by TVL, then round-robin highest-first across chains up to
+    // the same overall ceiling — so every chain is represented. Chain-keyed,
+    // never protocol-keyed: new chains/venues are picked up automatically.
+    const byChain = new Map<string, DeFiLlamaPoolsResponse["data"]>();
+    for (const p of eligible) {
+      const chain = (p.chain ?? "").toLowerCase();
+      const list = byChain.get(chain) ?? [];
+      list.push(p);
+      byChain.set(chain, list);
+    }
+    for (const [chain, list] of byChain) {
+      list.sort((a, b) => b.tvlUsd - a.tvlUsd);
+      // Cap each chain to its top-N so one chain can't dominate the cache,
+      // and so smaller-TVL venues within a chain (e.g. Scallop USDC on Sui,
+      // ~36th by Sui TVL) still make the cut.
+      if (list.length > this.maxPoolsPerChain) {
+        byChain.set(chain, list.slice(0, this.maxPoolsPerChain));
+      }
+    }
+    // Lead each round with the strongest chains (by their top pool's TVL) so
+    // ordering is deterministic and EVM still fills first within its slots.
+    const chains = [...byChain.keys()].sort(
+      (a, b) =>
+        (byChain.get(b)?.[0]?.tvlUsd ?? 0) - (byChain.get(a)?.[0]?.tvlUsd ?? 0),
+    );
+    const selected: DeFiLlamaPoolsResponse["data"] = [];
+    let progressed = true;
+    while (selected.length < this.maxPools && progressed) {
+      progressed = false;
+      for (const chain of chains) {
+        const next = byChain.get(chain)?.shift();
+        if (!next) continue;
+        selected.push(next);
+        progressed = true;
+        if (selected.length >= this.maxPools) break;
+      }
+    }
+
+    return selected.map((p) => ({
+      pool: p.pool,
+      chain: p.chain,
+      project: p.project,
+      symbol: p.symbol,
+      tvlUsd: p.tvlUsd,
+      apy: p.apy as number,
+      apy7d:
+        (typeof p.apyPct7D === "number"
+          ? (p.apy as number) + p.apyPct7D
+          : undefined) ?? p.apyMean30d ?? undefined,
+      apyBase: p.apyBase ?? undefined,
+      apyReward: p.apyReward ?? undefined,
+      ilRisk: p.ilRisk ?? "no",
+      exposure: p.exposure ?? "single",
+    }));
   }
 
   private async fetchJson<T>(url: string): Promise<T> {

@@ -12,6 +12,10 @@ interface OpportunityFilter {
   tier?: string;
   assetSymbol?: string;
   chainId?: number;
+  /** Chain-namespace filter ("eip155" | "solana" | "sui"). Non-EVM rows
+   *  are chainId 0, so the namespace is how callers surface Sui/Solana
+   *  yield without it colliding with EVM chainId 0. */
+  namespace?: string;
   liquidityProfile?: string;
   amountUsd?: number;
 }
@@ -207,6 +211,7 @@ export class StrategiesService {
     if (effectiveTier) where.tier = effectiveTier;
     if (filter.assetSymbol) where.assetSymbol = filter.assetSymbol;
     if (filter.chainId !== undefined) where.chainId = filter.chainId;
+    if (filter.namespace) where.namespace = filter.namespace;
 
     const opportunities = await this.prisma.opportunityCache.findMany({
       where,
