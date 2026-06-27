@@ -66,9 +66,7 @@ export class DappsService {
         category: true,
         favorites: userId ? { where: { userId } } : false,
       },
-      orderBy: {
-        createdAt: "desc",
-      },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
     });
 
     return dapps.map((dapp) => ({
@@ -93,9 +91,7 @@ export class DappsService {
         category: true,
         favorites: userId ? { where: { userId } } : false,
       },
-      orderBy: {
-        createdAt: "desc",
-      },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
     });
 
     return dapps.map((dapp) => ({
@@ -132,9 +128,7 @@ export class DappsService {
         category: true,
         favorites: userId ? { where: { userId } } : false,
       },
-      orderBy: {
-        createdAt: "desc",
-      },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
     });
 
     return dapps.map((dapp) => ({

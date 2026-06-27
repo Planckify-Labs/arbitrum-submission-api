@@ -19,9 +19,7 @@ export class DappCategoriesService {
       where: {
         isActive: true,
       },
-      orderBy: {
-        name: "asc",
-      },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
       include: {
         _count: {
           select: {

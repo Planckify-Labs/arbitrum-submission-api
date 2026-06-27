@@ -561,6 +561,8 @@ model DappCategory {
   name        String   @unique
   description String?
   iconUrl     String?
+  appearance  Json?
+  sortOrder   Int      @default(0)
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -568,6 +570,7 @@ model DappCategory {
 
   @@index([name])
   @@index([isActive])
+  @@index([sortOrder])
 }
 
 model Dapp {
@@ -584,8 +587,12 @@ model Dapp {
   isActive    Boolean            @default(true)
   createdAt   DateTime           @default(now())
   updatedAt   DateTime           @updatedAt
-  bgColor     String?
+  // Generalized visual-styling tokens (Appearance contract v1). Replaces
+  // the old flat `bgColor`; banners/categories carry the same shape.
+  appearance  Json?
+  sortOrder   Int                @default(0)
   favorites   UserDappFavorite[]
+  promotions  DappPromotion[]
 
   @@index([categoryId])
   @@index([isPopular])
@@ -593,6 +600,7 @@ model Dapp {
   @@index([isHighlight])
   @@index([isActive])
   @@index([createdAt])
+  @@index([sortOrder])
 }
 
 model UserDappFavorite {
@@ -605,6 +613,32 @@ model UserDappFavorite {
 
   @@unique([userId, dappId])
   @@index([userId])
+  @@index([dappId])
+}
+
+// Editorial banners for the ecosystem-hub carousel. Not 1:1 with a dapp:
+// they carry their own copy/colors and can be scheduled, which is why they
+// live in a dedicated table rather than reusing the `isSponsor` flag.
+model DappPromotion {
+  id          String    @id @default(ulid())
+  title       String
+  subtitle    String?
+  description String?
+  imageUrl    String
+  appearance  Json?
+  targetUrl   String?
+  dapp        Dapp?     @relation(fields: [dappId], references: [id])
+  dappId      String?
+  isSponsored Boolean   @default(false)
+  isActive    Boolean   @default(true)
+  sortOrder   Int       @default(0)
+  startsAt    DateTime?
+  endsAt      DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([isActive])
+  @@index([sortOrder])
   @@index([dappId])
 }
 

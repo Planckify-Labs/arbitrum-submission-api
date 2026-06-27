@@ -1,4 +1,11 @@
-import { IsString, IsOptional, IsBoolean, IsUrl } from "class-validator";
+import {
+  IsString,
+  IsOptional,
+  IsBoolean,
+  IsUrl,
+  IsObject,
+  IsInt,
+} from "class-validator";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 
 export class CreateDappCategoryDto {
@@ -23,6 +30,23 @@ export class CreateDappCategoryDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({
+    description: "Generalized visual-styling tokens (Appearance contract v1)",
+    type: "object",
+    additionalProperties: true,
+  })
+  @IsOptional()
+  @IsObject()
+  appearance?: Record<string, any>;
+
+  @ApiPropertyOptional({
+    description: "Sort order within the category list (ascending)",
+    default: 0,
+  })
+  @IsOptional()
+  @IsInt()
+  sortOrder?: number;
 }
 
 export class UpdateDappCategoryDto {
@@ -45,4 +69,21 @@ export class UpdateDappCategoryDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({
+    description: "Generalized visual-styling tokens (Appearance contract v1)",
+    type: "object",
+    additionalProperties: true,
+  })
+  @IsOptional()
+  @IsObject()
+  appearance?: Record<string, any>;
+
+  @ApiPropertyOptional({
+    description: "Sort order within the category list (ascending)",
+    default: 0,
+  })
+  @IsOptional()
+  @IsInt()
+  sortOrder?: number;
 }

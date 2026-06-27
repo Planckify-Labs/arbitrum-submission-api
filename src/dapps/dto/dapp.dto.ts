@@ -1,4 +1,11 @@
-import { IsString, IsOptional, IsBoolean, IsUrl } from "class-validator";
+import {
+  IsString,
+  IsOptional,
+  IsBoolean,
+  IsUrl,
+  IsObject,
+  IsInt,
+} from "class-validator";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 
 export class CreateDappDto {
@@ -56,10 +63,24 @@ export class CreateDappDto {
   @IsBoolean()
   isActive?: boolean;
 
-  @ApiPropertyOptional({ description: "Background color for the dapp" })
+  @ApiPropertyOptional({
+    description:
+      "Generalized visual-styling tokens (Appearance contract v1). " +
+      "Replaces the old flat bgColor.",
+    type: "object",
+    additionalProperties: true,
+  })
   @IsOptional()
-  @IsString()
-  bgColor?: string;
+  @IsObject()
+  appearance?: Record<string, any>;
+
+  @ApiPropertyOptional({
+    description: "Sort order within listings (ascending)",
+    default: 0,
+  })
+  @IsOptional()
+  @IsInt()
+  sortOrder?: number;
 }
 
 export class UpdateDappDto {
@@ -108,8 +129,22 @@ export class UpdateDappDto {
   @IsBoolean()
   isActive?: boolean;
 
-  @ApiPropertyOptional({ description: "Background color for the dapp" })
+  @ApiPropertyOptional({
+    description:
+      "Generalized visual-styling tokens (Appearance contract v1). " +
+      "Replaces the old flat bgColor.",
+    type: "object",
+    additionalProperties: true,
+  })
   @IsOptional()
-  @IsString()
-  bgColor?: string;
+  @IsObject()
+  appearance?: Record<string, any>;
+
+  @ApiPropertyOptional({
+    description: "Sort order within listings (ascending)",
+    default: 0,
+  })
+  @IsOptional()
+  @IsInt()
+  sortOrder?: number;
 }

@@ -2,10 +2,12 @@ import { ConflictException, NotFoundException } from "@nestjs/common";
 import type { PrismaService } from "../prisma/prisma.service";
 import { DappCategoriesService } from "./dapp-categories.service";
 
-function buildHarness(opts: {
-  category?: Record<string, unknown> | null;
-  withDapps?: number;
-} = {}) {
+function buildHarness(
+  opts: {
+    category?: Record<string, unknown> | null;
+    withDapps?: number;
+  } = {},
+) {
   const prisma = {
     dappCategory: {
       findMany: jest.fn(async () => []),
@@ -31,7 +33,9 @@ function buildHarness(opts: {
 describe("DappCategoriesService", () => {
   it("findOne 404s when missing", async () => {
     const { svc } = buildHarness({ category: null });
-    await expect(svc.findOne("cat_x")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.findOne("cat_x")).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 
   it("create maps P2002 → ConflictException", async () => {
@@ -43,9 +47,9 @@ describe("DappCategoriesService", () => {
         clientVersion: "0",
       }),
     );
-    await expect(
-      svc.create({ name: "Cat" } as never),
-    ).rejects.toBeInstanceOf(ConflictException);
+    await expect(svc.create({ name: "Cat" } as never)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
   });
 
   it("update 404s when missing", async () => {

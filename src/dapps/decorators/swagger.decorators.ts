@@ -21,7 +21,7 @@ export function ApiGetAllDapps() {
           isActive: true,
           createdAt: "2025-09-23T10:15:50.528Z",
           updatedAt: "2025-09-23T10:15:50.528Z",
-          bgColor: "#1B2A4E",
+          appearance: { v: 1, background: { type: "solid", color: "#1B2A4E" } },
           category: {
             id: "01K5V152FW38TPJYDR5C18C5D4",
             name: "DEX",
@@ -46,7 +46,7 @@ export function ApiGetAllDapps() {
           isActive: true,
           createdAt: "2025-09-23T09:42:39.123Z",
           updatedAt: "2025-09-23T09:42:39.123Z",
-          bgColor: "#2081E2",
+          appearance: { v: 1, background: { type: "solid", color: "#2081E2" } },
           category: {
             id: "01K5TZ89RFDFWKPVSZTK1M5762",
             name: "NFT",
@@ -91,7 +91,7 @@ export function ApiGetPopularDapps() {
           isActive: true,
           createdAt: "2025-09-23T10:15:50.528Z",
           updatedAt: "2025-09-23T10:15:50.528Z",
-          bgColor: "#8B4513",
+          appearance: { v: 1, background: { type: "solid", color: "#8B4513" } },
           category: {
             id: "01K5TZ89RFVPSSHF7DVKN5ESSP",
             name: "Gaming",
@@ -116,7 +116,7 @@ export function ApiGetPopularDapps() {
           isActive: true,
           createdAt: "2025-09-23T10:15:50.528Z",
           updatedAt: "2025-09-23T10:15:50.528Z",
-          bgColor: "#0657F9",
+          appearance: { v: 1, background: { type: "solid", color: "#0657F9" } },
           category: {
             id: "01K5TZ89RF4SPH1YA4MPS6ZX6J",
             name: "DeFi",
@@ -161,7 +161,7 @@ export function ApiGetSponsoredDapps() {
           isActive: true,
           createdAt: "2025-09-23T10:15:50.528Z",
           updatedAt: "2025-09-23T10:15:50.528Z",
-          bgColor: "#00ADEF",
+          appearance: { v: 1, background: { type: "solid", color: "#00ADEF" } },
           category: {
             id: "01K5TZ89RFVPSSHF7DVKN5ESSP",
             name: "Gaming",
@@ -186,7 +186,7 @@ export function ApiGetSponsoredDapps() {
           isActive: true,
           createdAt: "2025-09-23T09:42:39.123Z",
           updatedAt: "2025-09-23T09:42:39.123Z",
-          bgColor: "#ABFE2C",
+          appearance: { v: 1, background: { type: "solid", color: "#ABFE2C" } },
           category: {
             id: "01K5TZ89RFQN43Z93FN7EEFGCB",
             name: "Social",
@@ -231,7 +231,7 @@ export function ApiGetFavoriteDapps() {
           isActive: true,
           createdAt: "2025-09-23T10:15:50.528Z",
           updatedAt: "2025-09-23T10:15:50.528Z",
-          bgColor: "#1FC7D4",
+          appearance: { v: 1, background: { type: "solid", color: "#1FC7D4" } },
           category: {
             id: "01K5V152FW38TPJYDR5C18C5D4",
             name: "DEX",
@@ -276,7 +276,7 @@ export function ApiGetDappsByCategory() {
           isActive: true,
           createdAt: "2025-09-23T10:15:50.528Z",
           updatedAt: "2025-09-23T10:15:50.528Z",
-          bgColor: "#1AAB9B",
+          appearance: { v: 1, background: { type: "solid", color: "#1AAB9B" } },
           category: {
             id: "01K5TZ89RF4SPH1YA4MPS6ZX6J",
             name: "DeFi",
@@ -301,7 +301,7 @@ export function ApiGetDappsByCategory() {
           isActive: true,
           createdAt: "2025-09-23T10:15:50.528Z",
           updatedAt: "2025-09-23T10:15:50.528Z",
-          bgColor: "#0657F9",
+          appearance: { v: 1, background: { type: "solid", color: "#0657F9" } },
           category: {
             id: "01K5TZ89RF4SPH1YA4MPS6ZX6J",
             name: "DeFi",
@@ -422,7 +422,7 @@ export function ApiGetDappById() {
         isActive: true,
         createdAt: "2025-09-23T09:42:39.123Z",
         updatedAt: "2025-09-23T09:42:39.123Z",
-        bgColor: "#2081E2",
+        appearance: { v: 1, background: { type: "solid", color: "#2081E2" } },
         category: {
           id: "01K5TZ89RFDFWKPVSZTK1M5762",
           name: "NFT",
@@ -471,7 +471,7 @@ export function ApiCreateDapp() {
         isSponsor: false,
         isHighlight: false,
         isActive: true,
-        bgColor: "#1FC7D4",
+        appearance: { v: 1, background: { type: "solid", color: "#1FC7D4" } },
         createdAt: "2024-01-15T10:30:00.000Z",
         updatedAt: "2024-01-15T10:30:00.000Z",
       },
@@ -525,7 +525,7 @@ export function ApiUpdateDapp() {
         isSponsor: true,
         isHighlight: true,
         isActive: true,
-        bgColor: "#FF007A",
+        appearance: { v: 1, background: { type: "solid", color: "#FF007A" } },
         createdAt: "2024-01-15T10:30:00.000Z",
         updatedAt: "2024-01-15T11:45:00.000Z",
       },

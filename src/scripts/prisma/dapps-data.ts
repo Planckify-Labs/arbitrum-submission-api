@@ -1,0 +1,618 @@
+/**
+ * Static seed data for the ecosystem hub (categories, dapps, promotions).
+ * Kept out of `seed.ts` so the dataset can grow without bloating the
+ * orchestration script — `seed.ts` only owns the upsert loops.
+ *
+ * `appearance` values are derived in `seed.ts` from the `color` / `bg`+`fg`
+ * fields here (Appearance contract v1).
+ */
+
+export type DappCategoryKey =
+  | "dex"
+  | "defi"
+  | "launchpad"
+  | "nft"
+  | "gaming"
+  | "tools";
+
+export interface DappCategorySeed {
+  key: DappCategoryKey;
+  name: string;
+  description: string;
+  accent: string;
+}
+
+export interface DappSeed {
+  id: string;
+  name: string;
+  description: string;
+  websiteUrl: string;
+  logoUrl: string;
+  cat: DappCategoryKey;
+  popular?: boolean;
+  sponsor?: boolean;
+  highlight?: boolean;
+  color?: string;
+}
+
+export interface DappPromotionSeed {
+  id: string;
+  title: string;
+  subtitle: string;
+  description: string;
+  imageUrl: string;
+  dappId: string;
+  sponsored?: boolean;
+  bg: string;
+  fg: string;
+}
+
+export const DAPP_CATEGORY_SEED: DappCategorySeed[] = [
+  {
+    key: "dex",
+    name: "DEX",
+    description: "Trade tokens directly from your wallet",
+    accent: "#10b981",
+  },
+  {
+    key: "defi",
+    name: "DeFi",
+    description: "Lending, borrowing, and yield farming",
+    accent: "#3b82f6",
+  },
+  {
+    key: "launchpad",
+    name: "Launchpads",
+    description: "Discover and invest in new projects",
+    accent: "#f59e0b",
+  },
+  {
+    key: "nft",
+    name: "NFT Marketplaces",
+    description: "Buy, sell, and trade NFTs",
+    accent: "#8b5cf6",
+  },
+  {
+    key: "gaming",
+    name: "Gaming",
+    description: "Play-to-earn games and virtual worlds",
+    accent: "#ec4899",
+  },
+  {
+    key: "tools",
+    name: "Web3 Tools",
+    description: "Analytics, portfolio tracking, and utilities",
+    accent: "#6366f1",
+  },
+];
+
+export const DAPP_SEED: DappSeed[] = [
+  // ── DEX ──
+  {
+    id: "uniswap-dapp",
+    name: "Uniswap",
+    description: "The largest decentralized exchange on Ethereum",
+    websiteUrl: "https://app.uniswap.org",
+    logoUrl: "https://cryptologos.cc/logos/uniswap-uni-logo.png",
+    cat: "dex",
+    popular: true,
+    sponsor: true,
+    highlight: true,
+    color: "#FF007A",
+  },
+  {
+    id: "1inch-dapp",
+    name: "1inch",
+    description: "DEX aggregator with the best rates",
+    websiteUrl: "https://app.1inch.io",
+    logoUrl: "https://cryptologos.cc/logos/1inch-1inch-logo.png",
+    cat: "dex",
+    popular: true,
+  },
+  {
+    id: "sushiswap-dapp",
+    name: "SushiSwap",
+    description: "Community-driven decentralized exchange",
+    websiteUrl: "https://www.sushi.com/swap",
+    logoUrl: "https://cryptologos.cc/logos/sushiswap-sushi-logo.png",
+    cat: "dex",
+  },
+  {
+    id: "pancakeswap-dapp",
+    name: "PancakeSwap",
+    description: "Leading DEX on BNB Smart Chain",
+    websiteUrl: "https://pancakeswap.finance",
+    logoUrl: "https://cryptologos.cc/logos/pancakeswap-cake-logo.png",
+    cat: "dex",
+    popular: true,
+    sponsor: true,
+    highlight: true,
+    color: "#1FC7D4",
+  },
+  {
+    id: "curve-dapp",
+    name: "Curve Finance",
+    description: "Stablecoin-focused decentralized exchange",
+    websiteUrl: "https://curve.fi",
+    logoUrl: "https://cryptologos.cc/logos/curve-dao-token-crv-logo.png",
+    cat: "dex",
+    popular: true,
+  },
+  {
+    id: "jupiter-dapp",
+    name: "Jupiter",
+    description: "Solana swap aggregator — best routes across DEXs",
+    websiteUrl: "https://jup.ag",
+    logoUrl: "https://jup.ag/favicon.ico",
+    cat: "dex",
+    popular: true,
+    sponsor: true,
+    highlight: true,
+    color: "#14F195",
+  },
+  {
+    id: "raydium-dapp",
+    name: "Raydium",
+    description: "Leading AMM and liquidity provider on Solana",
+    websiteUrl: "https://raydium.io",
+    logoUrl: "https://raydium.io/favicon.ico",
+    cat: "dex",
+    popular: true,
+  },
+  {
+    id: "orca-dapp",
+    name: "Orca",
+    description: "User-friendly DEX on Solana",
+    websiteUrl: "https://www.orca.so",
+    logoUrl: "https://www.orca.so/favicon.ico",
+    cat: "dex",
+  },
+  {
+    id: "cetus-dapp",
+    name: "Cetus",
+    description: "Top CLMM-based DEX on Sui",
+    websiteUrl: "https://app.cetus.zone",
+    logoUrl: "https://app.cetus.zone/favicon.ico",
+    cat: "dex",
+    popular: true,
+    sponsor: true,
+    highlight: true,
+    color: "#2BC9C8",
+  },
+  {
+    id: "aftermath-dapp",
+    name: "Aftermath",
+    description: "Multi-pool AMM and aggregator on Sui",
+    websiteUrl: "https://aftermath.finance",
+    logoUrl: "https://aftermath.finance/favicon.ico",
+    cat: "dex",
+  },
+  {
+    id: "bluefin-dapp",
+    name: "Bluefin",
+    description: "On-chain derivatives and spot trading on Sui",
+    websiteUrl: "https://trade.bluefin.io",
+    logoUrl: "https://trade.bluefin.io/favicon.ico",
+    cat: "dex",
+  },
+  // ── DeFi ──
+  {
+    id: "aave-dapp",
+    name: "Aave",
+    description: "Open-source, non-custodial liquidity protocol",
+    websiteUrl: "https://app.aave.com",
+    logoUrl: "https://cryptologos.cc/logos/aave-aave-logo.png",
+    cat: "defi",
+    popular: true,
+    sponsor: true,
+    highlight: true,
+    color: "#B6509E",
+  },
+  {
+    id: "compound-dapp",
+    name: "Compound",
+    description: "Algorithmic money markets protocol",
+    websiteUrl: "https://app.compound.finance",
+    logoUrl: "https://cryptologos.cc/logos/compound-comp-logo.png",
+    cat: "defi",
+    popular: true,
+  },
+  {
+    id: "makerdao-dapp",
+    name: "MakerDAO",
+    description: "Decentralized stablecoin platform",
+    websiteUrl: "https://makerdao.com",
+    logoUrl: "https://cryptologos.cc/logos/maker-mkr-logo.png",
+    cat: "defi",
+  },
+  {
+    id: "yearn-dapp",
+    name: "Yearn Finance",
+    description: "Yield optimization strategies",
+    websiteUrl: "https://yearn.fi",
+    logoUrl: "https://cryptologos.cc/logos/yearn-finance-yfi-logo.png",
+    cat: "defi",
+  },
+  {
+    id: "marinade-dapp",
+    name: "Marinade",
+    description: "Liquid staking for SOL (mSOL)",
+    websiteUrl: "https://marinade.finance",
+    logoUrl: "https://marinade.finance/favicon.ico",
+    cat: "defi",
+    popular: true,
+  },
+  {
+    id: "kamino-dapp",
+    name: "Kamino",
+    description: "Lending and borrowing on Solana",
+    websiteUrl: "https://app.kamino.finance",
+    logoUrl: "https://app.kamino.finance/favicon.ico",
+    cat: "defi",
+  },
+  {
+    id: "drift-dapp",
+    name: "Drift",
+    description: "Decentralized perpetuals on Solana",
+    websiteUrl: "https://app.drift.trade",
+    logoUrl: "https://app.drift.trade/favicon.ico",
+    cat: "defi",
+  },
+  {
+    id: "suilend-dapp",
+    name: "Suilend",
+    description: "Lending and borrowing on Sui",
+    websiteUrl: "https://suilend.fi",
+    logoUrl: "https://suilend.fi/favicon.ico",
+    cat: "defi",
+    popular: true,
+    highlight: true,
+    color: "#101116",
+  },
+  {
+    id: "navi-dapp",
+    name: "Navi Protocol",
+    description: "One-stop liquidity protocol on Sui",
+    websiteUrl: "https://app.naviprotocol.io",
+    logoUrl: "https://app.naviprotocol.io/favicon.ico",
+    cat: "defi",
+    popular: true,
+  },
+  {
+    id: "scallop-dapp",
+    name: "Scallop",
+    description: "Money market protocol on Sui",
+    websiteUrl: "https://app.scallop.io",
+    logoUrl: "https://app.scallop.io/favicon.ico",
+    cat: "defi",
+  },
+  // ── Launchpads ──
+  {
+    id: "pinksale-dapp",
+    name: "PinkSale",
+    description: "Decentralized launchpad",
+    websiteUrl: "https://www.pinksale.finance",
+    logoUrl: "https://www.pinksale.finance/favicon.ico",
+    cat: "launchpad",
+    popular: true,
+  },
+  {
+    id: "dxsale-dapp",
+    name: "DxSale",
+    description: "Token launch platform",
+    websiteUrl: "https://dxsale.app",
+    logoUrl: "https://dxsale.app/favicon.ico",
+    cat: "launchpad",
+  },
+  {
+    id: "gempad-dapp",
+    name: "GemPad",
+    description: "Multi-chain launchpad",
+    websiteUrl: "https://gempad.app",
+    logoUrl: "https://gempad.app/favicon.ico",
+    cat: "launchpad",
+  },
+  // ── NFT Marketplaces ──
+  {
+    id: "opensea-dapp",
+    name: "OpenSea",
+    description: "The largest NFT marketplace",
+    websiteUrl: "https://opensea.io",
+    logoUrl:
+      "https://storage.googleapis.com/opensea-static/Logomark/Logomark-Blue.png",
+    cat: "nft",
+    popular: true,
+    highlight: true,
+    color: "#2081E2",
+  },
+  {
+    id: "blur-dapp",
+    name: "Blur",
+    description: "Pro NFT marketplace",
+    websiteUrl: "https://blur.io",
+    logoUrl: "https://blur.io/favicon.ico",
+    cat: "nft",
+    popular: true,
+  },
+  {
+    id: "rarible-dapp",
+    name: "Rarible",
+    description: "Community-owned NFT marketplace",
+    websiteUrl: "https://rarible.com",
+    logoUrl: "https://rarible.com/favicon.ico",
+    cat: "nft",
+  },
+  {
+    id: "foundation-dapp",
+    name: "Foundation",
+    description: "Curated NFT platform",
+    websiteUrl: "https://foundation.app",
+    logoUrl: "https://foundation.app/favicon.ico",
+    cat: "nft",
+  },
+  {
+    id: "magiceden-dapp",
+    name: "Magic Eden",
+    description: "The #1 NFT marketplace on Solana",
+    websiteUrl: "https://magiceden.io",
+    logoUrl: "https://magiceden.io/favicon.ico",
+    cat: "nft",
+    popular: true,
+    highlight: true,
+    color: "#E42575",
+  },
+  {
+    id: "tensor-dapp",
+    name: "Tensor",
+    description: "Pro NFT trading on Solana",
+    websiteUrl: "https://www.tensor.trade",
+    logoUrl: "https://www.tensor.trade/favicon.ico",
+    cat: "nft",
+    popular: true,
+  },
+  {
+    id: "tradeport-dapp",
+    name: "TradePort",
+    description: "Multi-chain NFT marketplace (Sui + Aptos)",
+    websiteUrl: "https://www.tradeport.xyz",
+    logoUrl: "https://www.tradeport.xyz/favicon.ico",
+    cat: "nft",
+  },
+  {
+    id: "bluemove-dapp",
+    name: "BlueMove",
+    description: "Sui-native NFT marketplace",
+    websiteUrl: "https://sui.bluemove.net",
+    logoUrl: "https://sui.bluemove.net/favicon.ico",
+    cat: "nft",
+  },
+  // ── Gaming & Metaverse ──
+  {
+    id: "decentraland-dapp",
+    name: "Decentraland",
+    description: "Virtual reality platform powered by Ethereum",
+    websiteUrl: "https://play.decentraland.org",
+    logoUrl: "https://cryptologos.cc/logos/decentraland-mana-logo.png",
+    cat: "gaming",
+    popular: true,
+    highlight: true,
+    color: "#FF2D55",
+  },
+  {
+    id: "sandbox-dapp",
+    name: "The Sandbox",
+    description: "Gaming metaverse where players build and monetize",
+    websiteUrl: "https://www.sandbox.game/en/",
+    logoUrl: "https://cryptologos.cc/logos/the-sandbox-sand-logo.png",
+    cat: "gaming",
+    popular: true,
+  },
+  {
+    id: "axie-infinity-dapp",
+    name: "Axie Infinity",
+    description: "Play-to-earn NFT game",
+    websiteUrl: "https://axieinfinity.com",
+    logoUrl: "https://cryptologos.cc/logos/axie-infinity-axs-logo.png",
+    cat: "gaming",
+    popular: true,
+    sponsor: true,
+    highlight: true,
+    color: "#4285F4",
+  },
+  {
+    id: "stepn-dapp",
+    name: "STEPN",
+    description: "Move-to-earn fitness app",
+    websiteUrl: "https://stepn.com",
+    logoUrl: "https://stepn.com/favicon.ico",
+    cat: "gaming",
+  },
+  {
+    id: "illuvium-dapp",
+    name: "Illuvium",
+    description: "Open-world RPG game",
+    websiteUrl: "https://illuvium.io",
+    logoUrl: "https://cryptologos.cc/logos/illuvium-ilv-logo.png",
+    cat: "gaming",
+  },
+  // ── Web3 Tools ──
+  {
+    id: "dextools-dapp",
+    name: "DEXTools",
+    description: "Trading analytics platform",
+    websiteUrl: "https://www.dextools.io",
+    logoUrl: "https://www.dextools.io/favicon.ico",
+    cat: "tools",
+    popular: true,
+  },
+  {
+    id: "debank-dapp",
+    name: "DeBank",
+    description: "DeFi portfolio tracker",
+    websiteUrl: "https://debank.com",
+    logoUrl: "https://debank.com/favicon.ico",
+    cat: "tools",
+  },
+  {
+    id: "etherscan-dapp",
+    name: "Etherscan",
+    description: "Ethereum block explorer",
+    websiteUrl: "https://etherscan.io",
+    logoUrl: "https://etherscan.io/favicon.ico",
+    cat: "tools",
+  },
+  {
+    id: "zapper-dapp",
+    name: "Zapper",
+    description: "DeFi portfolio manager",
+    websiteUrl: "https://zapper.xyz",
+    logoUrl: "https://zapper.xyz/favicon.ico",
+    cat: "tools",
+  },
+  {
+    id: "solscan-dapp",
+    name: "Solscan",
+    description: "Solana block explorer",
+    websiteUrl: "https://solscan.io",
+    logoUrl: "https://solscan.io/favicon.ico",
+    cat: "tools",
+  },
+  {
+    id: "birdeye-dapp",
+    name: "Birdeye",
+    description: "Multi-chain DEX analytics (Solana-first)",
+    websiteUrl: "https://birdeye.so",
+    logoUrl: "https://birdeye.so/favicon.ico",
+    cat: "tools",
+  },
+  {
+    id: "step-finance-dapp",
+    name: "Step Finance",
+    description: "Solana portfolio tracker",
+    websiteUrl: "https://app.step.finance",
+    logoUrl: "https://app.step.finance/favicon.ico",
+    cat: "tools",
+  },
+  {
+    id: "suivision-dapp",
+    name: "SuiVision",
+    description: "Sui block explorer and portfolio",
+    websiteUrl: "https://suivision.xyz",
+    logoUrl: "https://suivision.xyz/favicon.ico",
+    cat: "tools",
+  },
+  {
+    id: "suiscan-dapp",
+    name: "Suiscan",
+    description: "Sui block explorer",
+    websiteUrl: "https://suiscan.xyz",
+    logoUrl: "https://suiscan.xyz/favicon.ico",
+    cat: "tools",
+  },
+  {
+    id: "suins-dapp",
+    name: "SuiNS",
+    description: "Naming service for Sui addresses",
+    websiteUrl: "https://suins.io",
+    logoUrl: "https://suins.io/favicon.ico",
+    cat: "tools",
+  },
+];
+
+export const DAPP_PROMOTION_SEED: DappPromotionSeed[] = [
+  {
+    id: "uniswap-promo",
+    title: "Trade on Uniswap",
+    subtitle: "#1 DEX on Ethereum",
+    description: "Swap tokens with the best liquidity and lowest fees",
+    imageUrl: "https://cryptologos.cc/logos/uniswap-uni-logo.png",
+    dappId: "uniswap-dapp",
+    sponsored: true,
+    bg: "#FF007A",
+    fg: "#FFFFFF",
+  },
+  {
+    id: "aave-promo",
+    title: "Earn with Aave",
+    subtitle: "Leading DeFi Protocol",
+    description: "Lend, borrow, and earn interest on your crypto assets",
+    imageUrl: "https://cryptologos.cc/logos/aave-aave-logo.png",
+    dappId: "aave-dapp",
+    sponsored: true,
+    bg: "#B6509E",
+    fg: "#FFFFFF",
+  },
+  {
+    id: "axie-promo",
+    title: "Play Axie Infinity",
+    subtitle: "Play-to-Earn Gaming",
+    description: "Battle, breed, and earn in the most popular NFT game",
+    imageUrl: "https://cryptologos.cc/logos/axie-infinity-axs-logo.png",
+    dappId: "axie-infinity-dapp",
+    bg: "#4285F4",
+    fg: "#FFFFFF",
+  },
+  {
+    id: "opensea-promo",
+    title: "Discover NFTs",
+    subtitle: "OpenSea Marketplace",
+    description: "Buy, sell, and discover exclusive digital items",
+    imageUrl:
+      "https://storage.googleapis.com/opensea-static/Logomark/Logomark-Blue.png",
+    dappId: "opensea-dapp",
+    bg: "#2081E2",
+    fg: "#FFFFFF",
+  },
+  {
+    id: "pancakeswap-promo",
+    title: "PancakeSwap",
+    subtitle: "Top BSC DEX",
+    description: "Trade, earn, and win crypto on the most popular DEX",
+    imageUrl: "https://cryptologos.cc/logos/pancakeswap-cake-logo.png",
+    dappId: "pancakeswap-dapp",
+    bg: "#1FC7D4",
+    fg: "#FFFFFF",
+  },
+  {
+    id: "jupiter-promo",
+    title: "Swap on Jupiter",
+    subtitle: "Best routes on Solana",
+    description: "Aggregated liquidity across every Solana DEX in one click",
+    imageUrl: "https://jup.ag/favicon.ico",
+    dappId: "jupiter-dapp",
+    sponsored: true,
+    bg: "#14F195",
+    fg: "#000000",
+  },
+  {
+    id: "magiceden-promo",
+    title: "Magic Eden",
+    subtitle: "Multi-chain NFT marketplace",
+    description: "The #1 NFT marketplace on Solana, also on Bitcoin & EVM",
+    imageUrl: "https://magiceden.io/favicon.ico",
+    dappId: "magiceden-dapp",
+    bg: "#E42575",
+    fg: "#FFFFFF",
+  },
+  {
+    id: "cetus-promo",
+    title: "Trade on Cetus",
+    subtitle: "Top Sui DEX & CLMM",
+    description: "Concentrated liquidity AMM with the deepest pools on Sui",
+    imageUrl: "https://app.cetus.zone/favicon.ico",
+    dappId: "cetus-dapp",
+    sponsored: true,
+    bg: "#2BC9C8",
+    fg: "#FFFFFF",
+  },
+  {
+    id: "suilend-promo",
+    title: "Earn with Suilend",
+    subtitle: "Lending on Sui",
+    description: "Borrow, lend, and farm interest on Sui-native assets",
+    imageUrl: "https://suilend.fi/favicon.ico",
+    dappId: "suilend-dapp",
+    bg: "#101116",
+    fg: "#FFFFFF",
+  },
+];

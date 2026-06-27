@@ -20,12 +20,14 @@ function makeDapp(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function buildHarness(opts: {
-  dapps?: ReturnType<typeof makeDapp>[];
-  one?: ReturnType<typeof makeDapp> | null;
-  category?: Record<string, unknown> | null;
-  favorite?: Record<string, unknown> | null;
-} = {}) {
+function buildHarness(
+  opts: {
+    dapps?: ReturnType<typeof makeDapp>[];
+    one?: ReturnType<typeof makeDapp> | null;
+    category?: Record<string, unknown> | null;
+    favorite?: Record<string, unknown> | null;
+  } = {},
+) {
   const dapps = opts.dapps ?? [];
   const prisma = {
     dapp: {
@@ -163,13 +165,17 @@ describe("DappsService.create / update / remove", () => {
 
   it("remove 404s when missing", async () => {
     const { svc } = buildHarness({ one: null });
-    await expect(svc.remove("dapp_x")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.remove("dapp_x")).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 });
 
 describe("DappsService.findOne", () => {
   it("404s when missing", async () => {
     const { svc } = buildHarness({ one: null });
-    await expect(svc.findOne("dapp_x")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.findOne("dapp_x")).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 });

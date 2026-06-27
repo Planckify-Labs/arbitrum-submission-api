@@ -23,6 +23,12 @@ import { readContract } from "viem/actions";
 import { DUITKU_CHANNEL_CODES } from "../../payout/duitku-channels";
 import { FLIP_CHANNEL_CODES } from "../../payout/flip-channels";
 import { XENDIT_CHANNEL_CODES } from "../../payout/xendit-channels";
+import {
+  DAPP_CATEGORY_SEED,
+  DAPP_SEED,
+  DAPP_PROMOTION_SEED,
+  type DappCategoryKey,
+} from "./dapps-data";
 
 // Aave V3 ABI fragments — single source of truth for shapes is
 // https://aave.com/docs/aave-v3/smart-contracts and
@@ -3431,303 +3437,86 @@ async function main() {
   }
 
   console.log("🌱 Seeding Dapp categories...");
-  const dappCategories = await Promise.all([
-    prisma.dappCategory.upsert({
-      where: { name: "DEX" },
-      update: {},
-      create: {
-        name: "DEX",
-        description: "Decentralized Exchanges",
-        iconUrl: "https://example.com/icons/dex.svg",
-        isActive: true,
-      },
-    }),
-    prisma.dappCategory.upsert({
-      where: { name: "DeFi" },
-      update: {},
-      create: {
-        name: "DeFi",
-        description: "Decentralized Finance applications",
-        iconUrl: "https://example.com/icons/defi.svg",
-        isActive: true,
-      },
-    }),
-    prisma.dappCategory.upsert({
-      where: { name: "Gaming" },
-      update: {},
-      create: {
-        name: "Gaming",
-        description: "Blockchain gaming and NFT games",
-        iconUrl: "https://example.com/icons/gaming.svg",
-        isActive: true,
-      },
-    }),
-  ]);
-
+  const dappCategories = await Promise.all(
+    DAPP_CATEGORY_SEED.map((c, i) =>
+      prisma.dappCategory.upsert({
+        where: { name: c.name },
+        update: {
+          description: c.description,
+          appearance: { v: 1, accent: c.accent },
+          sortOrder: i,
+          isActive: true,
+        },
+        create: {
+          name: c.name,
+          description: c.description,
+          appearance: { v: 1, accent: c.accent },
+          sortOrder: i,
+          isActive: true,
+        },
+      }),
+    ),
+  );
+  const dappCategoryId = Object.fromEntries(
+    DAPP_CATEGORY_SEED.map((c, i) => [c.key, dappCategories[i].id]),
+  ) as Record<DappCategoryKey, string>;
   console.log(`✅ Created ${dappCategories.length} dapp categories`);
 
   console.log("🌱 Seeding Dapps...");
-  const dapps = await Promise.all([
-    prisma.dapp.upsert({
-      where: { id: "uniswap-dapp" },
-      update: {},
-      create: {
-        id: "uniswap-dapp",
-        name: "Uniswap",
-        description: "The largest decentralized exchange on Ethereum",
-        logoUrl: "https://app.uniswap.org/favicon.ico",
-        websiteUrl: "https://app.uniswap.org",
-        categoryId: dappCategories[0].id,
-        isPopular: true,
-        isSponsor: true,
-        isHighlight: true,
+  const dapps = await Promise.all(
+    DAPP_SEED.map((d, i) => {
+      const appearance = d.color
+        ? { v: 1, background: { type: "solid", color: d.color } }
+        : undefined;
+      const data = {
+        name: d.name,
+        description: d.description,
+        logoUrl: d.logoUrl,
+        websiteUrl: d.websiteUrl,
+        categoryId: dappCategoryId[d.cat],
+        isPopular: d.popular ?? false,
+        isSponsor: d.sponsor ?? false,
+        isHighlight: d.highlight ?? false,
         isActive: true,
-        bgColor: "#FF007A",
-      },
+        appearance,
+        sortOrder: i,
+      };
+      return prisma.dapp.upsert({
+        where: { id: d.id },
+        update: data,
+        create: { id: d.id, ...data },
+      });
     }),
-    prisma.dapp.upsert({
-      where: { id: "sushiswap-dapp" },
-      update: {},
-      create: {
-        id: "sushiswap-dapp",
-        name: "SushiSwap",
-        description: "Community-driven decentralized exchange",
-        logoUrl: "https://sushi.com/favicon.ico",
-        websiteUrl: "https://sushi.com",
-        categoryId: dappCategories[0].id,
-        isPopular: true,
-        isSponsor: false,
-        isHighlight: true,
-        isActive: true,
-        bgColor: "#0E0F23",
-      },
-    }),
-    prisma.dapp.upsert({
-      where: { id: "pancakeswap-dapp" },
-      update: {},
-      create: {
-        id: "pancakeswap-dapp",
-        name: "PancakeSwap",
-        description: "The most popular DEX on BNB Smart Chain",
-        logoUrl: "https://pancakeswap.finance/favicon.ico",
-        websiteUrl: "https://pancakeswap.finance",
-        categoryId: dappCategories[0].id,
-        isPopular: true,
-        isSponsor: true,
-        isHighlight: false,
-        isActive: true,
-        bgColor: "#1FC7D4",
-      },
-    }),
-    prisma.dapp.upsert({
-      where: { id: "1inch-dapp" },
-      update: {},
-      create: {
-        id: "1inch-dapp",
-        name: "1inch",
-        description: "DEX aggregator with the best rates",
-        logoUrl: "https://1inch.io/favicon.ico",
-        websiteUrl: "https://1inch.io",
-        categoryId: dappCategories[0].id,
-        isPopular: true,
-        isSponsor: true,
-        isHighlight: true,
-        isActive: true,
-        bgColor: "#1B2A4E",
-      },
-    }),
-    prisma.dapp.upsert({
-      where: { id: "curve-dapp" },
-      update: {},
-      create: {
-        id: "curve-dapp",
-        name: "Curve Finance",
-        description: "Exchange liquidity pool for stablecoins",
-        logoUrl: "https://curve.fi/favicon.ico",
-        websiteUrl: "https://curve.fi",
-        categoryId: dappCategories[0].id,
-        isPopular: true,
-        isSponsor: false,
-        isHighlight: false,
-        isActive: true,
-        bgColor: "#40E0D0",
-      },
-    }),
-
-    prisma.dapp.upsert({
-      where: { id: "compound-dapp" },
-      update: {},
-      create: {
-        id: "compound-dapp",
-        name: "Compound",
-        description: "Algorithmic money markets protocol",
-        logoUrl: "https://compound.finance/favicon.ico",
-        websiteUrl: "https://compound.finance",
-        categoryId: dappCategories[1].id,
-        isPopular: true,
-        isSponsor: true,
-        isHighlight: true,
-        isActive: true,
-        bgColor: "#00D395",
-      },
-    }),
-    prisma.dapp.upsert({
-      where: { id: "aave-dapp" },
-      update: {},
-      create: {
-        id: "aave-dapp",
-        name: "Aave",
-        description: "Open source and non-custodial liquidity protocol",
-        logoUrl: "https://aave.com/favicon.ico",
-        websiteUrl: "https://aave.com",
-        categoryId: dappCategories[1].id,
-        isPopular: true,
-        isSponsor: false,
-        isHighlight: true,
-        isActive: true,
-        bgColor: "#B6509E",
-      },
-    }),
-    prisma.dapp.upsert({
-      where: { id: "makerdao-dapp" },
-      update: {},
-      create: {
-        id: "makerdao-dapp",
-        name: "MakerDAO",
-        description: "Decentralized credit platform on Ethereum",
-        logoUrl: "https://makerdao.com/favicon.ico",
-        websiteUrl: "https://makerdao.com",
-        categoryId: dappCategories[1].id,
-        isPopular: true,
-        isSponsor: true,
-        isHighlight: false,
-        isActive: true,
-        bgColor: "#1AAB9B",
-      },
-    }),
-    prisma.dapp.upsert({
-      where: { id: "yearn-dapp" },
-      update: {},
-      create: {
-        id: "yearn-dapp",
-        name: "Yearn Finance",
-        description: "Yield farming made simple",
-        logoUrl: "https://yearn.finance/favicon.ico",
-        websiteUrl: "https://yearn.finance",
-        categoryId: dappCategories[1].id,
-        isPopular: true,
-        isSponsor: true,
-        isHighlight: true,
-        isActive: true,
-        bgColor: "#0657F9",
-      },
-    }),
-    prisma.dapp.upsert({
-      where: { id: "synthetix-dapp" },
-      update: {},
-      create: {
-        id: "synthetix-dapp",
-        name: "Synthetix",
-        description: "Derivatives liquidity protocol",
-        logoUrl: "https://synthetix.io/favicon.ico",
-        websiteUrl: "https://synthetix.io",
-        categoryId: dappCategories[1].id,
-        isPopular: true,
-        isSponsor: false,
-        isHighlight: false,
-        isActive: true,
-        bgColor: "#00D4FF",
-      },
-    }),
-
-    prisma.dapp.upsert({
-      where: { id: "axie-infinity-dapp" },
-      update: {},
-      create: {
-        id: "axie-infinity-dapp",
-        name: "Axie Infinity",
-        description: "Play-to-earn blockchain game with cute creatures",
-        logoUrl: "https://axieinfinity.com/favicon.ico",
-        websiteUrl: "https://axieinfinity.com",
-        categoryId: dappCategories[2].id,
-        isPopular: true,
-        isSponsor: true,
-        isHighlight: true,
-        isActive: true,
-        bgColor: "#1E3A8A",
-      },
-    }),
-    prisma.dapp.upsert({
-      where: { id: "decentraland-dapp" },
-      update: {},
-      create: {
-        id: "decentraland-dapp",
-        name: "Decentraland",
-        description: "Virtual reality platform powered by Ethereum",
-        logoUrl: "https://decentraland.org/favicon.ico",
-        websiteUrl: "https://decentraland.org",
-        categoryId: dappCategories[2].id,
-        isPopular: true,
-        isSponsor: false,
-        isHighlight: true,
-        isActive: true,
-        bgColor: "#FF2D55",
-      },
-    }),
-    prisma.dapp.upsert({
-      where: { id: "sandbox-dapp" },
-      update: {},
-      create: {
-        id: "sandbox-dapp",
-        name: "The Sandbox",
-        description: "Virtual world where players can build and monetize",
-        logoUrl: "https://sandbox.game/favicon.ico",
-        websiteUrl: "https://sandbox.game",
-        categoryId: dappCategories[2].id,
-        isPopular: true,
-        isSponsor: true,
-        isHighlight: false,
-        isActive: true,
-        bgColor: "#00ADEF",
-      },
-    }),
-    prisma.dapp.upsert({
-      where: { id: "splinterlands-dapp" },
-      update: {},
-      create: {
-        id: "splinterlands-dapp",
-        name: "Splinterlands",
-        description: "Digital trading card game on blockchain",
-        logoUrl: "https://splinterlands.com/favicon.ico",
-        websiteUrl: "https://splinterlands.com",
-        categoryId: dappCategories[2].id,
-        isPopular: true,
-        isSponsor: true,
-        isHighlight: true,
-        isActive: true,
-        bgColor: "#8B4513",
-      },
-    }),
-    prisma.dapp.upsert({
-      where: { id: "gods-unchained-dapp" },
-      update: {},
-      create: {
-        id: "gods-unchained-dapp",
-        name: "Gods Unchained",
-        description: "Free-to-play tactical card game",
-        logoUrl: "https://godsunchained.com/favicon.ico",
-        websiteUrl: "https://godsunchained.com",
-        categoryId: dappCategories[2].id,
-        isPopular: true,
-        isSponsor: false,
-        isHighlight: false,
-        isActive: true,
-        bgColor: "#1A1A2E",
-      },
-    }),
-  ]);
-
+  );
   console.log(`✅ Created ${dapps.length} dapps`);
+
+  console.log("🌱 Seeding Dapp promotions...");
+  const dappPromotions = await Promise.all(
+    DAPP_PROMOTION_SEED.map((p, i) => {
+      const data = {
+        title: p.title,
+        subtitle: p.subtitle,
+        description: p.description,
+        imageUrl: p.imageUrl,
+        appearance: {
+          v: 1,
+          background: { type: "solid", color: p.bg },
+          foreground: p.fg,
+        },
+        targetUrl: null as string | null,
+        dappId: p.dappId,
+        isSponsored: p.sponsored ?? false,
+        isActive: true,
+        sortOrder: i,
+      };
+      return prisma.dappPromotion.upsert({
+        where: { id: p.id },
+        update: data,
+        create: { id: p.id, ...data },
+      });
+    }),
+  );
+  console.log(`✅ Created ${dappPromotions.length} dapp promotions`);
 
   console.log("🌱 Seeding user dapp favorites...");
   const userDappFavorites = await Promise.all([
