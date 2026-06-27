@@ -257,6 +257,37 @@ describe("ProductsService.search", () => {
     ).toEqual({ lte: 5000 });
   });
 
+  it("clamps an over-large take to the search max", async () => {
+    const { svc, prisma } = buildHarness();
+    await svc.search({ name: "x" } as never, { take: 1000 });
+    const findMany = (prisma.product.findMany as jest.Mock).mock.calls[0][0];
+    expect(findMany.take).toBe(24);
+  });
+
+  it("defaults take when the caller omits it", async () => {
+    const { svc, prisma } = buildHarness();
+    await svc.search({ name: "x" } as never, {});
+    const findMany = (prisma.product.findMany as jest.Mock).mock.calls[0][0];
+    expect(findMany.take).toBe(12);
+  });
+
+  it("caps points-query results to the search max", async () => {
+    const many = Array.from({ length: 40 }, (_, i) => ({
+      id: `p${i}`,
+      variants: [
+        {
+          isActive: true,
+          ProductPrice: [{ isActive: true, sellPrice: i + 1 }],
+        },
+      ],
+    }));
+    const { svc } = buildHarness({ products: many });
+    const { items } = await svc.search({ maxPoints: 999999 } as never, {
+      take: 1000,
+    });
+    expect(items).toHaveLength(24);
+  });
+
   it("orders results cheapest-first for a points query", async () => {
     const mk = (id: string, points: number) => ({
       id,
@@ -267,11 +298,15 @@ describe("ProductsService.search", () => {
         },
       ],
     });
-    const { svc } = buildHarness({
+    const { svc, prisma } = buildHarness({
       products: [mk("a", 5000), mk("b", 1000), mk("c", 3000)],
     });
     const { items } = await svc.search({ maxPoints: 5000 } as never, {});
     expect(items.map((i: { id: string }) => i.id)).toEqual(["b", "c", "a"]);
+    // The ranking query must span the FULL matching set (no alphabetical
+    // cap) — otherwise cheapest-first only holds within a partial slice.
+    const rankCall = (prisma.product.findMany as jest.Mock).mock.calls[0][0];
+    expect(rankCall.take).toBeUndefined();
   });
 
   it("sorts unpriced products last in a points query", async () => {

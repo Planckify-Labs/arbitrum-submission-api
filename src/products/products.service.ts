@@ -84,10 +84,20 @@ type RecommendationRaw = Prisma.ProductGetPayload<{
   select: typeof recommendationSelect;
 }>;
 
-// Upper bound on the candidate set fetched for in-memory cheapest-first
-// sorting of points queries. Generous for a curated redemption catalog;
-// beyond this, cheapest-first holds within the first N matches only.
-const POINTS_SORT_CANDIDATE_CAP = 200;
+// Catalog-search page size. DEFAULT applies when the caller omits `take`;
+// MAX is the ceiling we silently clamp to. We clamp (not 400) so the agent
+// never has to recover from an over-large request, and we keep this local
+// to search() rather than on the shared CursorPaginationDto so other
+// paginated endpoints (dashboards, b2b) can still use larger pages.
+const SEARCH_DEFAULT_TAKE = 12;
+const SEARCH_MAX_TAKE = 24;
+
+function clampSearchTake(take: number | undefined): number {
+  if (typeof take !== "number" || !Number.isFinite(take) || take <= 0) {
+    return SEARCH_DEFAULT_TAKE;
+  }
+  return Math.min(Math.floor(take), SEARCH_MAX_TAKE);
+}
 
 // A product's lowest active variant price ("from X points"). Mirrors the
 // figure surfaced to the agent/UI, so cheapest-first ordering matches the
@@ -170,7 +180,10 @@ export class ProductsService {
   }
 
   async search(params: SearchProductDto, paginationDto: CursorPaginationDto) {
-    const { cursor, take = 10, skip } = paginationDto;
+    const { cursor, skip } = paginationDto;
+    // The API is the authority on page size — never trust the client's
+    // `take` (the agent, or any API-key holder, can ask for thousands).
+    const take = clampSearchTake(paginationDto.take);
     const useSkip = typeof skip === "number" && skip > 0;
     const {
       query,
@@ -306,22 +319,43 @@ export class ProductsService {
 
     // Cheapest-first for points queries. "Cheapest" = the product's lowest
     // active variant price, which Prisma can't express as a relation
-    // `orderBy`. The redemption catalog is small, so fetch the matching set
-    // (bounded) and sort + page it in memory. Non-points searches keep the
-    // existing cursor-paginated, name-ordered path untouched.
+    // `orderBy`. We must rank the ENTIRE matching set — a points budget
+    // (e.g. "what can I get with 16k") matches most of the catalog, so
+    // ranking only an alphabetical slice would silently drop genuinely
+    // cheaper products and surface a wrong "cheapest". To stay cheap we
+    // first project just {id + active prices} for every match, sort by true
+    // lowest active price, then hydrate ONLY the requested page with the
+    // full product shape. Non-points searches keep the existing
+    // cursor-paginated, name-ordered path untouched.
     if (isPointsQuery) {
-      const [candidates, total] = await Promise.all([
-        this.prisma.product.findMany({
-          where,
-          include: productInclude,
-          orderBy: { name: "asc" },
-          take: POINTS_SORT_CANDIDATE_CAP,
-        }),
-        this.prisma.product.count({ where }),
-      ]);
-      candidates.sort((a, b) => lowestActivePoints(a) - lowestActivePoints(b));
+      const ranked = await this.prisma.product.findMany({
+        where,
+        select: {
+          id: true,
+          variants: {
+            select: {
+              isActive: true,
+              ProductPrice: { select: { isActive: true, sellPrice: true } },
+            },
+          },
+        },
+      });
+      ranked.sort((a, b) => lowestActivePoints(a) - lowestActivePoints(b));
+
+      const total = ranked.length;
       const start = useSkip ? skip : 0;
-      const items = candidates.slice(start, start + take);
+      const pageIds = ranked.slice(start, start + take).map((p) => p.id);
+
+      const products = await this.prisma.product.findMany({
+        where: { id: { in: pageIds } },
+        include: productInclude,
+      });
+      // `findMany({ id: { in } })` does not preserve our ranked order — re-key
+      // by id and emit in the cheapest-first sequence we computed.
+      const byId = new Map(products.map((p) => [p.id, p]));
+      const items = pageIds
+        .map((id) => byId.get(id))
+        .filter((p): p is (typeof products)[number] => p !== undefined);
       return { items, total };
     }
 
