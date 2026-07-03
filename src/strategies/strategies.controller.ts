@@ -1,25 +1,25 @@
 import {
-  Controller,
-  Get,
-  Post,
-  Patch,
-  Delete,
   Body,
-  Param,
-  Query,
-  UseGuards,
-  UseFilters,
-  Request,
+  Controller,
+  Delete,
+  Get,
   HttpCode,
   HttpStatus,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Request,
+  UseFilters,
+  UseGuards,
 } from "@nestjs/common";
-import { ApiTags, ApiOperation, ApiResponse } from "@nestjs/swagger";
+import { ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
-import { StrategiesService } from "./strategies.service";
 import { CreateStrategyDto } from "./dto/create-strategy.dto";
-import { UpdateStrategyDto } from "./dto/update-strategy.dto";
 import { CrossChainQuoteDto } from "./dto/cross-chain-quote.dto";
+import { UpdateStrategyDto } from "./dto/update-strategy.dto";
 import { DefiError, DefiErrorFilter } from "./errors/defi-error";
+import { StrategiesService } from "./strategies.service";
 
 interface AuthedRequest {
   user?: {
@@ -120,6 +120,15 @@ export class StrategiesController {
     return this.strategiesService.getOpportunity(slug);
   }
 
+  @Get("pools/:poolId")
+  @ApiOperation({
+    summary:
+      "Get a single opportunity by DeFiLlama poolId — the authoritative depositTarget the mobile executor re-fetches at deposit time (pool-level deposits spec §6)",
+  })
+  getPoolById(@Param("poolId") poolId: string) {
+    return this.strategiesService.getPoolById(poolId);
+  }
+
   @Get("protocols")
   @ApiOperation({
     summary:
@@ -146,6 +155,7 @@ export class StrategiesController {
       namespace: string;
       assetSymbol: string;
       assetContract?: string;
+      poolId?: string;
       amountAtDeposit: string;
       amountAtDepositUsd: number;
       openTxHash?: string;
@@ -167,10 +177,7 @@ export class StrategiesController {
 
   @Post("positions/:id/refresh")
   @ApiOperation({ summary: "Trigger a refresh for a specific position" })
-  refreshPosition(
-    @Request() req: AuthedRequest,
-    @Param("id") id: string,
-  ) {
+  refreshPosition(@Request() req: AuthedRequest, @Param("id") id: string) {
     return this.strategiesService.refreshPosition(
       id,
       this.getWalletAddress(req),

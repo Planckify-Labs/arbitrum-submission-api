@@ -14,6 +14,16 @@ export interface DeFiLlamaYieldPool {
   apyReward?: number;
   ilRisk: "yes" | "no";
   exposure: "multi" | "stable" | "single";
+  // Pool-level deposits (spec §3, §4.2): the only address-bearing +
+  // disambiguation fields in `/pools`. Previously dropped in filterPools;
+  // now carried so the resolver registry can turn (project, chain,
+  // underlyingTokens, poolMeta) into an on-chain deposit target.
+  /** Vault/market name or fee tier ("Steakhouse USDC", "0.05%"). Free-text
+   *  label, NOT an address. Primary disambiguator between sibling pools. */
+  poolMeta?: string | null;
+  /** Underlying **asset** contract(s) the user deposits (ERC-20 / SPL mint /
+   *  Sui coin type). Never the vault/market. Matching key + fills assetContract. */
+  underlyingTokens?: string[];
 }
 
 interface DeFiLlamaPoolsResponse {
@@ -32,6 +42,8 @@ interface DeFiLlamaPoolsResponse {
     exposure: "multi" | "stable" | "single";
     stablecoin?: boolean;
     apyPct7D?: number | null;
+    poolMeta?: string | null;
+    underlyingTokens?: string[] | null;
   }>;
 }
 
@@ -45,12 +57,19 @@ interface DeFiLlamaProtocol {
   category?: string | null;
   chains?: string[];
   tvl?: number;
+  // Protocol's own app URL — the manual deep-link homepage fallback
+  // (spec §9.1). Already returned by /protocol/{slug}; previously dropped.
+  url?: string | null;
 }
 
 // v4: per-chain TVL floor + per-chain top-N cap (50) + round-robin fair
 // selection under a 300 ceiling, plus "SUI" in the symbol set. Bumped so the
 // new selection takes effect on next poll instead of serving the stale set.
-const POOLS_CACHE_KEY = "defillama:pools:filtered:v4";
+// v5: additionally capture `poolMeta` + `underlyingTokens` (pool-level
+// deposits spec §3/§4.2 — the resolver's matching keys). Bumped so the new
+// fields are populated on the next poll instead of serving the v4 shape that
+// dropped them.
+const POOLS_CACHE_KEY = "defillama:pools:filtered:v5";
 const DEFAULT_POOLS_CACHE_TTL_SEC = 30 * 60; // 30 min — matches the cron tick
 const DEFAULT_PROTOCOL_CACHE_TTL_SEC = 6 * 60 * 60; // 6 h — slow-moving metadata
 const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
@@ -147,10 +166,7 @@ function describeFetchError(err: unknown): string {
   return parts.join(" → ");
 }
 
-function requireUrl(
-  configService: ConfigService,
-  name: string,
-): string {
+function requireUrl(configService: ConfigService, name: string): string {
   const value = configService.get<string>(name);
   if (!value || !value.trim()) {
     throw new Error(
@@ -223,8 +239,9 @@ export class DeFiLlamaClient {
 
   async getYieldPools(): Promise<DeFiLlamaYieldPool[]> {
     const started = Date.now();
-    const cached =
-      await this.valkeyService.get<string>(POOLS_CACHE_KEY).catch(() => null);
+    const cached = await this.valkeyService
+      .get<string>(POOLS_CACHE_KEY)
+      .catch(() => null);
     if (cached) {
       try {
         const parsed = JSON.parse(cached) as DeFiLlamaYieldPool[];
@@ -287,10 +304,15 @@ export class DeFiLlamaClient {
     gecko_id: string | null;
     category: string | null;
     chains: string[];
+    /** Protocol's own app URL — manual deep-link homepage fallback (spec §9.1). */
+    appUrl: string | null;
   }> {
-    const cacheKey = `defillama:protocol:${slug}:v1`;
-    const cached =
-      await this.valkeyService.get<string>(cacheKey).catch(() => null);
+    // v2: shape gains `appUrl` (spec §9.1). Bumped so cached v1 entries are
+    // re-fetched instead of served without the new field.
+    const cacheKey = `defillama:protocol:${slug}:v2`;
+    const cached = await this.valkeyService
+      .get<string>(cacheKey)
+      .catch(() => null);
     if (cached) {
       try {
         return JSON.parse(cached);
@@ -311,6 +333,10 @@ export class DeFiLlamaClient {
         gecko_id: data?.gecko_id ?? null,
         category: data?.category ?? null,
         chains: Array.isArray(data?.chains) ? data.chains : [],
+        appUrl:
+          typeof data?.url === "string" && data.url.trim()
+            ? data.url.trim()
+            : null,
       };
       await this.valkeyService
         .set(cacheKey, JSON.stringify(normalised), {
@@ -329,6 +355,7 @@ export class DeFiLlamaClient {
         gecko_id: null,
         category: null,
         chains: [],
+        appUrl: null,
       };
     }
   }
@@ -410,11 +437,18 @@ export class DeFiLlamaClient {
       apy7d:
         (typeof p.apyPct7D === "number"
           ? (p.apy as number) + p.apyPct7D
-          : undefined) ?? p.apyMean30d ?? undefined,
+          : undefined) ??
+        p.apyMean30d ??
+        undefined,
       apyBase: p.apyBase ?? undefined,
       apyReward: p.apyReward ?? undefined,
       ilRisk: p.ilRisk ?? "no",
       exposure: p.exposure ?? "single",
+      // Pool-level deposits (spec §3): carry the resolver's matching keys.
+      poolMeta: p.poolMeta ?? null,
+      underlyingTokens: Array.isArray(p.underlyingTokens)
+        ? p.underlyingTokens
+        : undefined,
     }));
   }
 

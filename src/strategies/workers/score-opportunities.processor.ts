@@ -1,13 +1,16 @@
-import { Processor, WorkerHost, OnWorkerEvent } from "@nestjs/bullmq";
+import { Prisma } from "@generated/prisma";
+import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
 import { Logger } from "@nestjs/common";
 import { Job } from "bullmq";
 import { PrismaService } from "../../prisma/prisma.service";
-import { Prisma } from "@generated/prisma";
-import { ScoringService } from "../scoring/scoring.service";
+import { ValkeyService } from "../../valkey/valkey.service";
 import {
   DeFiLlamaClient,
   DeFiLlamaYieldPool,
 } from "../external/defillama.client";
+import { ScoringService } from "../scoring/scoring.service";
+import { oppRowCacheKey } from "../targets/cache-keys";
+import { TargetResolverService } from "../targets/target-resolver.service";
 
 interface ScorePoolJobData {
   pool: DeFiLlamaYieldPool;
@@ -51,6 +54,8 @@ export class ScoreOpportunitiesProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly scoringService: ScoringService,
     private readonly defillama: DeFiLlamaClient,
+    private readonly targetResolver: TargetResolverService,
+    private readonly valkey: ValkeyService,
   ) {
     super();
   }
@@ -74,6 +79,21 @@ export class ScoreOpportunitiesProcessor extends WorkerHost {
 
       const { namespace, chainId } = resolveChain(pool.chain);
 
+      // Pool-level deposits (spec §3, §4.2, §6): resolve the on-chain deposit
+      // target from the pool's matching keys, on-chain-validated. `null` ⇒ the
+      // pool degrades to the manual deep-link path (fail-closed).
+      const depositTarget = await this.targetResolver.resolve(pool);
+      const poolMeta = pool.poolMeta ?? null;
+      const assetContract =
+        typeof pool.underlyingTokens?.[0] === "string"
+          ? pool.underlyingTokens[0].toLowerCase()
+          : null;
+      const targetJson: Prisma.OpportunityCacheUpdateInput["depositTarget"] =
+        depositTarget
+          ? (depositTarget as unknown as Prisma.InputJsonValue)
+          : Prisma.DbNull;
+      const targetResolvedAt = depositTarget ? new Date() : null;
+
       // Upsert into OpportunityCache
       await this.prisma.opportunityCache.upsert({
         where: { poolId: pool.pool },
@@ -83,6 +103,10 @@ export class ScoreOpportunitiesProcessor extends WorkerHost {
           namespace,
           chainName: pool.chain,
           assetSymbol: pool.symbol,
+          assetContract,
+          poolMeta,
+          depositTarget: targetJson,
+          targetResolvedAt,
           apy: pool.apy,
           apy7dAvg: pool.apy7d || pool.apy,
           apyStddev30d: 0,
@@ -101,6 +125,10 @@ export class ScoreOpportunitiesProcessor extends WorkerHost {
           namespace,
           chainName: pool.chain,
           assetSymbol: pool.symbol,
+          assetContract,
+          poolMeta,
+          depositTarget: targetJson,
+          targetResolvedAt,
           apy: pool.apy,
           apy7dAvg: pool.apy7d || pool.apy,
           apyStddev30d: 0,
@@ -114,7 +142,42 @@ export class ScoreOpportunitiesProcessor extends WorkerHost {
         },
       });
 
-      this.logger.debug(`Saved score ${score} (${tier}) for pool ${pool.pool}`);
+      // Persist protocol-level metadata (safety + app URL for the manual
+      // deep-link homepage fallback, spec §9.1). Protocol-scoped, so it isn't
+      // duplicated per sibling pool.
+      await this.prisma.protocolScoreCache
+        .upsert({
+          where: { protocolSlug: pool.project },
+          update: {
+            safetyScore: dimensions.protocolSafety,
+            auditCount: protocolMetadata.auditCount,
+            appUrl: protocolMetadata.appUrl,
+            computedAt: new Date(),
+          },
+          create: {
+            protocolSlug: pool.project,
+            safetyScore: dimensions.protocolSafety,
+            auditCount: protocolMetadata.auditCount,
+            protocolAgeDays: 0,
+            exploitHistoryFlag: false,
+            tvlTrendBps: 0,
+            appUrl: protocolMetadata.appUrl,
+            computedAt: new Date(),
+          },
+        })
+        .catch((err) => {
+          this.logger.warn(
+            `ProtocolScoreCache upsert failed for ${pool.project}: ${err?.message ?? err}`,
+          );
+        });
+
+      // Invalidate the Valkey row cache so the executor's authoritative
+      // depositTarget re-fetch (§6) sees the fresh row.
+      await this.valkey.del(oppRowCacheKey(pool.pool)).catch(() => undefined);
+
+      this.logger.debug(
+        `Saved score ${score} (${tier}) for pool ${pool.pool} (target=${depositTarget?.kind ?? "manual"})`,
+      );
     } catch (error) {
       this.logger.error(`Failed to score pool ${pool.pool}: ${error.message}`);
       throw error;

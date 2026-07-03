@@ -1149,6 +1149,7 @@ model StrategyPosition {
   protocolSlug       String // "aave-v3" | "lido" | "morpho" | ...
   assetSymbol        String // "USDC" | "ETH" | ...
   assetContract      String? // lowercased, null for native
+  poolId             String? // DeFiLlama poolId the position was opened against (pool-level deposits spec §4.2) — pins the exact sibling pool, null for legacy positions opened before pool-level routing
   amountAtDeposit    String // raw units (decimal string for bigint)
   amountAtDepositUsd Decimal // snapshotted USD value at deposit
   currentAmountRaw   String? // last observed
@@ -1183,6 +1184,9 @@ model OpportunityCache {
   assetSymbol          String
   assetContract        String? // ERC-20 / SPL mint / Sui coin type the protocol's underlying reserve uses; null when not resolvable (e.g. mainnet defillama-scored rows that need a later resolver pass)
   poolId               String // DeFiLlama pool id
+  poolMeta             String? // DeFiLlama vault/market name or fee tier ("Steakhouse USDC", "0.05%") — disambiguates sibling pools sharing (protocol, asset, chain). Free-text label, never an address. (pool-level deposits spec §4.2)
+  depositTarget        Json? // resolved DepositTarget discriminated union (spec §4.1); null = unresolved → the row degrades to the "manual" deep-link path. Written by the PoolTargetResolver registry at score time.
+  targetResolvedAt     DateTime? // when depositTarget was last resolved + on-chain validated; drives periodic re-validation
   apy                  Decimal
   apy7dAvg             Decimal
   apyStddev30d         Decimal
@@ -1206,6 +1210,7 @@ model ProtocolScoreCache {
   protocolAgeDays    Int
   exploitHistoryFlag Boolean
   tvlTrendBps        Int // signed; 7d trend in bps
+  appUrl             String? // DeFiLlama /protocol/{slug}.url — the protocol's own app URL, used as the manual deep-link homepage fallback (pool-level deposits spec §9.1). Protocol-scoped so it isn't duplicated per-pool.
   computedAt         DateTime
 }
 

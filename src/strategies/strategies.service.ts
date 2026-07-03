@@ -1,12 +1,11 @@
-import {
-  Injectable,
-  Logger,
-} from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { ValkeyService } from "../valkey/valkey.service";
 import { CreateStrategyDto } from "./dto/create-strategy.dto";
 import { UpdateStrategyDto } from "./dto/update-strategy.dto";
 import { DefiError } from "./errors/defi-error";
 import { LifiClient, LifiQuote } from "./external/lifi.client";
+import { OPP_ROW_CACHE_TTL_SEC, oppRowCacheKey } from "./targets/cache-keys";
 
 interface OpportunityFilter {
   tier?: string;
@@ -27,6 +26,7 @@ export class StrategiesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly lifiClient: LifiClient,
+    private readonly valkey: ValkeyService,
   ) {}
 
   quoteCrossChain(
@@ -220,7 +220,32 @@ export class StrategiesService {
     this.logger.log(
       `[getOpportunities] OpportunityCache returned ${opportunities.length} rows for where=${JSON.stringify(where)}`,
     );
-    return opportunities;
+    return this.attachAppUrls(opportunities);
+  }
+
+  /**
+   * Merge each pool's protocol-level `appUrl` (the manual deep-link homepage —
+   * DeFiLlama's `/protocol/{slug}.url`, pool-level deposits spec §9.1) from
+   * `ProtocolScoreCache`. It's protocol-scoped, so we fetch once per distinct
+   * slug and fan it out onto the pool rows — the mobile "Manual" badge opens
+   * this real protocol URL instead of falling back to the DeFiLlama page.
+   */
+  private async attachAppUrls<T extends { protocolSlug: string }>(
+    rows: T[],
+  ): Promise<Array<T & { appUrl: string | null }>> {
+    if (rows.length === 0) return [];
+    const slugs = [...new Set(rows.map((r) => r.protocolSlug))];
+    const scores = await this.prisma.protocolScoreCache
+      .findMany({
+        where: { protocolSlug: { in: slugs } },
+        select: { protocolSlug: true, appUrl: true },
+      })
+      .catch(() => [] as { protocolSlug: string; appUrl: string | null }[]);
+    const bySlug = new Map(scores.map((s) => [s.protocolSlug, s.appUrl]));
+    return rows.map((r) => ({
+      ...r,
+      appUrl: bySlug.get(r.protocolSlug) ?? null,
+    }));
   }
 
   async getOpportunity(slug: string) {
@@ -235,6 +260,36 @@ export class StrategiesService {
     }
 
     return opportunity;
+  }
+
+  /**
+   * Fetch a single OpportunityCache row by its DeFiLlama poolId — the
+   * authoritative source the mobile executor re-fetches at deposit time to
+   * read the server-resolved `depositTarget` (spec §6; the LLM only ever
+   * passes `pool_id`, never an address). Keyed by poolId (`@@unique`), so it
+   * pins the exact sibling pool, unlike `getOpportunity(slug)` which keys by
+   * protocolSlug and returns the first pool for the protocol.
+   *
+   * Valkey-cached (spec §11 Q4) with a short TTL; the score worker invalidates
+   * the key on upsert so a freshly-resolved target is picked up on the next read.
+   */
+  async getPoolById(poolId: string) {
+    const cacheKey = oppRowCacheKey(poolId);
+    const cached = await this.valkey.get(cacheKey).catch(() => null);
+    if (cached) return cached;
+
+    const opportunity = await this.prisma.opportunityCache.findUnique({
+      where: { poolId },
+    });
+    if (!opportunity) {
+      throw new DefiError("protocol_not_found", poolId);
+    }
+
+    const [withAppUrl] = await this.attachAppUrls([opportunity]);
+    await this.valkey
+      .set(cacheKey, withAppUrl, { ttl: OPP_ROW_CACHE_TTL_SEC })
+      .catch(() => undefined);
+    return withAppUrl;
   }
 
   /**
@@ -319,6 +374,7 @@ export class StrategiesService {
       namespace: string;
       assetSymbol: string;
       assetContract?: string;
+      poolId?: string;
       amountAtDeposit: string;
       amountAtDepositUsd: number;
       openTxHash?: string;
@@ -365,6 +421,7 @@ export class StrategiesService {
           chainName: sourceOpp?.chainName ?? "",
           assetSymbol: dto.assetSymbol,
           assetContract: dto.assetContract,
+          poolId: dto.poolId,
           amountAtDeposit: dto.amountAtDeposit,
           amountAtDepositUsd: amountUsd,
           status: "active",

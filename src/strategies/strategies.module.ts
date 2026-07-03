@@ -1,22 +1,23 @@
-import { Module } from "@nestjs/common";
 import { BullModule } from "@nestjs/bullmq";
+import { Module } from "@nestjs/common";
 import { PrismaModule } from "../prisma/prisma.module";
-import { ValkeyModule } from "../valkey/valkey.module";
 import { PushModule } from "../push/push.module";
-import { StrategiesService } from "./strategies.service";
-import { StrategiesScheduler } from "./strategies.scheduler";
-import { StrategiesController } from "./strategies.controller";
-import { DeFiLlamaClient } from "./external/defillama.client";
-import { ZerionClient } from "./external/zerion.client";
-import { LifiClient } from "./external/lifi.client";
+import { ValkeyModule } from "../valkey/valkey.module";
 import { DeBankClient } from "./external/debank.client";
+import { DeFiLlamaClient } from "./external/defillama.client";
+import { LifiClient } from "./external/lifi.client";
+import { ZerionClient } from "./external/zerion.client";
 import { ScoringService } from "./scoring/scoring.service";
+import { StrategiesController } from "./strategies.controller";
+import { StrategiesScheduler } from "./strategies.scheduler";
+import { StrategiesService } from "./strategies.service";
+import { TargetResolverService } from "./targets/target-resolver.service";
+import { AutoCompoundWatcherProcessor } from "./workers/auto-compound-watcher.processor";
 import { DefiLlamaPollProcessor } from "./workers/defillama-poll.processor";
+import { GoalDeadlineWatcherProcessor } from "./workers/goal-deadline-watcher.processor";
+import { RebalanceTriggerProcessor } from "./workers/rebalance-trigger.processor";
 import { ScoreOpportunitiesProcessor } from "./workers/score-opportunities.processor";
 import { StablecoinDepegWatcherProcessor } from "./workers/stablecoin-depeg-watcher.processor";
-import { RebalanceTriggerProcessor } from "./workers/rebalance-trigger.processor";
-import { GoalDeadlineWatcherProcessor } from "./workers/goal-deadline-watcher.processor";
-import { AutoCompoundWatcherProcessor } from "./workers/auto-compound-watcher.processor";
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { AutoCompoundWatcherProcessor } from "./workers/auto-compound-watcher.pr
     LifiClient,
     DeBankClient,
     ScoringService,
+    TargetResolverService,
     DefiLlamaPollProcessor,
     ScoreOpportunitiesProcessor,
     StablecoinDepegWatcherProcessor,
