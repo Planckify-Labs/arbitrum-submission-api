@@ -25,6 +25,30 @@ export type DepositTarget =
   | { kind: "compound-v3"; comet: Address; asset: Address }
   | { kind: "curve-lp"; pool: Address; asset: Address; index: number }
   | { kind: "scallop-market"; market: string; coinType: string }
+  // Ember Vaults (Sui) — `ember_vaults::gateway::deposit_asset_v2<T,R>`.
+  // `vault` = immutable shared Vault<T,R> object id; `coinType` = deposited coin
+  // (T, == underlyingTokens[0]); `shareType` = receipt coin (R). Package +
+  // ProtocolConfig are mutable → fetched by the mobile adapter, not in the
+  // target. Resolved from the Bluefin Ember Vaults API (§3.1: prefer the plain
+  // HTTPS endpoint over the SDK).
+  | { kind: "ember-vault"; vault: string; coinType: string; shareType: string }
+  // NAVI (Sui lending) — `lending_core::incentive_v3::entry_deposit<T>`. No
+  // receipt coin: supply is tracked in NAVI's shared `Storage` keyed by numeric
+  // `assetId` (+ per-coin `Pool<T>` object). `coinType` == underlyingTokens[0].
+  | { kind: "navi-pool"; pool: string; assetId: number; coinType: string }
+  // Suilend (Sui lending) — `lending_market::deposit_liquidity_and_mint_ctokens
+  // <P,T>`. `lendingMarket` = shared LendingMarket<P> object; `marketType` = the
+  // P phantom (`<pkg>::suilend::MAIN_POOL`) — the mobile adapter derives the
+  // package from it; `reserveArrayIndex` = the reserve's slot in
+  // LendingMarket.reserves[] (u64 arg); `coinType` (T) == underlyingTokens[0].
+  // Receipt = `Coin<reserve::CToken<P,T>>`.
+  | {
+      kind: "suilend-market";
+      lendingMarket: string;
+      marketType: string;
+      reserveArrayIndex: number;
+      coinType: string;
+    }
   | { kind: "solana-reserve"; program: string; reserve: string; mint: string };
 
 export type DepositTargetKind = DepositTarget["kind"];
