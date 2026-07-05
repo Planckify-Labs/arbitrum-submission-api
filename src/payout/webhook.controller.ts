@@ -19,6 +19,7 @@ import {
 } from "@generated/prisma";
 import { Public } from "../decorators/public.decorator";
 import { PrismaService } from "../prisma/prisma.service";
+import { PushService } from "../push/push.service";
 import {
   PAYOUT_PROVIDER_FLIP,
   PAYOUT_PROVIDER_XENDIT,
@@ -74,6 +75,7 @@ export class WebhookController {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly pushService: PushService,
     @Inject(PAYOUT_PROVIDER_XENDIT)
     private readonly xenditProvider: IPayoutProviderAdapter,
     @Inject(PAYOUT_PROVIDER_FLIP)
@@ -416,23 +418,8 @@ export class WebhookController {
    */
   private async firePaidOutPush(intentId: string): Promise<void> {
     try {
-      // Dynamic import so the module is optional. Task 32 should export
-      // `sendPaidOutPush(intentId)` from `src/push/push.service.ts` (or
-      // similar). Until that lands, the catch arm below turns the
-      // missing module into a one-line log.
-      const mod = await import("../push/push.service" as string).catch(
-        () => null,
-      );
-      const send = (mod as { sendPaidOutPush?: (id: string) => Promise<void> } | null)
-        ?.sendPaidOutPush;
-      if (typeof send === "function") {
-        await send(intentId);
-        this.logger.log(`PAID_OUT push fired intentId=${intentId}`);
-      } else {
-        this.logger.debug(
-          `PAID_OUT push skipped intentId=${intentId} — push service not wired (task 32).`,
-        );
-      }
+      await this.pushService.sendPaidOutPush(intentId);
+      this.logger.log(`PAID_OUT push fired intentId=${intentId}`);
     } catch (err) {
       this.logger.warn(
         `PAID_OUT push failed intentId=${intentId}: ${err instanceof Error ? err.message : String(err)}`,

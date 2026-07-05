@@ -1,10 +1,9 @@
-import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { IsIn, IsOptional, IsString, Matches, MinLength } from "class-validator";
+import { ApiProperty } from "@nestjs/swagger";
+import { IsArray, IsString, MinLength } from "class-validator";
 
 export class RegisterPushTokenDto {
   @ApiProperty({
-    description:
-      'Expo push token. Format: "ExponentPushToken[…]" or "ExpoPushToken[…]".',
+    description: 'Expo push token. Format: "ExponentPushToken[…]" or "ExpoPushToken[…]".',
   })
   @IsString()
   @MinLength(16)
@@ -12,26 +11,17 @@ export class RegisterPushTokenDto {
 
   @ApiProperty({
     description: "Device platform.",
-    enum: ["ios", "android", "web"],
+    example: "ios",
   })
   @IsString()
-  @IsIn(["ios", "android", "web"])
-  platform: "ios" | "android" | "web";
+  platform: string;
 
-  @ApiPropertyOptional({
-    description:
-      "Optional Android notification channel id the client registered. The server can route channelId-aware payloads when set.",
+  @ApiProperty({
+    description: "All wallet addresses currently held on this device. Any chain format accepted.",
+    type: [String],
+    example: ["0xabc...", "BPFLoader2..."],
   })
-  @IsOptional()
-  @IsString()
-  androidChannelId?: string;
-
-  @ApiPropertyOptional({
-    description:
-      "Optional wallet address for wallet-scoped pushes (lowercased).",
-  })
-  @IsOptional()
-  @IsString()
-  @Matches(/^0x[a-fA-F0-9]{40}$/)
-  walletAddress?: string;
+  @IsArray()
+  @IsString({ each: true })
+  wallets: string[];
 }

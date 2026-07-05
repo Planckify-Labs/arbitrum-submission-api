@@ -92,7 +92,8 @@ function build(opts: {
     prismaStub({ findRow: opts.findRow });
   const provider = providerStub(opts.verifyImpl);
   const flipProvider = providerStub(opts.flipVerifyImpl);
-  const controller = new WebhookController(mock, provider, flipProvider);
+  const pushService = { sendPaidOutPush: async () => {} } as unknown as import("../push/push.service").PushService;
+  const controller = new WebhookController(mock, pushService, provider, flipProvider);
   return {
     controller,
     provider,

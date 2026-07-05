@@ -13,10 +13,7 @@ import { RegisterPushTokenDto } from "./dto/register-push-token.dto";
 import { PushService } from "./push.service";
 
 interface AuthedRequest {
-  user?: {
-    id: string;
-    walletAddress?: string;
-  };
+  user?: { id: string };
 }
 
 @ApiTags("push")
@@ -29,19 +26,19 @@ export class PushController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary:
-      "Register the device's Expo push token. Idempotent — safe to call on every cold start.",
+      "Register the device Expo push token and its wallet subscriptions. Idempotent — safe to call on every cold start or after wallet list changes.",
   })
   async registerPushToken(
     @Request() req: AuthedRequest,
     @Body() dto: RegisterPushTokenDto,
   ): Promise<void> {
     const userId = req.user?.id;
-    if (!userId) return; // JwtAuthGuard always populates; fallback no-op
+    if (!userId) return;
     await this.pushService.registerToken({
       userId,
       token: dto.token,
       platform: dto.platform,
-      walletAddress: dto.walletAddress ?? req.user?.walletAddress,
+      wallets: dto.wallets,
     });
   }
 }

@@ -132,7 +132,7 @@ model User {
   paymentIntentsAsPayer PaymentIntent[]  @relation("PaymentIntentPayer")
   gatewayDeposits       GatewayDeposit[]
 
-  pushTokens            PushToken[]
+  devicePushTokens      DevicePushToken[]
 
   @@unique([authProvider, socialId])
   @@index([role])
@@ -141,21 +141,58 @@ model User {
   @@index([username])
 }
 
-/// Expo push notification tokens. One row per (user, device) — the
-/// Expo token rotates per app install, so we upsert by token. Used by
-/// the strategies auto-compound watcher and the payout-receipt push
-/// (umkm-usdc-payout-spec.md §6.3).
-model PushToken {
-  token         String   @id
-  userId        String
-  walletAddress String? // optional convenience for wallet-scoped pushes
-  platform      String // "ios" | "android" | "web"
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+/// One row per device install. The Expo push token is the upsert anchor
+/// (rotates on reinstall). failCount tracks consecutive Expo delivery
+/// failures so a receipt-checking job can prune dead tokens at threshold.
+model DevicePushToken {
+  id           String    @id @default(cuid())
+  token        String    @unique
+  userId       String
+  platform     String
+  lastPushedAt DateTime?
+  failCount    Int       @default(0)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  user          User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscriptions WalletPushSubscription[]
+
+  @@index([userId])
+}
+
+/// Links a device to a wallet address it should receive notifications for.
+/// walletAddress is a plain string — any chain format, no namespace lock-in.
+/// The replace-on-register strategy keeps this table authoritative from the
+/// last successful POST /users/me/push-token call.
+model WalletPushSubscription {
+  id            String   @id @default(cuid())
+  deviceTokenId String
+  walletAddress String
   createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+
+  deviceToken DevicePushToken @relation(fields: [deviceTokenId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceTokenId, walletAddress])
+  @@index([walletAddress])
+}
+
+/// Audit log for sent push notifications. Not per-device delivery receipts —
+/// those live in Expo. This answers "did we attempt to notify this user/wallet
+/// and how many devices did we fan out to?"
+model NotificationLog {
+  id             String   @id @default(cuid())
+  userId         String?
+  walletAddress  String?
+  title          String
+  body           String
+  data           Json?
+  source         String
+  recipientCount Int
+  sentAt         DateTime @default(now())
 
   @@index([userId])
   @@index([walletAddress])
+  @@index([sentAt])
 }
 
 model Blockchain {

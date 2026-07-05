@@ -1,21 +1,3 @@
-/**
- * Push notification service — wraps the Expo Push API via
- * `expo-server-sdk`. One backend integration covers both the
- * strategies auto-compound watcher and the UMKM USDC payout receipt
- * (umkm-usdc-payout-spec.md §6.3).
- *
- * Why Expo Push (and not direct FCM/APNs):
- *   - Mobile already obtains an Expo push token (`expo-notifications`).
- *   - Expo's push relay is free, unlimited in practice, and handles
- *     APNs cert management for us.
- *   - Migration path to native FCM is mechanical when (if) Expo's
- *     relay stops fitting our needs.
- *
- * The service is intentionally provider-agnostic at the call site:
- * callers pass `{ userId, title, body, data, channelId? }` and don't
- * need to know about Expo's request shape.
- */
-
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
@@ -24,26 +6,31 @@ import {
   type ExpoPushMessage,
   type ExpoPushTicket,
 } from "expo-server-sdk";
+import type { Prisma } from "@generated/prisma";
 import { PrismaService } from "../prisma/prisma.service";
 
-const EXPO_BATCH_SIZE = 100;
-
 export interface SendPushArgs {
-  userId: string;
   title: string;
   body: string;
-  /** Custom payload — intentId, positionId, etc. */
   data?: Record<string, unknown>;
   /** Android channel id; iOS ignores. */
   channelId?: string;
-  /** Optional sub-set of platforms when only one applies. */
-  platforms?: ("ios" | "android" | "web")[];
+  /** Recorded in NotificationLog for audit/debug. */
+  source?: string;
+}
+
+export interface SendToUserArgs extends SendPushArgs {
+  userId: string;
+}
+
+export interface SendToWalletArgs extends SendPushArgs {
+  walletAddress: string;
 }
 
 export interface SendPushResult {
   attempted: number;
   accepted: number;
-  /** Tokens removed because Expo reported `DeviceNotRegistered`. */
+  /** Tokens removed because Expo reported DeviceNotRegistered. */
   pruned: number;
 }
 
@@ -62,79 +49,134 @@ export class PushService {
     });
     if (!accessToken) {
       this.logger.log(
-        "EXPO_ACCESS_TOKEN not set — using anonymous Expo Push relay (free, rate-limited per source IP).",
+        "EXPO_ACCESS_TOKEN not set — using anonymous Expo Push relay (rate-limited per source IP).",
       );
     }
   }
 
   /**
-   * Upsert a push token for a user. Idempotent — same token can be
-   * re-registered safely (re-binds to current user if it moved
-   * devices). Invalid Expo tokens are rejected up-front so we don't
-   * persist garbage.
+   * Register (or re-register) a device and its wallet subscriptions.
+   * Idempotent — upserts the DevicePushToken, then replaces all
+   * WalletPushSubscription rows for that device so the server is always
+   * authoritative from the last successful call.
    */
   async registerToken(input: {
     userId: string;
     token: string;
     platform: string;
-    walletAddress?: string;
+    wallets: string[];
   }): Promise<void> {
     if (!Expo.isExpoPushToken(input.token)) {
       this.logger.warn(
         `[registerToken] rejected: not a valid Expo push token (user=${input.userId})`,
       );
-      // Curated friendly error — but the controller layer will
-      // translate; here we silently bail so we never persist bad data.
       return;
     }
-    const normalizedPlatform =
-      input.platform === "ios" || input.platform === "android"
-        ? input.platform
-        : "web";
 
-    await this.prisma.pushToken.upsert({
+    const device = await this.prisma.devicePushToken.upsert({
       where: { token: input.token },
       create: {
         token: input.token,
         userId: input.userId,
-        walletAddress: input.walletAddress?.toLowerCase(),
-        platform: normalizedPlatform,
+        platform: input.platform,
       },
       update: {
         userId: input.userId,
-        walletAddress: input.walletAddress?.toLowerCase(),
-        platform: normalizedPlatform,
+        platform: input.platform,
+        failCount: 0,
       },
     });
+
+    // Replace wallet subscriptions — delete then re-create in a transaction
+    // so a crash mid-replace never leaves the device with a partial list.
+    const unique = [...new Set(input.wallets.filter(Boolean))];
+    await this.prisma.$transaction([
+      this.prisma.walletPushSubscription.deleteMany({
+        where: { deviceTokenId: device.id },
+      }),
+      ...(unique.length > 0
+        ? [
+            this.prisma.walletPushSubscription.createMany({
+              data: unique.map((address) => ({
+                deviceTokenId: device.id,
+                walletAddress: address.toLowerCase(),
+              })),
+            }),
+          ]
+        : []),
+    ]);
+
     this.logger.log(
-      `[registerToken] upserted token for user=${input.userId} platform=${normalizedPlatform}`,
+      `[registerToken] upserted device=${device.id} user=${input.userId} wallets=${unique.length}`,
     );
   }
 
+  /** Send a push to every device registered to a user. */
+  async sendToUser(args: SendToUserArgs): Promise<SendPushResult> {
+    const devices = await this.prisma.devicePushToken.findMany({
+      where: { userId: args.userId },
+      select: { id: true, token: true },
+    });
+    return this.dispatch(devices, args, { userId: args.userId });
+  }
+
+  /** Send a push to every device subscribed to a wallet address. */
+  async sendToWallet(args: SendToWalletArgs): Promise<SendPushResult> {
+    const subs = await this.prisma.walletPushSubscription.findMany({
+      where: { walletAddress: args.walletAddress.toLowerCase() },
+      select: { deviceToken: { select: { id: true, token: true } } },
+    });
+    const devices = subs.map((s) => s.deviceToken);
+    return this.dispatch(devices, args, { walletAddress: args.walletAddress });
+  }
+
   /**
-   * Send a push to every token belonging to a user. Best-effort:
-   * delivery failures are logged but never surfaced to the caller —
-   * pushes are auxiliary signal, never a transaction commit.
-   *
-   * Handles two failure classes:
-   *   - `DeviceNotRegistered` → token uninstalled / rotated → prune.
-   *   - Other transient errors → log; Expo retries internally.
+   * Send a PAID_OUT receipt push for a payment intent. Looks up the
+   * payer and merchant, then fans out to all devices registered by
+   * that user.
    */
-  async sendToUser(args: SendPushArgs): Promise<SendPushResult> {
-    const tokens = await this.prisma.pushToken.findMany({
-      where: {
-        userId: args.userId,
-        ...(args.platforms && args.platforms.length > 0
-          ? { platform: { in: args.platforms } }
-          : {}),
+  async sendPaidOutPush(intentId: string): Promise<void> {
+    const intent = await this.prisma.paymentIntent.findUnique({
+      where: { id: intentId },
+      select: {
+        payerUserId: true,
+        fiatAmountMinor: true,
+        fiatCurrency: true,
+        merchant: { select: { displayName: true } },
       },
     });
-    if (tokens.length === 0) {
+    if (!intent?.payerUserId) {
+      this.logger.debug(`[sendPaidOutPush] no payer for intentId=${intentId}`);
+      return;
+    }
+    await this.sendToUser({
+      userId: intent.payerUserId,
+      title: "Payment Confirmed",
+      body: `Your payment to ${intent.merchant.displayName} was received.`,
+      source: "payout",
+      channelId: "payouts",
+      data: {
+        intentId,
+        merchantDisplayName: intent.merchant.displayName,
+        fiatAmountMinor: intent.fiatAmountMinor,
+        fiatCurrency: intent.fiatCurrency,
+      },
+    });
+  }
+
+  // ─── internal ────────────────────────────────────────────────────────────
+
+  private async dispatch(
+    devices: { id: string; token: string }[],
+    args: SendPushArgs,
+    logCtx: { userId?: string; walletAddress?: string },
+  ): Promise<SendPushResult> {
+    if (devices.length === 0) {
       return { attempted: 0, accepted: 0, pruned: 0 };
     }
 
-    const messages: ExpoPushMessage[] = tokens.map((row) => ({
-      to: row.token,
+    const messages: ExpoPushMessage[] = devices.map((d) => ({
+      to: d.token,
       sound: "default",
       title: args.title,
       body: args.body,
@@ -151,58 +193,80 @@ export class PushService {
         tickets.push(...batch);
       } catch (err) {
         this.logger.warn(
-          `[sendToUser] sendPushNotificationsAsync chunk failed: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
+          `[dispatch] sendPushNotificationsAsync failed: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
 
-    // Prune tokens for which Expo immediately rejected with
-    // `DeviceNotRegistered`. Async-receipt cleanup (the second pass
-    // where you poll Expo with `getPushNotificationReceiptsAsync`)
-    // is intentionally deferred to V1.1 — for nudges, ticket-level
-    // pruning catches the dominant failure mode.
     const toPrune: string[] = [];
+    const toPruneIds: string[] = [];
     let accepted = 0;
+
     tickets.forEach((ticket, i) => {
       if (ticket.status === "ok") {
         accepted += 1;
         return;
       }
-      const err = (ticket as { details?: ExpoPushErrorReceipt["details"] })
-        .details;
-      if (err?.error === "DeviceNotRegistered") {
+      const details = (ticket as { details?: ExpoPushErrorReceipt["details"] }).details;
+      if (details?.error === "DeviceNotRegistered") {
         const token = messages[i]?.to;
-        if (typeof token === "string") toPrune.push(token);
+        if (typeof token === "string") {
+          toPrune.push(token);
+          const deviceId = devices[i]?.id;
+          if (deviceId) toPruneIds.push(deviceId);
+        }
       } else {
         this.logger.warn(
-          `[sendToUser] expo ticket error: ${ticket.message ?? "unknown"} (code=${err?.error ?? "n/a"})`,
+          `[dispatch] expo ticket error: ${ticket.message ?? "unknown"} (code=${details?.error ?? "n/a"})`,
         );
       }
     });
-    if (toPrune.length > 0) {
-      await this.prisma.pushToken
-        .deleteMany({ where: { token: { in: toPrune } } })
-        .catch((pruneErr) => {
-          this.logger.warn(
-            `[sendToUser] prune failed: ${
-              pruneErr instanceof Error ? pruneErr.message : String(pruneErr)
-            }`,
-          );
+
+    await this.prisma
+      .$transaction(async (tx) => {
+        if (toPrune.length > 0) {
+          await tx.devicePushToken.deleteMany({
+            where: { token: { in: toPrune } },
+          });
+        }
+        await tx.notificationLog.create({
+          data: {
+            userId: logCtx.userId,
+            walletAddress: logCtx.walletAddress,
+            title: args.title,
+            body: args.body,
+            data: (args.data ?? {}) as Prisma.InputJsonValue,
+            source: args.source ?? "unknown",
+            recipientCount: accepted,
+          },
         });
+      })
+      .catch((err) => {
+        this.logger.warn(
+          `[dispatch] prune/log transaction failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+
+    // Update lastPushedAt for successfully reached devices
+    if (accepted > 0) {
+      const successfulIds = devices
+        .filter((_, i) => tickets[i]?.status === "ok")
+        .map((d) => d.id);
+      if (successfulIds.length > 0) {
+        await this.prisma.devicePushToken
+          .updateMany({
+            where: { id: { in: successfulIds } },
+            data: { lastPushedAt: new Date() },
+          })
+          .catch(() => {
+            // non-critical
+          });
+      }
     }
 
     this.logger.log(
-      `[sendToUser] user=${args.userId} attempted=${messages.length} accepted=${accepted} pruned=${toPrune.length}`,
+      `[dispatch] source=${args.source ?? "unknown"} attempted=${messages.length} accepted=${accepted} pruned=${toPrune.length}`,
     );
-    return {
-      attempted: messages.length,
-      accepted,
-      pruned: toPrune.length,
-    };
+    return { attempted: messages.length, accepted, pruned: toPrune.length };
   }
-
-  // Re-export the batch size constant for tests / observability.
-  static readonly BATCH_SIZE = EXPO_BATCH_SIZE;
 }

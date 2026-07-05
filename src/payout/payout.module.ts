@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { PrismaModule } from "../prisma/prisma.module";
+import { PushModule } from "../push/push.module";
 // `PAYOUT_PROVIDER` is a plain string constant declared in
 // `pay/intents.service.ts` (task 24). We import it by reference rather
 // than re-declaring it so the token stays canonical. Importing only a
@@ -36,7 +37,7 @@ import { WebhookController } from "./webhook.controller";
  * integration seam called out in task 29 §5.
  */
 @Module({
-  imports: [ConfigModule, PrismaModule],
+  imports: [ConfigModule, PrismaModule, PushModule],
   controllers: [WebhookController],
   providers: [
     XenditPayoutProvider,
