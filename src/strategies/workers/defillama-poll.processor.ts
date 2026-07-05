@@ -7,6 +7,7 @@ import {
 import { Logger } from "@nestjs/common";
 import { Job, Queue } from "bullmq";
 import { DeFiLlamaClient } from "../external/defillama.client";
+import { SuiLstSource } from "../external/sui-lst.source";
 import { PrismaService } from "../../prisma/prisma.service";
 
 @Processor("defillama-poll")
@@ -15,6 +16,7 @@ export class DefiLlamaPollProcessor extends WorkerHost {
 
   constructor(
     private readonly defillama: DeFiLlamaClient,
+    private readonly suiLstSource: SuiLstSource,
     private readonly prisma: PrismaService,
     @InjectQueue("score-opportunities") private readonly scoringQueue: Queue,
   ) {
@@ -25,8 +27,18 @@ export class DefiLlamaPollProcessor extends WorkerHost {
     this.logger.log("Starting DeFiLlama yield pool poll...");
 
     try {
-      const pools = await this.defillama.getYieldPools();
-      this.logger.log(`Fetched ${pools.length} pools from DeFiLlama`);
+      const feedPools = await this.defillama.getYieldPools();
+      // Sui liquid-staking venues aren't in DeFiLlama's /pools — synthesize their
+      // rows (real APY + TVL) and append so they flow through the same scoring +
+      // target-resolution path. Failure here must not sink the whole poll.
+      const lstPools = await this.suiLstSource.getPools().catch((err) => {
+        this.logger.error(`Sui LST source failed: ${err.message}`);
+        return [];
+      });
+      const pools = [...feedPools, ...lstPools];
+      this.logger.log(
+        `Fetched ${feedPools.length} pools from DeFiLlama (+${lstPools.length} synthesized Sui LST)`,
+      );
 
       // In a real implementation, we might save the raw data or update a temporary cache
       // For Phase 1, we'll just pass the data to the scoring processor

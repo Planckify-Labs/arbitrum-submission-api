@@ -6,6 +6,7 @@ import { ValkeyModule } from "../valkey/valkey.module";
 import { DeBankClient } from "./external/debank.client";
 import { DeFiLlamaClient } from "./external/defillama.client";
 import { LifiClient } from "./external/lifi.client";
+import { SuiLstSource } from "./external/sui-lst.source";
 import { ZerionClient } from "./external/zerion.client";
 import { ScoringService } from "./scoring/scoring.service";
 import { StrategiesController } from "./strategies.controller";
@@ -38,6 +39,7 @@ import { StablecoinDepegWatcherProcessor } from "./workers/stablecoin-depeg-watc
     StrategiesService,
     StrategiesScheduler,
     DeFiLlamaClient,
+    SuiLstSource,
     ZerionClient,
     LifiClient,
     DeBankClient,

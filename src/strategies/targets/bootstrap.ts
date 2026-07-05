@@ -12,6 +12,7 @@ import { MorphoResolver, YearnResolver } from "./erc4626.resolver";
 import { NaviResolver } from "./navi.resolver";
 import { registerResolver } from "./registry";
 import { ScallopResolver } from "./scallop.resolver";
+import { SuiLstResolver } from "./suilst.resolver";
 // SuilendResolver is implemented but NOT registered: Suilend's deposit AND
 // withdraw both assert a fresh reserve price (abort code 1), which needs a Pyth
 // pull-oracle push in-tx — deferred (see suilend.resolver.ts / suilendSui.ts).
@@ -35,6 +36,10 @@ export function bootTargetResolvers(): void {
   // Sui — NAVI (single-market-per-asset, coinType-matched via its pools API).
   // Emits `{ kind: "navi-pool" }` for the mobile NaviSuiAdapter (Phase 3).
   registerResolver(NaviResolver);
+  // Sui — liquid staking (Haedal / Volo / SpringSui / Aftermath). Emits
+  // `{ kind: "sui-lst" }` for the mobile SuiLstAdapter. The pools these match
+  // are synthesized by `SuiLstSource` (absent from DeFiLlama's Sui feed).
+  registerResolver(SuiLstResolver);
   // Suilend NOT registered — its deposit + withdraw are both Pyth-gated (see the
   // import note). The resolver + mobile adapter are ready; wire the Pyth push
   // then register here.

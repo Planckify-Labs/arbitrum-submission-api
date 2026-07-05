@@ -46,7 +46,12 @@ function resolveChain(chainName: string): {
   );
 }
 
-@Processor("score-opportunities")
+// Concurrency 8: a poll enqueues ~250 pools, each doing a (sometimes flaky/slow)
+// DeFiLlama metadata + resolver fetch. At the BullMQ default of 1 the queue
+// can't keep pace with the 30-min poll cadence and newly-added pools (e.g. the
+// synthesized Sui LST rows) sit unscored for a long time. Parallelising drains
+// it quickly; most metadata is Valkey-cached so this doesn't hammer DeFiLlama.
+@Processor("score-opportunities", { concurrency: 8 })
 export class ScoreOpportunitiesProcessor extends WorkerHost {
   private readonly logger = new Logger(ScoreOpportunitiesProcessor.name);
 

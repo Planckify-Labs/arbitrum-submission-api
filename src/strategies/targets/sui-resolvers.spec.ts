@@ -21,6 +21,7 @@ import { EmberResolver } from "./ember.resolver";
 import { NaviResolver } from "./navi.resolver";
 import { ScallopResolver } from "./scallop.resolver";
 import { getSuiObjectFields } from "./sui-rpc";
+import { SuiLstResolver } from "./suilst.resolver";
 import { SuilendResolver } from "./suilend.resolver";
 import type { ResolverContext } from "./types";
 
@@ -32,7 +33,9 @@ const SUI = "0x2::sui::SUI";
 const USDC =
   "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC";
 
-function suiPool(overrides: Partial<DeFiLlamaYieldPool> = {}): DeFiLlamaYieldPool {
+function suiPool(
+  overrides: Partial<DeFiLlamaYieldPool> = {},
+): DeFiLlamaYieldPool {
   return {
     pool: "some-defillama-uuid",
     chain: "Sui",
@@ -92,7 +95,11 @@ const EMBER_LIST = [
   { id: "0xbasis", name: "Basis Vault", depositCoin: { symbol: "USDC" } },
   // "Crosschain USD Vault" comes BEFORE "USD Vault" and its normalized name
   // ("crosschainusdvault") CONTAINS "usdvault" — the substring-collision case.
-  { id: "0xcross", name: "Crosschain USD Vault", depositCoin: { symbol: "USDC" } },
+  {
+    id: "0xcross",
+    name: "Crosschain USD Vault",
+    depositCoin: { symbol: "USDC" },
+  },
   { id: "0xgamma", name: "USD Vault", depositCoin: { symbol: "USDC" } },
   { id: "0xsui", name: "SUI Vault", depositCoin: { symbol: "SUI" } },
 ];
@@ -129,7 +136,11 @@ describe("EmberResolver", () => {
 
   it("matches the SUI vault (native coinType tolerant)", async () => {
     const target = await EmberResolver.resolve(
-      suiPool({ symbol: "SUI", underlyingTokens: [SUI], poolMeta: "SUI Vault" }),
+      suiPool({
+        symbol: "SUI",
+        underlyingTokens: [SUI],
+        poolMeta: "SUI Vault",
+      }),
       emberCtx(),
     );
     expect(target).toMatchObject({ kind: "ember-vault", vault: "0xsui" });
@@ -137,7 +148,10 @@ describe("EmberResolver", () => {
 
   it("fails closed on ambiguous USDC with no poolMeta match", async () => {
     expect(
-      await EmberResolver.resolve(suiPool({ poolMeta: "Nonexistent Vault" }), emberCtx()),
+      await EmberResolver.resolve(
+        suiPool({ poolMeta: "Nonexistent Vault" }),
+        emberCtx(),
+      ),
     ).toBeNull();
   });
 
@@ -157,7 +171,11 @@ const SCALLOP_CTX = ctxWith(() => ({
 describe("ScallopResolver", () => {
   it("emits a scallop-market target for a supported asset", async () => {
     const target = await ScallopResolver.resolve(
-      suiPool({ project: "scallop-lend", symbol: "SUI", underlyingTokens: [SUI] }),
+      suiPool({
+        project: "scallop-lend",
+        symbol: "SUI",
+        underlyingTokens: [SUI],
+      }),
       SCALLOP_CTX,
     );
     expect(target).toEqual({
@@ -170,7 +188,11 @@ describe("ScallopResolver", () => {
   it("fails closed for an unsupported asset", async () => {
     expect(
       await ScallopResolver.resolve(
-        suiPool({ project: "scallop-lend", symbol: "PEPE", underlyingTokens: [] }),
+        suiPool({
+          project: "scallop-lend",
+          symbol: "PEPE",
+          underlyingTokens: [],
+        }),
         SCALLOP_CTX,
       ),
     ).toBeNull();
@@ -179,7 +201,11 @@ describe("ScallopResolver", () => {
   it("fails closed when the underlying doesn't match the pinned coinType", async () => {
     expect(
       await ScallopResolver.resolve(
-        suiPool({ project: "scallop-lend", symbol: "USDC", underlyingTokens: [SUI] }),
+        suiPool({
+          project: "scallop-lend",
+          symbol: "USDC",
+          underlyingTokens: [SUI],
+        }),
         SCALLOP_CTX,
       ),
     ).toBeNull();
@@ -219,19 +245,32 @@ describe("NaviResolver", () => {
 
   it("matches a bare (no-0x) coinType by prepending 0x", async () => {
     const bareCtx = ctxWith(() => ({
-      data: [{ id: 0, coinType: SUI.slice(2), contract: { pool: "0xsuipool" } }],
+      data: [
+        { id: 0, coinType: SUI.slice(2), contract: { pool: "0xsuipool" } },
+      ],
     }));
     const target = await NaviResolver.resolve(
-      suiPool({ project: "navi-lending", symbol: "SUI", underlyingTokens: [SUI] }),
+      suiPool({
+        project: "navi-lending",
+        symbol: "SUI",
+        underlyingTokens: [SUI],
+      }),
       bareCtx,
     );
-    expect(target).toMatchObject({ kind: "navi-pool", pool: "0xsuipool", assetId: 0 });
+    expect(target).toMatchObject({
+      kind: "navi-pool",
+      pool: "0xsuipool",
+      assetId: 0,
+    });
   });
 
   it("fails closed when no reserve matches the underlying", async () => {
     expect(
       await NaviResolver.resolve(
-        suiPool({ project: "navi-lending", underlyingTokens: ["0xdead::x::X"] }),
+        suiPool({
+          project: "navi-lending",
+          underlyingTokens: ["0xdead::x::X"],
+        }),
         NAVI_CTX,
       ),
     ).toBeNull();
@@ -281,7 +320,10 @@ describe("SuilendResolver", () => {
       suiPool({ project: "suilend", symbol: "SUI", underlyingTokens: [SUI] }),
       SCALLOP_CTX,
     );
-    expect(target).toMatchObject({ kind: "suilend-market", reserveArrayIndex: 0 });
+    expect(target).toMatchObject({
+      kind: "suilend-market",
+      reserveArrayIndex: 0,
+    });
   });
 
   it("fails closed when no reserve matches the underlying", async () => {
@@ -297,7 +339,10 @@ describe("SuilendResolver", () => {
   it("fails closed when the LendingMarket can't be read", async () => {
     mockGetSuiObjectFields.mockResolvedValue(null);
     expect(
-      await SuilendResolver.resolve(suiPool({ project: "suilend" }), SCALLOP_CTX),
+      await SuilendResolver.resolve(
+        suiPool({ project: "suilend" }),
+        SCALLOP_CTX,
+      ),
     ).toBeNull();
   });
 
@@ -305,6 +350,45 @@ describe("SuilendResolver", () => {
     expect(
       await SuilendResolver.resolve(
         suiPool({ project: "suilend", chain: "Ethereum" }),
+        SCALLOP_CTX,
+      ),
+    ).toBeNull();
+  });
+});
+
+// ── Sui liquid staking (Haedal / Volo / SpringSui / Aftermath) ────────────────
+
+describe("SuiLstResolver", () => {
+  it("resolves each synthesized LST pool to its sui-lst target", async () => {
+    const cases: Array<[string, string, string]> = [
+      ["haedal-protocol", "haedal", "hasui::HASUI"],
+      ["volo-lst", "volo", "cert::CERT"],
+      ["springsui", "springsui", "spring_sui::SPRING_SUI"],
+      ["aftermath-afsui", "aftermath", "afsui::AFSUI"],
+    ];
+    for (const [project, venue, tail] of cases) {
+      const target = await SuiLstResolver.resolve(
+        suiPool({ project, symbol: "SUI", underlyingTokens: [SUI] }),
+        SCALLOP_CTX,
+      );
+      expect(target).toMatchObject({ kind: "sui-lst", venue });
+      expect((target as { lstType: string }).lstType).toContain(tail);
+    }
+  });
+
+  it("fails closed for an unknown (non-LST) project", async () => {
+    expect(
+      await SuiLstResolver.resolve(
+        suiPool({ project: "not-an-lst" }),
+        SCALLOP_CTX,
+      ),
+    ).toBeNull();
+  });
+
+  it("fails closed for a non-Sui chain", async () => {
+    expect(
+      await SuiLstResolver.resolve(
+        suiPool({ project: "haedal-protocol", chain: "Ethereum" }),
         SCALLOP_CTX,
       ),
     ).toBeNull();

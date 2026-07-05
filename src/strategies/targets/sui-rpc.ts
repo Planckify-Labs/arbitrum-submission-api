@@ -23,29 +23,52 @@ type SuiClientLike = {
     } | null;
   }>;
 };
-type SuiClientCtor = new (opts: { url: string }) => SuiClientLike;
-type GetFullnodeUrl = (network: string) => string;
+type SuiClientCtor = new (opts: {
+  url: string;
+  network?: string;
+}) => SuiClientLike;
 
-const dynamicImport = new Function(
-  "specifier",
-  "return import(specifier)",
-) as (specifier: string) => Promise<Record<string, unknown>>;
+const DEFAULT_SUI_RPC = "https://fullnode.mainnet.sui.io:443";
+
+const dynamicImport = new Function("specifier", "return import(specifier)") as (
+  specifier: string,
+) => Promise<Record<string, unknown>>;
 
 let clientPromise: Promise<SuiClientLike> | null = null;
 
 async function getClient(): Promise<SuiClientLike> {
   if (!clientPromise) {
     clientPromise = (async () => {
-      const mod = await dynamicImport("@mysten/sui/client");
-      const SuiClient = mod.SuiClient as SuiClientCtor;
-      const getFullnodeUrl = mod.getFullnodeUrl as GetFullnodeUrl;
-      const url =
-        process.env.STRATEGIES_SUI_RPC_URL?.trim() ||
-        getFullnodeUrl("mainnet");
-      return new SuiClient({ url });
+      // The installed `@mysten/sui` no longer exports `SuiClient`/`getFullnodeUrl`
+      // from `@mysten/sui/client` — the JSON-RPC client moved to
+      // `@mysten/sui/jsonRpc` as `SuiJsonRpcClient` (same client the mobile app
+      // uses). Importing the old path silently yielded `undefined`, so EVERY Sui
+      // read (object types + the LST staking APY) failed.
+      const mod = await dynamicImport("@mysten/sui/jsonRpc");
+      const SuiJsonRpcClient = mod.SuiJsonRpcClient as SuiClientCtor;
+      const url = process.env.STRATEGIES_SUI_RPC_URL?.trim() || DEFAULT_SUI_RPC;
+      return new SuiJsonRpcClient({ url, network: "mainnet" });
     })();
   }
   return clientPromise;
+}
+
+/**
+ * Retry a Sui RPC call: the public mainnet fullnode's DNS rotates onto an
+ * occasionally-dead IP, so single-shot reads fail intermittently. Short backoff,
+ * a few tries — enough to get one good response before the caller falls back.
+ */
+async function suiRetry<T>(fn: () => Promise<T>, tries = 6): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  }
+  throw lastErr;
 }
 
 /** True when target validation is enabled (default on; `…=off` for local dev). */
@@ -87,6 +110,51 @@ export async function getSuiObjectFields(
   }
 }
 
+type SuiStakingClient = {
+  getValidatorsApy(): Promise<{
+    apys?: { address: string; apy: number }[];
+  }>;
+  getLatestSuiSystemState(): Promise<{
+    activeValidators?: { suiAddress: string; stakingPoolSuiBalance: string }[];
+  }>;
+};
+
+/**
+ * Current Sui network staking APY as a FRACTION (e.g. `0.026` = 2.6%),
+ * stake-weighted across active validators. This is the underlying yield every
+ * SUI liquid-staking token delivers (net of each venue's small fee), and the
+ * honest APY the synthesized LST opportunity rows carry — computed live from
+ * `getValidatorsApy` × validator stake, never hardcoded. Best-effort: returns
+ * `null` on any RPC failure so the caller falls back to a cached last-good value
+ * rather than fabricate a number.
+ */
+export async function getSuiNetworkStakingApy(): Promise<number | null> {
+  try {
+    const client = (await getClient()) as unknown as SuiStakingClient;
+    const [apyRes, sys] = await Promise.all([
+      suiRetry(() => client.getValidatorsApy()),
+      suiRetry(() => client.getLatestSuiSystemState()),
+    ]);
+    const stake = new Map<string, number>();
+    for (const v of sys.activeValidators ?? []) {
+      stake.set(v.suiAddress, Number(v.stakingPoolSuiBalance ?? "0"));
+    }
+    let weightedApy = 0;
+    let totalStake = 0;
+    for (const a of apyRes.apys ?? []) {
+      const w = stake.get(a.address) ?? 0;
+      if (a.apy > 0 && w > 0) {
+        weightedApy += a.apy * w;
+        totalStake += w;
+      }
+    }
+    if (totalStake === 0) return null;
+    return weightedApy / totalStake;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Normalise a Move type/coin-type string for containment checks: lowercase and
  * collapse leading address zeros so `0x2::sui::SUI` matches inside a
@@ -100,10 +168,7 @@ export function normSuiType(s: string): string {
  * Compare two Sui coin types tolerating address zero-padding + struct casing.
  * `0x2::sui::SUI` == `0x000…0002::sui::SUI`; `…::usdc::USDC` == `…::usdc::usdc`.
  */
-export function eqSuiCoinType(
-  a?: string | null,
-  b?: string | null,
-): boolean {
+export function eqSuiCoinType(a?: string | null, b?: string | null): boolean {
   if (!a || !b) return false;
   return normSuiType(a) === normSuiType(b);
 }

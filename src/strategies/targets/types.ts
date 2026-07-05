@@ -49,6 +49,12 @@ export type DepositTarget =
       reserveArrayIndex: number;
       coinType: string;
     }
+  // Sui liquid staking (Haedal / Volo / SpringSui / Aftermath). The user
+  // supplies `Coin<SUI>` and receives a liquid-staking receipt coin; the deposit
+  // is ORACLE-FREE (no Pyth), unlike Suilend. `venue` selects the mobile
+  // adapter's pinned stake shape + shared objects; `lstType` is the receipt
+  // coin. These pools are NOT in DeFiLlama — the `SuiLstSource` synthesizes them.
+  | { kind: "sui-lst"; venue: string; lstType: string }
   | { kind: "solana-reserve"; program: string; reserve: string; mint: string };
 
 export type DepositTargetKind = DepositTarget["kind"];
