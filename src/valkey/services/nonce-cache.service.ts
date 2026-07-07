@@ -2,7 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { ValkeyService } from "../valkey.service";
 import { ConfigService } from "@nestjs/config";
 
-export type AddressNamespace = "eip155" | "solana" | "sui";
+export type AddressNamespace = "eip155" | "solana" | "sui" | "stellar";
 
 interface NonceData {
   nonce: string;

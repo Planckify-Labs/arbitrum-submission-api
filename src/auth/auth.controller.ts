@@ -67,6 +67,18 @@ export class AuthController {
         );
         return { nonce, message };
       }
+      if (nonceDto.chainSlug.startsWith("stellar-")) {
+        const nonce = await this.authService.generateNonce(
+          walletAddress,
+          "stellar",
+        );
+        const message = this.authService.createSiwsStellarMessage(
+          walletAddress,
+          nonce,
+          nonceDto.chainSlug,
+        );
+        return { nonce, message };
+      }
       throw new BadRequestException(
         `Unsupported chainSlug: ${nonceDto.chainSlug}`,
       );
@@ -74,16 +86,31 @@ export class AuthController {
 
     // Defense-in-depth: auto-detect namespace from address format when
     // the caller didn't specify one. Sui canonical addresses are
-    // `0x` + 64 hex chars (32 bytes); Solana addresses are base58 (no
-    // 0x prefix); EVM addresses are `0x` + 40 hex chars.
+    // `0x` + 64 hex chars (32 bytes); Stellar addresses are StrKey
+    // `G` + 55 base32 chars (56 total); Solana addresses are base58 (no
+    // 0x prefix, no leading `G` requirement); EVM addresses are `0x` +
+    // 40 hex chars.
     const isEvmAddress = /^0x[a-fA-F0-9]{40}$/.test(walletAddress);
     const isSuiAddress = /^0x[a-fA-F0-9]{64}$/.test(walletAddress);
+    const isStellarAddress = /^G[A-Z2-7]{55}$/.test(walletAddress);
     if (isSuiAddress) {
       const nonce = await this.authService.generateNonce(walletAddress, "sui");
       const message = this.authService.createSiwsSuiMessage(
         walletAddress,
         nonce,
         "sui-mainnet",
+      );
+      return { nonce, message };
+    }
+    if (isStellarAddress) {
+      const nonce = await this.authService.generateNonce(
+        walletAddress,
+        "stellar",
+      );
+      const message = this.authService.createSiwsStellarMessage(
+        walletAddress,
+        nonce,
+        "stellar-mainnet",
       );
       return { nonce, message };
     }

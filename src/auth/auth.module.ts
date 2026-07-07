@@ -11,6 +11,7 @@ import { RolesGuard } from "./guards/roles.guard";
 import { APP_GUARD } from "@nestjs/core";
 import { SiwsService } from "./siws/siws.service";
 import { SiwsSuiService } from "./siws-sui/siws-sui.service";
+import { SiwsStellarService } from "./siws-stellar/siws-stellar.service";
 
 @Module({
   imports: [
@@ -42,12 +43,13 @@ import { SiwsSuiService } from "./siws-sui/siws-sui.service";
     AuthService,
     SiwsService,
     SiwsSuiService,
+    SiwsStellarService,
     JwtStrategy,
     {
       provide: APP_GUARD,
       useClass: RolesGuard,
     },
   ],
-  exports: [AuthService, SiwsService, SiwsSuiService],
+  exports: [AuthService, SiwsService, SiwsSuiService, SiwsStellarService],
 })
 export class AuthModule {}

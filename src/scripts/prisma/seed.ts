@@ -952,6 +952,46 @@ async function main() {
         isTestnet: true,
       },
     }),
+    // Stellar mainnet (pubnet) — keyed by chainSlug (no EIP-155 chainId,
+    // same posture as Solana/Sui). `rpcUrl` carries the Horizon REST
+    // endpoint — there is no dedicated `horizonUrl` column, reusing the
+    // same generic-string-column pattern Solana (Alchemy RPC) and Sui
+    // (fullnode RPC) already established. Public Horizon for v1; swap
+    // in a paid provider when traffic warrants.
+    // See docs/stellar-chain-support-spec.md §3.8.
+    prisma.blockchain.upsert({
+      where: { chainSlug: "stellar-mainnet" },
+      update: {
+        rpcUrl: "https://horizon.stellar.org",
+        blockExplorer: "https://stellar.expert/explorer/public",
+      },
+      create: {
+        name: "Stellar",
+        chainSlug: "stellar-mainnet",
+        rpcUrl: "https://horizon.stellar.org",
+        blockExplorer: "https://stellar.expert/explorer/public",
+        isEVM: false,
+        isActive: true,
+        isTestnet: false,
+      },
+    }),
+    // Stellar testnet — keyed by chainSlug (slugChain()).
+    prisma.blockchain.upsert({
+      where: { chainSlug: "stellar-testnet" },
+      update: {
+        rpcUrl: "https://horizon-testnet.stellar.org",
+        blockExplorer: "https://stellar.expert/explorer/testnet",
+      },
+      create: {
+        name: "Stellar Testnet",
+        chainSlug: "stellar-testnet",
+        rpcUrl: "https://horizon-testnet.stellar.org",
+        blockExplorer: "https://stellar.expert/explorer/testnet",
+        isEVM: false,
+        isActive: true,
+        isTestnet: true,
+      },
+    }),
     // Base Mainnet — keyed by chainId 8453 (evmChain()).
     prisma.blockchain.upsert({
       where: { chainId: 8453 },
@@ -2295,6 +2335,114 @@ async function main() {
           logoUrl: "https://cryptologos.cc/logos/sui-sui-logo.png",
           isStablecoin: false,
           isNativeCurrency: true,
+          isActive: true,
+        },
+      });
+    }
+  }
+
+  // Stellar native currency (XLM) rows — no compound CODE:ISSUER for the
+  // native asset (Asset.native() has no issuer), so `contractAddress` is
+  // null here, same convention Monad's native row uses above. Decimals:
+  // 7 (1 XLM = 10^7 stroops — see docs/stellar-chain-support-spec.md §3.8;
+  // NOT 18/9/6 like EVM/Sui/USDC-elsewhere — this is the single easiest
+  // transcription bug to make when copy-pasting a native-token seed row).
+  // One row per network.
+  for (const [slug, label] of [
+    ["stellar-mainnet", "Stellar Lumens"],
+    ["stellar-testnet", "Stellar Lumens (Testnet)"],
+  ] as const) {
+    const stellarChainId = slugChain(slug).id;
+    const existing = await prisma.token.findFirst({
+      where: {
+        blockchainId: stellarChainId,
+        isNativeCurrency: true,
+      },
+    });
+    if (existing) {
+      await prisma.token.update({
+        where: { id: existing.id },
+        data: {
+          name: label,
+          symbol: "XLM",
+          decimals: 7,
+          logoUrl: "https://cryptologos.cc/logos/stellar-xlm-logo.png",
+          isStablecoin: false,
+          isNativeCurrency: true,
+          isActive: true,
+        },
+      });
+    } else {
+      await prisma.token.create({
+        data: {
+          name: label,
+          symbol: "XLM",
+          decimals: 7,
+          blockchainId: stellarChainId,
+          contractAddress: null,
+          logoUrl: "https://cryptologos.cc/logos/stellar-xlm-logo.png",
+          isStablecoin: false,
+          isNativeCurrency: true,
+          isActive: true,
+        },
+      });
+    }
+  }
+
+  // Stellar USDC rows — `contractAddress` is the compound
+  // `"{CODE}:{ISSUER}"` string (docs/stellar-chain-support-spec.md §3.7),
+  // reusing the existing `contractAddress` column exactly like Solana
+  // (mint address) and Sui (CoinType) already do. Decimals: 7 — every
+  // Stellar asset uses the ledger's 7-decimal fixed point, NOT the 6
+  // decimals USDC uses on EVM/Solana/Sui. Issuer addresses verified
+  // against Circle's own USDC-on-Stellar docs, cross-checked against
+  // stellar.expert / stellarchain.io (spec §3.7) — re-verify against
+  // Circle's live docs at deploy time regardless, since issuer
+  // addresses can rotate.
+  for (const [slug, label, issuer] of [
+    [
+      "stellar-mainnet",
+      "USD Coin",
+      "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+    ],
+    [
+      "stellar-testnet",
+      "USD Coin (Testnet)",
+      "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+    ],
+  ] as const) {
+    const stellarChainId = slugChain(slug).id;
+    const contractAddress = `USDC:${issuer}`;
+    const existing = await prisma.token.findFirst({
+      where: {
+        blockchainId: stellarChainId,
+        contractAddress,
+      },
+    });
+    if (existing) {
+      await prisma.token.update({
+        where: { id: existing.id },
+        data: {
+          name: label,
+          symbol: "USDC",
+          decimals: 7,
+          logoUrl: "https://cryptologos.cc/logos/usd-coin-usdc-logo.png",
+          isStablecoin: true,
+          isNativeCurrency: false,
+          isActive: true,
+        },
+      });
+    } else {
+      await prisma.token.create({
+        data: {
+          name: label,
+          symbol: "USDC",
+          decimals: 7,
+          blockchainId: stellarChainId,
+          contractAddress,
+          logoUrl: "https://cryptologos.cc/logos/usd-coin-usdc-logo.png",
+          isStablecoin: true,
+          isNativeCurrency: false,
           isActive: true,
         },
       });
