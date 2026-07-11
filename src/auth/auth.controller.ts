@@ -20,6 +20,12 @@ import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { AdminLoginDto } from "./dto/admin-login.dto";
 import { CreateAdminDto } from "./dto/create-admin.dto";
 import { GoogleLoginDto } from "./dto/google-login.dto";
+import {
+  GoogleChallengeResponseDto,
+  LinkWalletDto,
+  ResendGoogleOtpDto,
+  VerifyGoogleOtpDto,
+} from "./dto/google-otp.dto";
 import { Roles } from "../decorators/roles.decorator";
 import { UserRole } from "@generated/prisma";
 import { NonceDto } from "./dto/nonce.dto";
@@ -142,29 +148,106 @@ export class AuthController {
     return await this.authService.refresh(refreshTokenDto.refresh_token);
   }
 
-  @ApiOperation({ summary: "Authenticate with Google ID token" })
-  @ApiResponse({
-    status: 200,
-    description: "Google authentication successful",
-    type: AuthResponseDto,
+  @ApiOperation({
+    summary: "Start Google sign-in — verifies the ID token and emails a code",
+    description:
+      "Issues no tokens. Returns a challenge that must be exchanged via POST /auth/google/verify-otp.",
   })
   @ApiResponse({
-    status: 401,
-    description: "Invalid Google token",
+    status: 200,
+    description: "Verification code sent",
+    type: GoogleChallengeResponseDto,
   })
   @ApiResponse({
     status: 400,
-    description: "Email conflict with existing account",
+    description:
+      "Invalid Google token (INVALID_GOOGLE_TOKEN) or email conflict with an existing account (ACCOUNT_CONFLICT)",
+  })
+  @ApiResponse({
+    status: 403,
+    description: "Account is not active (ACCOUNT_INACTIVE)",
+  })
+  @ApiResponse({
+    status: 429,
+    description: "Too many verification requests for this address",
+  })
+  @ApiResponse({
+    status: 503,
+    description: "Verification email could not be sent",
   })
   @Public()
   @Post("google")
   googleLogin(
     @Body() googleLoginDto: GoogleLoginDto,
-  ): Promise<AuthResponseDto> {
-    return this.authService.googleLogin(
+  ): Promise<GoogleChallengeResponseDto> {
+    return this.authService.startGoogleLogin(
       googleLoginDto.idToken,
       googleLoginDto.platform,
     );
+  }
+
+  @ApiOperation({
+    summary: "Complete Google sign-in by submitting the emailed code",
+  })
+  @ApiResponse({
+    status: 200,
+    description: "Verification successful",
+    type: AuthResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: "Invalid or expired verification code (INVALID_CODE)",
+  })
+  @Public()
+  @Post("google/verify-otp")
+  verifyGoogleOtp(
+    @Body() verifyGoogleOtpDto: VerifyGoogleOtpDto,
+  ): Promise<AuthResponseDto> {
+    return this.authService.verifyGoogleOtp(
+      verifyGoogleOtpDto.challengeId,
+      verifyGoogleOtpDto.code,
+    );
+  }
+
+  @ApiOperation({
+    summary: "Re-send the verification code for a pending challenge",
+    description:
+      "Rotates the code without extending the original expiry window.",
+  })
+  @ApiResponse({
+    status: 200,
+    description: "A new verification code was sent",
+    type: GoogleChallengeResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description:
+      "Verification session expired or resend budget exhausted (CHALLENGE_EXPIRED)",
+  })
+  @Public()
+  @Post("google/resend-otp")
+  resendGoogleOtp(
+    @Body() resendGoogleOtpDto: ResendGoogleOtpDto,
+  ): Promise<GoogleChallengeResponseDto> {
+    return this.authService.resendGoogleOtp(resendGoogleOtpDto.challengeId);
+  }
+
+  @ApiOperation({
+    summary: "Link a wallet address to the signed-in account",
+    description:
+      "Records that this account owns a wallet, so a future sign-in on a new device can offer recovery instead of minting a fresh wallet. Idempotent; stores no key material. Requires a valid access token.",
+  })
+  @ApiResponse({ status: 201, description: "Wallet linked" })
+  @Post("google/wallets")
+  async linkWallet(
+    @Body() linkWalletDto: LinkWalletDto,
+    @Req() req: Request & { user?: { id: string } },
+  ): Promise<{ linked: true }> {
+    if (!req.user?.id) {
+      throw new UnauthorizedException("Authentication required");
+    }
+    await this.authService.linkWallet(req.user.id, linkWalletDto.walletAddress);
+    return { linked: true };
   }
 
   @ApiOperation({ summary: "Admin login with username and password" })

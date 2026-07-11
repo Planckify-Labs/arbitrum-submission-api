@@ -30,4 +30,12 @@ export class AuthResponseDto {
     name?: string;
     role: UserRole;
   };
+
+  @ApiProperty({
+    description:
+      "Google sign-in only: whether this account has previously linked a wallet on any device. Lets a new device offer recovery instead of silently minting a fresh wallet.",
+    required: false,
+    example: true,
+  })
+  hasWallet?: boolean;
 }

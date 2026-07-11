@@ -1,7 +1,9 @@
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import { AuthService } from "./auth.service";
+import { EmailService } from "../email/email.service";
 import { NonceCacheService } from "../valkey/services/nonce-cache.service";
+import { OtpCacheService } from "../valkey/services/otp-cache.service";
 import { SiwsService } from "./siws/siws.service";
 import { SiwsSuiService } from "./siws-sui/siws-sui.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -29,11 +31,32 @@ describe("AuthService.verifySignature dispatcher", () => {
     buildMessage: jest.fn(),
   } as unknown as SiwsSuiService;
 
+  const otpCache = {
+    consumeStartBudget: jest.fn(),
+    createChallenge: jest.fn(),
+    consumeChallenge: jest.fn(),
+    rotateCode: jest.fn(),
+    deleteChallenge: jest.fn(),
+  } as unknown as OtpCacheService;
+
+  const email = {
+    sendOtpEmail: jest.fn(),
+  } as unknown as EmailService;
+
   let service: AuthService;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service = new AuthService(prisma, jwt, config, nonceCache, siws, siwsSui);
+    service = new AuthService(
+      prisma,
+      jwt,
+      config,
+      nonceCache,
+      otpCache,
+      email,
+      siws,
+      siwsSui,
+    );
   });
 
   it("routes SIWS messages to SiwsService.verify", async () => {
