@@ -6,6 +6,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { ValkeyService } from "./valkey.service";
 import { VendorAPICacheService } from "./services/vendor-api-cache.service";
 import { NonceCacheService } from "./services/nonce-cache.service";
+import { OtpCacheService } from "./services/otp-cache.service";
 import { RateLimitCacheService } from "./services/rate-limit-cache.service";
 import { CacheManagerService } from "./services/cache-manager.service";
 import { CacheInvalidationService } from "./services/cache-invalidation.service";
@@ -27,6 +28,7 @@ import { PointsCacheService } from "./services/points-cache.service";
     ValkeyService,
     VendorAPICacheService,
     NonceCacheService,
+    OtpCacheService,
     RateLimitCacheService,
     CacheManagerService,
     CacheInvalidationService,
@@ -46,6 +48,7 @@ import { PointsCacheService } from "./services/points-cache.service";
     ValkeyService,
     VendorAPICacheService,
     NonceCacheService,
+    OtpCacheService,
     RateLimitCacheService,
     CacheManagerService,
     CacheInvalidationService,

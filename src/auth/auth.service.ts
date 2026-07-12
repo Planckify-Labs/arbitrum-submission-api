@@ -2,8 +2,12 @@ import { randomBytes } from "crypto";
 import { AuthProvider, UserRole, UserStatus } from "@generated/prisma";
 import {
   BadRequestException,
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
   Injectable,
   Logger,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -11,9 +15,13 @@ import { JwtService } from "@nestjs/jwt";
 import * as argon2 from "argon2";
 import { OAuth2Client, TokenPayload } from "google-auth-library";
 import { SiweMessage } from "siwe";
+import { EmailService } from "../email/email.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { NonceCacheService } from "../valkey/services/nonce-cache.service";
+import { OtpCacheService } from "../valkey/services/otp-cache.service";
 import { AuthResponseDto } from "./dto/auth-response.dto";
+import { GoogleChallengeResponseDto } from "./dto/google-otp.dto";
+import { GoogleAuthErrorCode } from "./google-auth-errors";
 import { SiwsService } from "./siws/siws.service";
 import { chainSlugToCluster, SiwsCluster } from "./siws/siws-message";
 import { SiwsSuiService } from "./siws-sui/siws-sui.service";
@@ -29,6 +37,18 @@ export interface VerifyDispatchResult {
   namespace: AddressNamespace;
 }
 
+/**
+ * Redacts an address for display on the OTP screen, so the client never has
+ * to be trusted with the full destination it is telling the user about.
+ * `arindatuganis@gmail.com` -> `a***s@gmail.com`.
+ */
+function maskEmail(email: string): string {
+  const [local, domain] = email.split("@");
+  if (!domain) return "***";
+  if (local.length <= 2) return `${local[0] ?? "*"}***@${domain}`;
+  return `${local[0]}***${local[local.length - 1]}@${domain}`;
+}
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -42,6 +62,8 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly nonceCacheService: NonceCacheService,
+    private readonly otpCacheService: OtpCacheService,
+    private readonly emailService: EmailService,
     private readonly siwsService: SiwsService,
     private readonly siwsSuiService: SiwsSuiService,
     private readonly siwsStellarService: SiwsStellarService,
@@ -351,20 +373,130 @@ export class AuthService {
     };
   }
 
-  async googleLogin(
+  /**
+   * Step 1 of 2. Proves the caller holds a valid Google ID token, then parks
+   * that identity behind an emailed six-digit code.
+   *
+   * Deliberately issues **no tokens**. Google's `email_verified` claim
+   * already establishes the address, so the code is not re-verifying the
+   * email — it is a second factor (possession of the inbox) standing between
+   * a leaked or mis-audienced ID token and a live session.
+   *
+   * Conflict and status checks run before the code is issued so a sign-in
+   * that can never complete does not spend an email.
+   */
+  async startGoogleLogin(
     idToken: string,
     platform?: string,
-  ): Promise<AuthResponseDto> {
-    // 1. Verify the Google ID token
+  ): Promise<GoogleChallengeResponseDto> {
     const payload = await this.verifyGoogleToken(idToken, platform);
 
-    if (!payload || !payload.email) {
-      throw new UnauthorizedException("Invalid Google token");
+    if (!payload?.email || !payload.sub) {
+      throw new BadRequestException({
+        message: "Invalid Google token",
+        code: GoogleAuthErrorCode.INVALID_GOOGLE_TOKEN,
+      });
     }
 
-    const { email, sub: googleId, name, picture } = payload;
+    // `verifyIdToken` checks the signature, issuer, audience and expiry, but
+    // not this claim. Without it, a Google account whose address was never
+    // confirmed could seize an email that belongs to someone else.
+    if (!payload.email_verified) {
+      throw new BadRequestException({
+        message: "Invalid Google token",
+        code: GoogleAuthErrorCode.INVALID_GOOGLE_TOKEN,
+      });
+    }
 
-    // 2. Check if user exists by Google socialId
+    const email = payload.email.toLowerCase();
+
+    const existingByEmail = await this.prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (existingByEmail) {
+      if (existingByEmail.authProvider !== AuthProvider.GOOGLE) {
+        throw new BadRequestException({
+          message:
+            "An account with this email already exists. Please sign in using your original method.",
+          code: GoogleAuthErrorCode.ACCOUNT_CONFLICT,
+        });
+      }
+      if (existingByEmail.status !== UserStatus.ACTIVE) {
+        throw new ForbiddenException({
+          message: "User account is not active",
+          code: GoogleAuthErrorCode.ACCOUNT_INACTIVE,
+        });
+      }
+    }
+
+    const withinBudget = await this.otpCacheService.consumeStartBudget(email);
+    if (!withinBudget) {
+      throw new HttpException(
+        {
+          message: "Too many verification requests. Please try again later.",
+          code: GoogleAuthErrorCode.RATE_LIMITED,
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const { challengeId, code, expiresInSeconds } =
+      await this.otpCacheService.createChallenge({
+        email,
+        googleId: payload.sub,
+        name: payload.name ?? null,
+        picture: payload.picture ?? null,
+      });
+
+    const sent = await this.emailService.sendOtpEmail({
+      to: email,
+      code,
+      expiresInMinutes: this.otpCacheService.expiresInMinutes,
+      idempotencySuffix: `${challengeId}/0`,
+    });
+
+    if (!sent) {
+      // The code is unreachable, so the challenge is dead weight. Drop it
+      // rather than leave the user staring at a code that never arrives.
+      await this.otpCacheService.deleteChallenge(challengeId);
+      throw new ServiceUnavailableException({
+        message: "Could not send the verification email. Please try again.",
+        code: GoogleAuthErrorCode.EMAIL_UNDELIVERABLE,
+      });
+    }
+
+    return {
+      challengeId,
+      emailMasked: maskEmail(email),
+      expiresInSeconds,
+    };
+  }
+
+  /**
+   * Step 2 of 2. Exchanges a challenge + code for a session. The user row is
+   * created here, not at step 1, so an unverified sign-in leaves no trace.
+   */
+  async verifyGoogleOtp(
+    challengeId: string,
+    code: string,
+  ): Promise<AuthResponseDto> {
+    const identity = await this.otpCacheService.consumeChallenge(
+      challengeId,
+      code,
+    );
+
+    // One code for wrong / expired / exhausted / unknown. Telling them apart
+    // would let an attacker probe which challenge ids are live.
+    if (!identity) {
+      throw new BadRequestException({
+        message: "Invalid or expired verification code",
+        code: GoogleAuthErrorCode.INVALID_CODE,
+      });
+    }
+
+    const { email, googleId, name, picture } = identity;
+
     let user = await this.prisma.user.findFirst({
       where: {
         authProvider: AuthProvider.GOOGLE,
@@ -372,29 +504,27 @@ export class AuthService {
       },
     });
 
-    // 3. If no user found by socialId, check by email
     if (!user) {
       const existingUserByEmail = await this.prisma.user.findUnique({
-        where: { email: email.toLowerCase() },
+        where: { email },
       });
 
       if (existingUserByEmail) {
-        // Email exists with different auth provider - for now, throw conflict
         if (existingUserByEmail.authProvider !== AuthProvider.GOOGLE) {
-          throw new BadRequestException(
-            "An account with this email already exists. Please sign in using your original method.",
-          );
+          throw new BadRequestException({
+            message:
+              "An account with this email already exists. Please sign in using your original method.",
+            code: GoogleAuthErrorCode.ACCOUNT_CONFLICT,
+          });
         }
-        // Update socialId if it was somehow missing
         user = await this.prisma.user.update({
           where: { id: existingUserByEmail.id },
           data: { socialId: googleId },
         });
       } else {
-        // 4. Create new user
         user = await this.prisma.user.create({
           data: {
-            email: email.toLowerCase(),
+            email,
             name: name || null,
             profileImage: picture || null,
             authProvider: AuthProvider.GOOGLE,
@@ -405,18 +535,27 @@ export class AuthService {
       }
     }
 
-    // 5. Check user status
     if (user.status !== UserStatus.ACTIVE) {
-      throw new UnauthorizedException("User account is not active");
+      throw new ForbiddenException({
+        message: "User account is not active",
+        code: GoogleAuthErrorCode.ACCOUNT_INACTIVE,
+      });
     }
 
-    // 6. Update last login
     await this.prisma.user.update({
       where: { id: user.id },
       data: { lastLoginAt: new Date() },
     });
 
-    // 7. Generate JWT tokens (same format as SIWE auth)
+    // Does this account already own a wallet on some other device? The link
+    // rows are written by `linkWallet` on every successful setup, so a
+    // returning user has them from a prior session. A brand-new user created
+    // just above has none, which correctly reads as `false`.
+    const hasWallet =
+      (await this.prisma.walletAccountLink.count({
+        where: { userId: user.id },
+      })) > 0;
+
     const tokenPayload = {
       sub: user.id,
       email: user.email,
@@ -446,6 +585,65 @@ export class AuthService {
         name: user.name || undefined,
         role: user.role,
       },
+      hasWallet,
+    };
+  }
+
+  /**
+   * Records that `walletAddress` belongs to the (social) account `userId`.
+   *
+   * Idempotent — a repeat call for the same pair is a no-op — so the client can
+   * fire it on every sign-in, which also backfills accounts that set up a
+   * wallet before this table existed. Stores no key material; see the
+   * `WalletAccountLink` model comment.
+   */
+  async linkWallet(userId: string, walletAddress: string): Promise<void> {
+    const address = walletAddress.trim();
+    if (!address) {
+      throw new BadRequestException("walletAddress is required");
+    }
+
+    await this.prisma.walletAccountLink.upsert({
+      where: { userId_walletAddress: { userId, walletAddress: address } },
+      create: { userId, walletAddress: address },
+      update: {},
+    });
+  }
+
+  /**
+   * Issues a fresh code against an existing challenge. The original expiry is
+   * preserved — resending buys a new code, never more time.
+   */
+  async resendGoogleOtp(
+    challengeId: string,
+  ): Promise<GoogleChallengeResponseDto> {
+    const rotated = await this.otpCacheService.rotateCode(challengeId);
+
+    if (!rotated) {
+      throw new BadRequestException({
+        message: "Verification session expired",
+        code: GoogleAuthErrorCode.CHALLENGE_EXPIRED,
+      });
+    }
+
+    const sent = await this.emailService.sendOtpEmail({
+      to: rotated.email,
+      code: rotated.code,
+      expiresInMinutes: this.otpCacheService.expiresInMinutes,
+      idempotencySuffix: `${challengeId}/${rotated.resends}`,
+    });
+
+    if (!sent) {
+      throw new ServiceUnavailableException({
+        message: "Could not send the verification email. Please try again.",
+        code: GoogleAuthErrorCode.EMAIL_UNDELIVERABLE,
+      });
+    }
+
+    return {
+      challengeId,
+      emailMasked: maskEmail(rotated.email),
+      expiresInSeconds: rotated.expiresInSeconds,
     };
   }
 

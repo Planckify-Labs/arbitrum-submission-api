@@ -134,11 +134,38 @@ model User {
 
   devicePushTokens      DevicePushToken[]
 
+  // Wallets this (social) account has set up on some device. Lets a
+  // returning user on a new device be told "we found your wallet" even
+  // when there is no local storage and no Drive backup.
+  walletLinks           WalletAccountLink[]
+
   @@unique([authProvider, socialId])
   @@index([role])
   @@index([status])
   @@index([email])
   @@index([username])
+}
+
+/// Associates a social (Google) account with a wallet address it has used.
+///
+/// This is a *hint for recovery UX only* — it never stores key material and
+/// TakumiPay remains non-custodial (seed lives on-device / in the user's own
+/// Drive; see docs/encrypted-seed-backup-spec.md).
+///
+/// It is a separate table on purpose: `User.walletAddress` is `@unique` and is
+/// already held by the wallet's own SIWE user row, so the same address cannot
+/// also be written onto the Google user row. The link lets us answer "does
+/// this account have a wallet?" without that collision, and supports one
+/// account owning several wallets.
+model WalletAccountLink {
+  id            String   @id @default(ulid())
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId        String
+  walletAddress String
+  createdAt     DateTime @default(now())
+
+  @@unique([userId, walletAddress])
+  @@index([userId])
 }
 
 /// One row per device install. The Expo push token is the upsert anchor
