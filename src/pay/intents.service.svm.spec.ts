@@ -100,8 +100,8 @@ function svmPrismaStub(opts?: {
     id: string;
     chainSlug: string;
     isActive: boolean;
-    isEVM: boolean;
-    x402FacilitatorUrl?: string | null;
+    type: string;
+    metadata?: { x402FacilitatorUrl?: string | null } | null;
   } | null;
   createdIntent?: Record<string, unknown>;
   merchant?: Record<string, unknown> | null;
@@ -115,8 +115,8 @@ function svmPrismaStub(opts?: {
           id: "bc_solana_mainnet",
           chainSlug: "solana-mainnet",
           isActive: true,
-          isEVM: false,
-          x402FacilitatorUrl: "https://facilitator.example/v1/settle",
+          type: "SVM",
+          metadata: { x402FacilitatorUrl: "https://facilitator.example/v1/settle" },
         }
       : opts.blockchain;
   const createdIntent = opts?.createdIntent ?? {
@@ -240,6 +240,7 @@ function buildSvmService(overrides: {
     evmCircleSettleStub() as unknown as ICircleSettleClient,
     null,
     null,
+    null, // stellarVerification
     svmSettle,
     {} as unknown as QrSigningService,
     { create: jest.fn().mockResolvedValue({}) } as unknown as TransactionsService, // transactionsService
@@ -304,8 +305,8 @@ describe("IntentsService.createIntent (SVM)", () => {
         id: "bc_solana_mainnet",
         chainSlug: "solana-mainnet",
         isActive: true,
-        isEVM: false,
-        x402FacilitatorUrl: null,
+        type: "SVM",
+        metadata: null,
       },
     });
     const { svc } = buildSvmService({ prisma });

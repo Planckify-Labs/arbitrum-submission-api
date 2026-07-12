@@ -1,0 +1,11 @@
+-- On-chain depositor address for point deposits.
+-- Persists the account that actually signed/paid the deposit so the
+-- verification worker checks the real payer instead of the user's single
+-- primary `walletAddress`. Required for non-EVM chains (e.g. Stellar), where
+-- the on-chain payer is a per-chain address the user links to their account
+-- (WalletAccountLink) rather than their primary EVM address.
+--
+-- Nullable + no default: safe to add to the TimescaleDB hypertable (no unique
+-- index / partition-key interaction). Existing rows keep NULL and the worker
+-- falls back to `user.walletAddress` for them.
+ALTER TABLE "PointTransaction" ADD COLUMN "walletAddress" TEXT;

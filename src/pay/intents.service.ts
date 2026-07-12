@@ -21,6 +21,7 @@ import {
 import { ConfigService } from "@nestjs/config";
 import type { Hash } from "viem";
 import { BlockchainVerificationService } from "../blockchain-verification/blockchain-verification.service";
+import { StellarVerificationService } from "../blockchain-verification/stellar-verification.service";
 import * as nacl from "tweetnacl";
 import { QrSigningService } from "../merchants/qr-signing.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -105,6 +106,15 @@ const SVM_SENTINEL_TO_CHAIN_SLUG: Record<number, string> = {
   [SVM_MAINNET_SENTINEL_CHAIN_ID]: "solana-mainnet",
   [SVM_DEVNET_SENTINEL_CHAIN_ID]: "solana-devnet",
 };
+
+/**
+ * Stellar sentinel chainIds — same trick as the SVM sentinels above (Stellar
+ * rows also have `chainId = null`). Distinct negative range so `isSvmChainId`
+ * stays false for Stellar intents and the settlement path keys off
+ * `blockchainId` / `blockchain.type === "STELLAR"`, never these numbers.
+ */
+const STELLAR_MAINNET_SENTINEL_CHAIN_ID = -201;
+const STELLAR_TESTNET_SENTINEL_CHAIN_ID = -202;
 
 /**
  * USDC SPL mint fallback — only used if the Token table lookup fails.
@@ -216,6 +226,8 @@ export class IntentsService {
     private readonly payoutProvider: IPayoutProvider | null = null,
     @Optional()
     private readonly blockchainVerification: BlockchainVerificationService | null = null,
+    @Optional()
+    private readonly stellarVerification: StellarVerificationService | null = null,
     @Optional()
     @Inject(CIRCLE_SETTLE_SVM_CLIENT)
     private readonly circleSettleSvm: ICircleSettleSvmClient | null = null,
@@ -698,6 +710,10 @@ export class IntentsService {
     let sourceChainId: number;
     if (bc.chainId != null) {
       sourceChainId = bc.chainId;
+    } else if (bc.type === "STELLAR") {
+      sourceChainId = bc.chainSlug?.includes("mainnet")
+        ? STELLAR_MAINNET_SENTINEL_CHAIN_ID
+        : STELLAR_TESTNET_SENTINEL_CHAIN_ID;
     } else if (bc.solanaCluster === "mainnet-beta" || bc.chainSlug?.includes("mainnet")) {
       sourceChainId = SVM_MAINNET_SENTINEL_CHAIN_ID;
     } else {
@@ -804,6 +820,43 @@ export class IntentsService {
       this.logger.warn("[createOnchainIntent] SVM intent but no signer keypair — quote unsigned");
     }
 
+    // Stellar `takumi_pay` quote — mirrors the SVM block. Delegates all
+    // Soroban specifics (contract id, network passphrase, token SAC-id, XDR
+    // signing) to StellarVerificationService.
+    let quoteCommitmentStellar: Record<string, string> | undefined;
+    let quoteSignatureStellar: string | undefined;
+    let backendSignerPubkeyStellar: string | undefined;
+    let takumiPayContractId: string | undefined;
+
+    if (bc.type === "STELLAR" && this.stellarVerification) {
+      // Intent amounts are 6-decimal USDC micros; Stellar USDC is 7-decimal
+      // (every Stellar asset is 7dp). Scale into the token's own units so the
+      // signed / submitted / on-chain / verified amounts all agree.
+      const scale = 10n ** BigInt(Math.max(tokenRow.decimals - 6, 0));
+      const signed = this.stellarVerification.buildMerchantQuoteSignature({
+        blockchainId: bc.id,
+        refId: created.id,
+        merchantId: merchant.id,
+        tokenCompound: tokenRow.contractAddress ?? "",
+        amount: BigInt(totalAmount) * scale,
+        platformFeeAmount: BigInt(platformFeeAmount) * scale,
+        fiatAmountMinor: BigInt(dto.fiatAmountMinor),
+        fiatCurrency: dto.currency,
+        exchangeRateId: BigInt(fx.exchangeRateId),
+        expiresAt: BigInt(Math.floor(expiresAt.getTime() / 1000)),
+      });
+      if (signed) {
+        quoteCommitmentStellar = signed.commitment;
+        quoteSignatureStellar = signed.signatureBase64;
+        backendSignerPubkeyStellar = signed.backendSignerPubkeyHex;
+        takumiPayContractId = signed.contractId;
+      } else {
+        this.logger.warn(
+          "[createOnchainIntent] Stellar intent but quote unsigned (no signer/contract)",
+        );
+      }
+    }
+
     return {
       id: created.id,
       status: DB_TO_MOBILE_STATUS[created.status],
@@ -820,6 +873,10 @@ export class IntentsService {
       expiresAt: expiresAt.getTime(),
       createdAt: created.createdAt.getTime(),
       blockchainId: bc.id,
+      quoteCommitmentStellar,
+      quoteSignatureStellar,
+      backendSignerPubkeyStellar,
+      takumiPayContractId,
       quoteCommitmentSvm,
       quoteSignatureSvm,
       backendSignerPubkey,
@@ -1026,7 +1083,11 @@ export class IntentsService {
       payoutReferenceId,
       settledAt,
       contractAddress: smartContract?.address,
-      programId: blockchain?.takumiPayProgramId ?? undefined,
+      // `blockchain.takumiPayProgramId` was removed — it duplicated this same
+      // `smartContract.address` lookup (name unfiltered here, so this
+      // inherits that pre-existing looseness on chains with >1 active
+      // SmartContract row; unchanged from before this field repoint).
+      programId: blockchain && blockchain.type !== "EVM" ? smartContract?.address : undefined,
       blockchainId: blockchain?.id,
       ...(isSvm && intent.quoteSignature && intent.sourceToken
         ? {
@@ -1476,6 +1537,34 @@ export class IntentsService {
       };
     }
 
+    // Verify the on-chain payment actually landed with matching merchant /
+    // amount / token before recording — closes the blind-trust gap for
+    // Stellar. (EVM/Solana settlements via this endpoint remain blind-trusted;
+    // that's a pre-existing gap, out of scope here.) The backend-signed quote
+    // already binds the record to this exact intent, so the payer's G-address
+    // is not re-checked (see StellarVerificationService.verifyMerchantPayment).
+    if (blockchain.type === "STELLAR" && this.blockchainVerification) {
+      const token = intent.sourceTokenId
+        ? await this.prisma.token.findUnique({ where: { id: intent.sourceTokenId } })
+        : null;
+      const scale = 10n ** BigInt(Math.max((token?.decimals ?? 6) - 6, 0));
+      await this.blockchainVerification.verifyMerchantPaymentInContract({
+        contractAddress: "", // unused in the Stellar dispatch branch
+        chainId: 0, // unused in the Stellar dispatch branch
+        refId: intentId,
+        expectedPayer: "", // payer G-address unknown server-side; check skipped
+        expectedMerchantId: intent.merchantId,
+        expectedTokenAddress: token?.contractAddress ?? "",
+        expectedAmount: (
+          BigInt(String(intent.nanopayUsdcAmountMicros)) * scale
+        ).toString(),
+        expectedFiatAmountMinor: intent.fiatAmountMinor,
+        expectedFiatCurrency: intent.fiatCurrency,
+        expectedExchangeRateId: intent.exchangeRateId,
+        blockchainId,
+      });
+    }
+
     this.logger.log(`[submitOnchain] verifying and settling intent=${intentId} txHash=${txHash}`);
     // Record the onchain settlement and flip the intent status.
     await this.prisma.$transaction(async (tx) => {
@@ -1555,16 +1644,17 @@ export class IntentsService {
           id: true,
           chainSlug: true,
           isActive: true,
-          isEVM: true,
-          x402FacilitatorUrl: true,
+          type: true,
+          metadata: true,
         },
       }),
     );
-    if (!row || !row.isActive || row.isEVM) return null;
+    if (!row || !row.isActive || row.type === "EVM") return null;
     return {
       id: row.id,
       chainSlug: row.chainSlug ?? slug,
-      x402FacilitatorUrl: row.x402FacilitatorUrl ?? null,
+      x402FacilitatorUrl:
+        (row.metadata as { x402FacilitatorUrl?: string } | null)?.x402FacilitatorUrl ?? null,
     };
   }
 
@@ -1957,11 +2047,7 @@ export class IntentsService {
     const row = await this.blockchainCache.getByChainId(chainId, () =>
       this.prisma.blockchain.findUnique({
         where: { chainId },
-        select: {
-          gatewayWalletContract: true,
-          x402FacilitatorUrl: true,
-          isActive: true,
-        },
+        select: { id: true, isActive: true },
       }),
     );
     if (!row || !row.isActive) {
@@ -1971,21 +2057,26 @@ export class IntentsService {
         code: "CHAIN_NOT_CONFIGURED",
       });
     }
-    if (!row.gatewayWalletContract) {
-      this.logger.error(`[resolveGatewayWalletContract] gatewayWalletContract not set for chainId=${chainId} — update DB seed`);
+    // Lives in SmartContract (name: "gateway_wallet"), not a scalar column —
+    // see the schema comment on Blockchain.metadata.
+    const contract = await this.prisma.smartContract.findFirst({
+      where: { blockchainId: row.id, name: "gateway_wallet", isActive: true },
+    });
+    if (!contract) {
+      this.logger.error(`[resolveGatewayWalletContract] no active "gateway_wallet" SmartContract row for chainId=${chainId} — update DB seed`);
       throw new ServiceUnavailableException({
         message: "Payment rail is not available on this deployment.",
         code: "GATEWAY_WALLET_NOT_CONFIGURED",
       });
     }
-    return row.gatewayWalletContract;
+    return contract.address;
   }
 
   private async resolveFacilitatorUrl(chainId: number): Promise<string> {
     const row = await this.blockchainCache.getByChainId(chainId, () =>
       this.prisma.blockchain.findUnique({
         where: { chainId },
-        select: { x402FacilitatorUrl: true, isActive: true },
+        select: { metadata: true, isActive: true },
       }),
     );
     if (!row || !row.isActive) {
@@ -1995,14 +2086,15 @@ export class IntentsService {
         code: "CHAIN_NOT_CONFIGURED",
       });
     }
-    if (!row.x402FacilitatorUrl) {
-      this.logger.error(`[resolveFacilitatorUrl] x402FacilitatorUrl not set for chainId=${chainId} — update DB seed`);
+    const facilitatorUrl = (row.metadata as { x402FacilitatorUrl?: string } | null)?.x402FacilitatorUrl;
+    if (!facilitatorUrl) {
+      this.logger.error(`[resolveFacilitatorUrl] x402FacilitatorUrl not set in metadata for chainId=${chainId} — update DB seed`);
       throw new ServiceUnavailableException({
         message: "Payment rail is not available on this deployment.",
         code: "FACILITATOR_URL_NOT_CONFIGURED",
       });
     }
-    return row.x402FacilitatorUrl;
+    return facilitatorUrl;
   }
 
   /**

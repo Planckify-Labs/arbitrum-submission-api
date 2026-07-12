@@ -258,4 +258,28 @@ export class PaymentIntentResponseDto {
       "Base58 public key of the backend quote signer. The on-chain program verifies signatures against this key.",
   })
   backendSignerPubkey?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "Stellar `takumi_pay` MerchantQuote commitment (decimal-string fields; `token` is the SAC contract id). Populated for STELLAR intents.",
+  })
+  quoteCommitmentStellar?: Record<string, string>;
+
+  @ApiPropertyOptional({
+    description:
+      "Base64-encoded Ed25519 signature (64 bytes) over the Stellar QuoteMessage, signed by the platform's Stellar quote signer.",
+  })
+  quoteSignatureStellar?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "Hex raw Ed25519 public key of the backend Stellar quote signer. The Soroban contract verifies signatures against this key.",
+  })
+  backendSignerPubkeyStellar?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "`takumi_pay` Soroban contract id (`C…`) the signed quote is bound to — the wallet must submit `process_merchant_payment` to exactly this contract.",
+  })
+  takumiPayContractId?: string;
 }

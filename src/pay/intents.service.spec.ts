@@ -76,6 +76,7 @@ interface FakePrisma {
   merchant: { findUnique: jest.Mock };
   exchangeRate: { findFirst: jest.Mock };
   blockchain: { findUnique: jest.Mock };
+  smartContract: { findFirst: jest.Mock };
 }
 
 function prismaStub(opts?: {
@@ -120,11 +121,15 @@ function prismaStub(opts?: {
     exchangeRate: { findFirst: jest.fn(async () => fxRow) },
     blockchain: {
       findUnique: jest.fn(async () => ({
+        id: "01ARC",
         isActive: true,
-        x402FacilitatorUrl:
-          "https://gateway-api-testnet.circle.com/gateway/v1/x402/settle",
-        gatewayWalletContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+        metadata: {
+          x402FacilitatorUrl: "https://gateway-api-testnet.circle.com/gateway/v1/x402/settle",
+        },
       })),
+    },
+    smartContract: {
+      findFirst: jest.fn(async () => ({ address: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9" })),
     },
   };
 }
@@ -176,6 +181,7 @@ function buildService(overrides: {
     circleSettle as unknown as ICircleSettleClient,
     null, // payoutProvider — optional, null is valid.
     blockchainVerification as unknown as BlockchainVerificationService,
+    null, // stellarVerification — optional, null is valid.
     null, // circleSettleSvm
     {} as unknown as QrSigningService,
     { create: jest.fn().mockResolvedValue({}) } as unknown as TransactionsService, // transactionsService
@@ -660,11 +666,15 @@ describe("IntentsService.submitNanopay", () => {
       exchangeRate: { findFirst: jest.fn() },
       blockchain: {
         findUnique: jest.fn(async () => ({
+          id: "01ARC",
           isActive: true,
-          x402FacilitatorUrl:
-            "https://gateway-api-testnet.circle.com/gateway/v1/x402/settle",
-          gatewayWalletContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+          metadata: {
+            x402FacilitatorUrl: "https://gateway-api-testnet.circle.com/gateway/v1/x402/settle",
+          },
         })),
+      },
+      smartContract: {
+        findFirst: jest.fn(async () => ({ address: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9" })),
       },
       $transaction,
     };
@@ -1046,15 +1056,16 @@ describe("IntentsService.recordDepositReceipt", () => {
   function depositPrismaStub(opts?: {
     intent?: ReturnType<typeof depositIntentRow> | null;
     priorDeposit?: Record<string, unknown> | null;
-    blockchain?: { gatewayWalletContract: string | null; isActive: boolean } | null;
+    blockchain?: { id: string; isActive: boolean } | null;
+    gatewayWalletContract?: string | null;
     gatewayCreateThrows?: Error | null;
   }) {
     const intent = opts?.intent === undefined ? depositIntentRow() : opts.intent;
     const priorDeposit = opts?.priorDeposit ?? null;
     const blockchain =
-      opts?.blockchain === undefined
-        ? { gatewayWalletContract: GATEWAY_WALLET, isActive: true }
-        : opts.blockchain;
+      opts?.blockchain === undefined ? { id: "01ARC", isActive: true } : opts.blockchain;
+    const gatewayWalletContract =
+      opts?.gatewayWalletContract === undefined ? GATEWAY_WALLET : opts.gatewayWalletContract;
     const gatewayCreateThrows = opts?.gatewayCreateThrows ?? null;
 
     const gatewayDepositCreate = jest.fn((args: { data: Record<string, unknown> }) => {
@@ -1095,6 +1106,11 @@ describe("IntentsService.recordDepositReceipt", () => {
       },
       blockchain: {
         findUnique: jest.fn(async () => blockchain),
+      },
+      smartContract: {
+        findFirst: jest.fn(async () =>
+          gatewayWalletContract ? { address: gatewayWalletContract } : null,
+        ),
       },
       merchant: { findUnique: jest.fn() },
       exchangeRate: { findFirst: jest.fn() },

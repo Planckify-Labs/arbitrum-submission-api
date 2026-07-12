@@ -223,13 +223,13 @@ export class ExchangeRateService {
       provider: rate.provider || undefined,
       markup: rate.markup ? Number(rate.markup) : undefined,
       isActive: rate.isActive,
-      createdAt: rate.createdAt,
+      createdAt: new Date(rate.createdAt),
       cursor: this.encodeCursor(rate),
     };
   }
 
   private encodeCursor(rate: ExchangeRate): string {
-    const timestamp = rate.createdAt.getTime();
+    const timestamp = new Date(rate.createdAt).getTime();
     const cursor = `${timestamp}_${rate.id}`;
     return Buffer.from(cursor).toString("base64");
   }

@@ -24,6 +24,10 @@ import { VerifyContractTransactionDto } from "./dto/verify-contract-transaction.
 import { getBlockchainConfig } from "../config/app.config";
 import { SolanaVerificationService } from "./solana-verification.service";
 import { computeRefIdHash } from "./solana/takumi-pay/ref-id-hash";
+import { StellarVerificationService } from "./stellar-verification.service";
+import { assertChainFamily } from "../blockchains/chain-family";
+
+const TAKUMI_PAY_CONTRACT_NAME = "takumi_pay";
 
 @Injectable()
 export class BlockchainVerificationService {
@@ -35,6 +39,7 @@ export class BlockchainVerificationService {
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     private readonly solanaVerification: SolanaVerificationService,
+    private readonly stellarVerification: StellarVerificationService,
   ) {
     const blockchainConfig = getBlockchainConfig(this.configService);
     this.minConfirmations = blockchainConfig.minConfirmations;
@@ -57,7 +62,7 @@ export class BlockchainVerificationService {
 
       for (const blockchain of blockchains) {
         try {
-          if (!blockchain.isEVM || blockchain.chainId == null) {
+          if (blockchain.type !== "EVM" || blockchain.chainId == null) {
             this.logger.log(
               `Skipping non-EVM blockchain ${blockchain.name} — viem client not applicable`,
             );
@@ -144,13 +149,29 @@ export class BlockchainVerificationService {
     return this.getClient(chainId);
   }
 
-  private requireProgramId(blockchain: { id: string; name: string; takumiPayProgramId: string | null }): PublicKey {
-    if (!blockchain.takumiPayProgramId) {
+  /**
+   * `takumi_pay`'s program/contract address per chain lives in
+   * `SmartContract` (name: "takumi_pay"), the same per-chain contract
+   * registry EVM's contracts already use — not a scalar column on
+   * `Blockchain`. See the schema comment on `Blockchain.type` / the removed
+   * `takumiPayProgramId` field for why: a dedicated column duplicated this
+   * row with no sync guarantee.
+   */
+  private async requireTakumiPayContractAddress(blockchain: { id: string; name: string }): Promise<string> {
+    const contract = await this.prisma.smartContract.findFirst({
+      where: { blockchainId: blockchain.id, name: TAKUMI_PAY_CONTRACT_NAME, isActive: true },
+    });
+    if (!contract) {
       throw new BadRequestException(
-        `Blockchain ${blockchain.name} (${blockchain.id}) has no takumiPayProgramId configured`,
+        `Blockchain ${blockchain.name} (${blockchain.id}) has no active "${TAKUMI_PAY_CONTRACT_NAME}" SmartContract row configured`,
       );
     }
-    return new PublicKey(blockchain.takumiPayProgramId);
+    return contract.address;
+  }
+
+  private async requireProgramId(blockchain: { id: string; name: string }): Promise<PublicKey> {
+    const address = await this.requireTakumiPayContractAddress(blockchain);
+    return new PublicKey(address);
   }
 
 
@@ -251,22 +272,45 @@ export class BlockchainVerificationService {
       const blockchain = await this.prisma.blockchain.findUnique({
         where: { id: request.blockchainId },
       });
-      if (blockchain && !blockchain.isEVM) {
-        const programId = this.requireProgramId(blockchain);
-        const refIdHash = computeRefIdHash(request.refId);
-        return this.solanaVerification.verifyTransaction({
-          blockchainId: request.blockchainId,
-          programId,
-          transactionSignature: transactionHash,
-          refId: request.refId,
-          refIdHash,
-          expectedWalletAddress: expectedSender,
-          expectedTokenMint: expectedRecipient,
-          expectedAmount: request.expectedAmount,
-          expectedBookingId: request.expectedBookingId,
-          expectedExchangeRateId: request.expectedExchangeRateId,
-          expectedProductVariantId: request.expectedProductVariantId,
-        });
+      if (blockchain && blockchain.type !== "EVM") {
+        const family = assertChainFamily(blockchain.type, blockchain.name);
+        if (family === "SVM") {
+          const programId = await this.requireProgramId(blockchain);
+          const refIdHash = computeRefIdHash(request.refId);
+          return this.solanaVerification.verifyTransaction({
+            blockchainId: request.blockchainId,
+            programId,
+            transactionSignature: transactionHash,
+            refId: request.refId,
+            refIdHash,
+            expectedWalletAddress: expectedSender,
+            expectedTokenMint: expectedRecipient,
+            expectedAmount: request.expectedAmount,
+            expectedBookingId: request.expectedBookingId,
+            expectedExchangeRateId: request.expectedExchangeRateId,
+            expectedProductVariantId: request.expectedProductVariantId,
+          });
+        }
+        if (family === "STELLAR") {
+          // `expectedRecipient` doubling as the expected token identifier
+          // mirrors the Solana branch above — `TTransactionVerificationRequest`
+          // has no separate expected-token field for the generic
+          // create_transaction flow (see purchase.processor.ts).
+          return this.stellarVerification.verifyTransaction({
+            blockchainId: request.blockchainId,
+            transactionHash,
+            refId: request.refId,
+            expectedWalletAddress: expectedSender,
+            expectedTokenAddress: expectedRecipient,
+            expectedAmount: request.expectedAmount,
+            expectedBookingId: request.expectedBookingId,
+            expectedExchangeRateId: request.expectedExchangeRateId,
+            expectedProductVariantId: request.expectedProductVariantId,
+          });
+        }
+        throw new BadRequestException(
+          `Unsupported chain family for blockchain ${blockchain.name} (chainSlug=${blockchain.chainSlug})`,
+        );
       }
 
       // Phase A — tx-receipt checks (delegated to verifyTxReceiptOnly)
@@ -402,32 +446,43 @@ export class BlockchainVerificationService {
         const blockchain = await this.prisma.blockchain.findUnique({
           where: { id: blockchainId },
         });
-        if (blockchain && !blockchain.isEVM) {
-          const programId = this.requireProgramId(blockchain);
-          const refIdHash = computeRefIdHash(trxData.refId);
-          const solanaRecord =
-            await this.solanaVerification.verifyTransactionRecord({
-              blockchainId,
-              programId,
-              refId: trxData.refId,
-              refIdHash,
-              expectedWalletAddress: trxData.expectedWalletAddress,
-              expectedTokenMint: trxData.expectedTokenAddress,
-              expectedAmount: trxData.expectedAmount,
-              expectedBookingId: trxData.expectedBookingId,
-              expectedExchangeRateId: trxData.expectedExchangeRateId,
-              expectedProductVariantId: trxData.expectedProductVariantId,
-            });
-          return {
-            walletAddress: solanaRecord.walletAddress.toBase58(),
-            tokenAddress: solanaRecord.tokenMint.toBase58(),
-            bookingId: solanaRecord.bookingId,
-            exchangeRateId: BigInt(solanaRecord.exchangeRateId.toString()),
-            productVariantId: solanaRecord.productVariantId,
-            timestamp: BigInt(solanaRecord.timestamp.toString()),
-            refId: solanaRecord.refId,
-            amount: BigInt(solanaRecord.amount.toString()),
-          };
+        if (blockchain && blockchain.type !== "EVM") {
+          const family = assertChainFamily(blockchain.type, blockchain.name);
+          if (family === "SVM") {
+            const programId = await this.requireProgramId(blockchain);
+            const refIdHash = computeRefIdHash(trxData.refId);
+            const solanaRecord =
+              await this.solanaVerification.verifyTransactionRecord({
+                blockchainId,
+                programId,
+                refId: trxData.refId,
+                refIdHash,
+                expectedWalletAddress: trxData.expectedWalletAddress,
+                expectedTokenMint: trxData.expectedTokenAddress,
+                expectedAmount: trxData.expectedAmount,
+                expectedBookingId: trxData.expectedBookingId,
+                expectedExchangeRateId: trxData.expectedExchangeRateId,
+                expectedProductVariantId: trxData.expectedProductVariantId,
+              });
+            return {
+              walletAddress: solanaRecord.walletAddress.toBase58(),
+              tokenAddress: solanaRecord.tokenMint.toBase58(),
+              bookingId: solanaRecord.bookingId,
+              exchangeRateId: BigInt(solanaRecord.exchangeRateId.toString()),
+              productVariantId: solanaRecord.productVariantId,
+              timestamp: BigInt(solanaRecord.timestamp.toString()),
+              refId: solanaRecord.refId,
+              amount: BigInt(solanaRecord.amount.toString()),
+            };
+          }
+          if (family === "STELLAR") {
+            throw new BadRequestException(
+              "Stellar transaction-record verification requires a transaction hash (use verifyTransaction), not a direct ref-only lookup — get_transaction is keyed by numeric tx_id, not ref_id.",
+            );
+          }
+          throw new BadRequestException(
+            `Unsupported chain family for blockchain ${blockchain.name} (chainSlug=${blockchain.chainSlug})`,
+          );
         }
       }
 
@@ -574,23 +629,43 @@ export class BlockchainVerificationService {
         const blockchain = await this.prisma.blockchain.findUnique({
           where: { id: args.blockchainId },
         });
-        if (blockchain && !blockchain.isEVM) {
-          const programId = this.requireProgramId(blockchain);
-          const refIdHash = computeRefIdHash(args.refId);
-          await this.solanaVerification.verifyMerchantPayment({
-            blockchainId: args.blockchainId,
-            programId,
-            refId: args.refId,
-            refIdHash,
-            expectedPayer: args.expectedPayer,
-            expectedMerchantId: args.expectedMerchantId,
-            expectedTokenMint: args.expectedTokenAddress,
-            expectedAmount: args.expectedAmount,
-            expectedFiatAmountMinor: args.expectedFiatAmountMinor,
-            expectedFiatCurrency: args.expectedFiatCurrency,
-            expectedExchangeRateId: args.expectedExchangeRateId,
-          });
-          return;
+        if (blockchain && blockchain.type !== "EVM") {
+          const family = assertChainFamily(blockchain.type, blockchain.name);
+          if (family === "SVM") {
+            const programId = await this.requireProgramId(blockchain);
+            const refIdHash = computeRefIdHash(args.refId);
+            await this.solanaVerification.verifyMerchantPayment({
+              blockchainId: args.blockchainId,
+              programId,
+              refId: args.refId,
+              refIdHash,
+              expectedPayer: args.expectedPayer,
+              expectedMerchantId: args.expectedMerchantId,
+              expectedTokenMint: args.expectedTokenAddress,
+              expectedAmount: args.expectedAmount,
+              expectedFiatAmountMinor: args.expectedFiatAmountMinor,
+              expectedFiatCurrency: args.expectedFiatCurrency,
+              expectedExchangeRateId: args.expectedExchangeRateId,
+            });
+            return;
+          }
+          if (family === "STELLAR") {
+            await this.stellarVerification.verifyMerchantPayment({
+              blockchainId: args.blockchainId,
+              refId: args.refId,
+              expectedPayer: args.expectedPayer,
+              expectedMerchantId: args.expectedMerchantId,
+              expectedTokenAddress: args.expectedTokenAddress,
+              expectedAmount: args.expectedAmount,
+              expectedFiatAmountMinor: args.expectedFiatAmountMinor,
+              expectedFiatCurrency: args.expectedFiatCurrency,
+              expectedExchangeRateId: args.expectedExchangeRateId,
+            });
+            return;
+          }
+          throw new BadRequestException(
+            `Unsupported chain family for blockchain ${blockchain.name} (chainSlug=${blockchain.chainSlug})`,
+          );
         }
       }
 
@@ -703,28 +778,50 @@ export class BlockchainVerificationService {
       minConfirmations = 12,
     } = params;
 
-    // Solana dispatch: route to Solana verification for non-EVM blockchains.
+    // Non-EVM dispatch: route to the matching chain family's verification
+    // service (Solana / Stellar) for non-EVM blockchains.
     if (params.blockchainId) {
       const blockchain = await this.prisma.blockchain.findUnique({
         where: { id: params.blockchainId },
       });
-      if (blockchain && !blockchain.isEVM) {
-        const programId = this.requireProgramId(blockchain);
-        const refIdHash = computeRefIdHash(refId);
-        const deposit = await this.solanaVerification.verifyPointDeposit({
-          blockchainId: params.blockchainId,
-          programId,
-          refId,
-          refIdHash,
-          expectedWalletAddress,
-          expectedTokenMint: expectedTokenAddress,
-          expectedAmount,
-        });
-        return {
-          walletAddress: deposit.walletAddress.toBase58(),
-          tokenAddress: deposit.tokenMint.toBase58(),
-          amount: BigInt(deposit.amount.toString()),
-        };
+      if (blockchain && blockchain.type !== "EVM") {
+        const family = assertChainFamily(blockchain.type, blockchain.name);
+        if (family === "SVM") {
+          const programId = await this.requireProgramId(blockchain);
+          const refIdHash = computeRefIdHash(refId);
+          const deposit = await this.solanaVerification.verifyPointDeposit({
+            blockchainId: params.blockchainId,
+            programId,
+            refId,
+            refIdHash,
+            expectedWalletAddress,
+            expectedTokenMint: expectedTokenAddress,
+            expectedAmount,
+          });
+          return {
+            walletAddress: deposit.walletAddress.toBase58(),
+            tokenAddress: deposit.tokenMint.toBase58(),
+            amount: BigInt(deposit.amount.toString()),
+          };
+        }
+        if (family === "STELLAR") {
+          const deposit = await this.stellarVerification.verifyPointDeposit({
+            blockchainId: params.blockchainId,
+            transactionHash: txHash,
+            refId,
+            expectedWalletAddress,
+            expectedTokenAddress,
+            expectedAmount,
+          });
+          return {
+            walletAddress: deposit.walletAddress,
+            tokenAddress: deposit.token,
+            amount: deposit.amount,
+          };
+        }
+        throw new BadRequestException(
+          `Unsupported chain family for blockchain ${blockchain.name} (chainSlug=${blockchain.chainSlug})`,
+        );
       }
     }
 

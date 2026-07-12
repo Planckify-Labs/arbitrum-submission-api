@@ -21,7 +21,7 @@ import { BadRequestException } from "@nestjs/common";
  *  - Recipient mismatch -> FAILED with RECIPIENT_MISMATCH
  *  - getMerchantPaymentByRef returns zero-struct -> FAILED with REF_NOT_ON_CHAIN
  *  - Field mismatch on MerchantPayment struct -> FAILED with CONTRACT_DATA_MISMATCH
- *  - Chain has no takumiWalletContract -> SettlementRejectedError
+ *  - Chain has no "takumi_pay" SmartContract row -> SettlementRejectedError
  *  - Payer has no wallet address -> SettlementRejectedError
  *
  * Follows the xendit-payout.provider.spec.ts pattern: direct instantiation
@@ -119,12 +119,15 @@ function buildMocks() {
     },
     blockchain: {
       findFirstOrThrow: jest.fn(async () => ({
+        id: "bc_evm",
         chainId: CHAIN_ID,
         isActive: true,
-        isEVM: true,
-        takumiWalletContract: CONTRACT_ADDR,
+        type: "EVM",
         minConfirmations: null,
       })),
+    },
+    smartContract: {
+      findFirst: jest.fn(async () => ({ address: CONTRACT_ADDR })),
     },
     user: {
       findUniqueOrThrow: jest.fn(async () => ({
@@ -349,15 +352,9 @@ describe("OnchainSettlementProvider", () => {
     });
   });
 
-  it("chain has no takumiWalletContract -> SettlementRejectedError", async () => {
+  it("chain has no takumi_pay SmartContract row -> SettlementRejectedError", async () => {
     const { mockBlockchainVerification, mockPrisma, mockConfig } = buildMocks();
-    mockPrisma.blockchain.findFirstOrThrow.mockResolvedValue({
-      chainId: CHAIN_ID,
-      isActive: true,
-      isEVM: true,
-      takumiWalletContract: null,
-      minConfirmations: null,
-    });
+    mockPrisma.smartContract.findFirst.mockResolvedValue(null);
 
     const { provider } = buildProvider({
       bv: mockBlockchainVerification,
@@ -397,10 +394,10 @@ describe("OnchainSettlementProvider", () => {
   it("uses per-chain minConfirmations when available on blockchain row", async () => {
     const { mockBlockchainVerification, mockPrisma, mockConfig } = buildMocks();
     mockPrisma.blockchain.findFirstOrThrow.mockResolvedValue({
+      id: "bc_evm",
       chainId: CHAIN_ID,
       isActive: true,
-      isEVM: true,
-      takumiWalletContract: CONTRACT_ADDR,
+      type: "EVM",
       minConfirmations: 90,
     });
 

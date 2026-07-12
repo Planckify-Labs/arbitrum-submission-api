@@ -128,6 +128,7 @@ export class CacheWarmingService implements OnModuleInit {
           },
           orderBy: { createdAt: 'desc' },
           distinct: ['fromCurrency', 'toCurrency'],
+          include: { sourceProvider: true },
         });
 
         const result = new Map<string, typeof rates[0]>();

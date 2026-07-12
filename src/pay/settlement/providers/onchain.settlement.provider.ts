@@ -37,12 +37,18 @@ export class OnchainSettlementProvider implements IPaymentSettlementProvider {
     }
 
     const chainRow = await this.prisma.blockchain.findFirstOrThrow({
-      where: { chainId, isActive: true, isEVM: true },
+      where: { chainId, isActive: true, type: "EVM" },
     });
 
-    if (!chainRow.takumiWalletContract) {
+    // Lives in SmartContract (name: "takumi_pay"), not a scalar column — same
+    // per-chain contract registry Solana/Stellar use.
+    const takumiPayContract = await this.prisma.smartContract.findFirst({
+      where: { blockchainId: chainRow.id, name: "takumi_pay", isActive: true },
+    });
+    if (!takumiPayContract) {
       throw new SettlementRejectedError("NO_CONTRACT", "Chain has no TakumiWallet contract configured");
     }
+    const takumiWalletContract = takumiPayContract.address;
 
     const payer = await this.prisma.user.findUniqueOrThrow({
       where: { id: intent.payerUserId! },
@@ -57,7 +63,7 @@ export class OnchainSettlementProvider implements IPaymentSettlementProvider {
       await this.blockchainVerification.verifyTxReceiptOnly({
         transactionHash: txHash,
         expectedSender: payer.walletAddress,
-        expectedRecipient: chainRow.takumiWalletContract,
+        expectedRecipient: takumiWalletContract,
         expectedChainId: chainId,
         minimumConfirmations: this.minConfirmations(chainRow),
       });
@@ -70,7 +76,7 @@ export class OnchainSettlementProvider implements IPaymentSettlementProvider {
       const expectedTokenAddress = sourceToken?.contractAddress ?? "0x0000000000000000000000000000000000000000";
 
       await this.blockchainVerification.verifyMerchantPaymentInContract({
-        contractAddress: chainRow.takumiWalletContract,
+        contractAddress: takumiWalletContract,
         chainId,
         refId: intent.id,
         expectedPayer: payer.walletAddress,

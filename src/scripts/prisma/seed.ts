@@ -691,7 +691,7 @@ async function main() {
         chainId: 1,
         rpcUrl: "https://eth-mainnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
         blockExplorer: "https://etherscan.io",
-        isEVM: true,
+        type: "EVM",
         isActive: true,
         isTestnet: false,
       },
@@ -708,7 +708,7 @@ async function main() {
         rpcUrl:
           "https://polygon-mainnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
         blockExplorer: "https://polygonscan.com",
-        isEVM: true,
+        type: "EVM",
         isActive: true,
         isTestnet: false,
       },
@@ -724,7 +724,7 @@ async function main() {
         chainId: 11155111,
         rpcUrl: "https://eth-sepolia.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
         blockExplorer: "https://sepolia.etherscan.io",
-        isEVM: true,
+        type: "EVM",
         isActive: true,
         isTestnet: true,
       },
@@ -739,7 +739,7 @@ async function main() {
         chainId: 84532,
         rpcUrl: "https://base-sepolia.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
         blockExplorer: "https://sepolia.basescan.org",
-        isEVM: true,
+        type: "EVM",
         isActive: true,
         isTestnet: true,
       },
@@ -754,7 +754,7 @@ async function main() {
         chainId: 4202,
         rpcUrl: "https://rpc.sepolia-api.lisk.com",
         blockExplorer: "https://sepolia-blockscout.lisk.com",
-        isEVM: true,
+        type: "EVM",
         isActive: true,
         isTestnet: true,
       },
@@ -769,7 +769,7 @@ async function main() {
         chainId: 421614,
         rpcUrl: "https://arb-sepolia.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
         blockExplorer: "https://sepolia.arbiscan.io",
-        isEVM: true,
+        type: "EVM",
         isActive: true,
         isTestnet: true,
       },
@@ -784,7 +784,7 @@ async function main() {
         chainId: 17000,
         rpcUrl: "https://eth-holesky.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
         blockExplorer: "https://holesky.etherscan.io",
-        isEVM: true,
+        type: "EVM",
         isActive: true,
         isTestnet: true,
       },
@@ -799,7 +799,7 @@ async function main() {
         chainId: 42161,
         rpcUrl: "https://arb-mainnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
         blockExplorer: "https://arbiscan.io",
-        isEVM: true,
+        type: "EVM",
         isActive: true,
         isTestnet: false,
       },
@@ -818,7 +818,7 @@ async function main() {
         chainSlug: "solana-mainnet",
         rpcUrl: "https://solana-mainnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
         blockExplorer: "https://explorer.solana.com",
-        isEVM: false,
+        type: "SVM",
         isActive: true,
         isTestnet: false,
         solanaCluster: "mainnet-beta",
@@ -829,18 +829,16 @@ async function main() {
       update: {
         rpcUrl: "https://solana-devnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
         solanaCluster: "devnet",
-        takumiPayProgramId: "6CCTEtYrk8unNhjYQ7npiLUf1iKQQJU88JSYn8EJLNYy",
       },
       create: {
         name: "Solana Devnet",
         chainSlug: "solana-devnet",
         rpcUrl: "https://solana-devnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
         blockExplorer: "https://explorer.solana.com?cluster=devnet",
-        isEVM: false,
+        type: "SVM",
         isActive: true,
         isTestnet: true,
         solanaCluster: "devnet",
-        takumiPayProgramId: "6CCTEtYrk8unNhjYQ7npiLUf1iKQQJU88JSYn8EJLNYy",
       },
     }),
     // Arc Testnet — UMKM USDC payout settlement chain (spec §7 / task 26).
@@ -857,16 +855,15 @@ async function main() {
       update: {
         rpcUrl: "https://rpc.testnet.arc.network",
         blockExplorer: "https://testnet.arcscan.app",
-        // Keep Gateway / x402 coordinates in sync on re-seed so drift
-        // between envs always converges to the values below (§7.1).
-        gatewayWalletContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
-        gatewayMinterContract: "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B",
-        paymasterAddress: null, // Arc: USDC=gas natively, no Paymaster.
-        x402DomainName: "GatewayWalletBatched",
-        x402DomainVersion: "1",
-        x402VerifyingContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
-        x402FacilitatorUrl:
-          "https://gateway-api-testnet.circle.com/gateway/v1/x402/settle",
+        // Keep x402 metadata in sync on re-seed so drift between envs always
+        // converges to the values below (§7.1). Gateway wallet/minter
+        // contract addresses live in SmartContract, seeded separately below
+        // — no Paymaster on Arc (USDC=gas natively), so no "paymaster" row.
+        metadata: {
+          x402DomainName: "GatewayWalletBatched",
+          x402DomainVersion: "1",
+          x402FacilitatorUrl: "https://gateway-api-testnet.circle.com/gateway/v1/x402/settle",
+        },
         // Bundler URL is server-only; Arc doesn't need one (USDC=gas → no
         // UserOps, no bundler). Explicit `null` converges drift on re-seed
         // so an ops-set URL on Arc (which would be a mistake) gets cleared.
@@ -879,19 +876,16 @@ async function main() {
         chainId: 5042002,
         rpcUrl: "https://rpc.testnet.arc.network",
         blockExplorer: "https://testnet.arcscan.app",
-        isEVM: true,
+        type: "EVM",
         isActive: true,
         isTestnet: true,
-        // Circle Gateway + x402 coordinates (spec §7.1 Insert 1). Same wallet
-        // contract address is reused as the x402 verifying contract on Arc.
-        gatewayWalletContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
-        gatewayMinterContract: "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B",
-        paymasterAddress: null, // Arc: USDC=gas natively, no Paymaster.
-        x402DomainName: "GatewayWalletBatched",
-        x402DomainVersion: "1",
-        x402VerifyingContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
-        x402FacilitatorUrl:
-          "https://gateway-api-testnet.circle.com/gateway/v1/x402/settle",
+        // x402 metadata (spec §7.1 Insert 1) — Gateway wallet/minter contract
+        // addresses are seeded as SmartContract rows below, not here.
+        metadata: {
+          x402DomainName: "GatewayWalletBatched",
+          x402DomainVersion: "1",
+          x402FacilitatorUrl: "https://gateway-api-testnet.circle.com/gateway/v1/x402/settle",
+        },
         bundlerUrl: null, // Arc has no bundler; see task 37 + §7.1.
       },
     }),
@@ -910,7 +904,7 @@ async function main() {
         chainId: 143,
         rpcUrl: "https://rpc.monad.xyz",
         blockExplorer: "https://monadvision.com",
-        isEVM: true,
+        type: "EVM",
         isActive: true,
         isTestnet: false,
       },
@@ -930,7 +924,7 @@ async function main() {
         chainSlug: "sui-mainnet",
         rpcUrl: "https://fullnode.mainnet.sui.io:443",
         blockExplorer: "https://suivision.xyz",
-        isEVM: false,
+        type: "MOVE_VM",
         isActive: true,
         isTestnet: false,
       },
@@ -947,22 +941,22 @@ async function main() {
         chainSlug: "sui-testnet",
         rpcUrl: "https://fullnode.testnet.sui.io:443",
         blockExplorer: "https://testnet.suivision.xyz",
-        isEVM: false,
+        type: "MOVE_VM",
         isActive: true,
         isTestnet: true,
       },
     }),
     // Stellar mainnet (pubnet) — keyed by chainSlug (no EIP-155 chainId,
-    // same posture as Solana/Sui). `rpcUrl` carries the Horizon REST
-    // endpoint — there is no dedicated `horizonUrl` column, reusing the
-    // same generic-string-column pattern Solana (Alchemy RPC) and Sui
-    // (fullnode RPC) already established. Public Horizon for v1; swap
-    // in a paid provider when traffic warrants.
-    // See docs/stellar-chain-support-spec.md §3.8.
+    // same posture as Solana/Sui). `rpcUrl` carries whatever endpoint this
+    // API actually calls for this chain — on Stellar rows that's Soroban
+    // RPC, not Horizon (see `Blockchain.type`'s schema comment). Still
+    // Horizon here because there is no mainnet `takumi_pay` deployment yet
+    // and no verified public Soroban mainnet RPC URL has been chosen — swap
+    // this to the real Soroban RPC endpoint when that deployment happens,
+    // same as the testnet row below.
     prisma.blockchain.upsert({
       where: { chainSlug: "stellar-mainnet" },
       update: {
-        rpcUrl: "https://horizon.stellar.org",
         blockExplorer: "https://stellar.expert/explorer/public",
       },
       create: {
@@ -970,24 +964,28 @@ async function main() {
         chainSlug: "stellar-mainnet",
         rpcUrl: "https://horizon.stellar.org",
         blockExplorer: "https://stellar.expert/explorer/public",
-        isEVM: false,
+        type: "STELLAR",
         isActive: true,
         isTestnet: false,
       },
     }),
-    // Stellar testnet — keyed by chainSlug (slugChain()).
+    // Stellar testnet — keyed by chainSlug (slugChain()). `rpcUrl` is the
+    // Soroban RPC endpoint this API calls for `takumi_pay` contract reads —
+    // the contract address itself is NOT stored here, see the "takumi_pay"
+    // SmartContract row below (deployed from ../contract/stellar,
+    // ../contract/stellar/deployments/testnet/v1.json).
     prisma.blockchain.upsert({
       where: { chainSlug: "stellar-testnet" },
       update: {
-        rpcUrl: "https://horizon-testnet.stellar.org",
+        rpcUrl: "https://soroban-testnet.stellar.org",
         blockExplorer: "https://stellar.expert/explorer/testnet",
       },
       create: {
         name: "Stellar Testnet",
         chainSlug: "stellar-testnet",
-        rpcUrl: "https://horizon-testnet.stellar.org",
+        rpcUrl: "https://soroban-testnet.stellar.org",
         blockExplorer: "https://stellar.expert/explorer/testnet",
-        isEVM: false,
+        type: "STELLAR",
         isActive: true,
         isTestnet: true,
       },
@@ -1003,7 +1001,7 @@ async function main() {
         chainId: 8453,
         rpcUrl: "https://mainnet.base.org",
         blockExplorer: "https://basescan.org",
-        isEVM: true,
+        type: "EVM",
         isActive: true,
         isTestnet: false,
       },
@@ -1041,77 +1039,143 @@ async function main() {
   });
 
   await Promise.all([
-    // Payment Processor on Polygon
+    // takumi_pay (EVM TakumiWallet contract) on Polygon — PLACEHOLDER address,
+    // not a real deployment (contract/evm has no Polygon deployment record).
     prisma.smartContract.upsert({
       where: { id: "smart-contract-payment" },
       update: {},
       create: {
         id: "smart-contract-payment",
-        name: "Payment Processor",
+        name: "takumi_pay",
+        type: "payment",
         blockchainId: evmChain(137).id, // Polygon
         address: "0x1234567890123456789012345678901234567890",
         isActive: true,
       },
     }),
-    // Payment Processor on Ethereum Sepolia
+    // takumi_pay on Ethereum Sepolia
     prisma.smartContract.upsert({
       where: { id: "smart-contract-payment-sepolia" },
       update: {},
       create: {
         id: "smart-contract-payment-sepolia",
-        name: "Payment Processor Sepolia",
+        name: "takumi_pay",
+        type: "payment",
         blockchainId: evmChain(11155111).id, // Ethereum Sepolia
         address: "0xf64BA8EEBD3f9e268bC1989Af0dde77ab2418779",
         isActive: true,
       },
     }),
-    // Payment Processor on Lisk
+    // takumi_pay on Lisk
     prisma.smartContract.upsert({
       where: { id: "smart-contract-payment-lisk" },
       update: {},
       create: {
         id: "smart-contract-payment-lisk",
-        name: "Payment Processor",
+        name: "takumi_pay",
+        type: "payment",
         blockchainId: evmChain(4202).id, // Lisk
         address: "0x39EDabDd022C39B6cfeB3161Ac77c439F325D6a0",
         isActive: true,
       },
     }),
-    // Payment Processor on Base
+    // takumi_pay on Base Sepolia
     prisma.smartContract.upsert({
       where: { id: "smart-contract-payment-base" },
       update: {},
       create: {
         id: "smart-contract-payment-base",
-        name: "Payment Processor",
+        name: "takumi_pay",
+        type: "payment",
         blockchainId: evmChain(84532).id, // Base (Sepolia)
         address: "0x479B0843C3e0627f36551660506dEd5b349Fa968",
         isActive: true,
       },
     }),
-    // Payment Processor on Arbitrum
+    // takumi_pay on Arbitrum Sepolia — same address as contract/evm's
+    // Arbitrum One (42161) deployment record; verify this is a genuine
+    // CREATE2 cross-chain match rather than a copy-paste before trusting it
+    // for real settlement traffic.
     prisma.smartContract.upsert({
       where: { id: "smart-contract-payment-arbitrum" },
       update: {},
       create: {
         id: "smart-contract-payment-arbitrum",
-        name: "Payment Processor",
+        name: "takumi_pay",
+        type: "payment",
         blockchainId: evmChain(421614).id, // Arbitrum Sepolia
         address: "0x479B0843C3e0627f36551660506dEd5b349Fa968",
         isActive: true,
       },
     }),
-    // TakumiPay on Solana Devnet — Anchor program deployed via `anchor deploy`
+    // takumi_pay on Solana Devnet — Anchor program deployed via `anchor deploy`.
+    // `name` is a stable machine key here, not a display label — every
+    // chain's takumi_pay contract/program uses the same "takumi_pay" name so
+    // BlockchainVerificationService can look it up by (blockchainId, name)
+    // without per-chain-family branching. (Renamed from "TakumiPay Solana";
+    // nothing else in the codebase read that string.)
     prisma.smartContract.upsert({
       where: { id: "smart-contract-payment-solana-devnet" },
       update: {
+        name: "takumi_pay",
+        type: "payment",
         address: "6CCTEtYrk8unNhjYQ7npiLUf1iKQQJU88JSYn8EJLNYy",
       },
       create: {
         id: "smart-contract-payment-solana-devnet",
-        name: "TakumiPay Solana",
+        name: "takumi_pay",
+        type: "payment",
         blockchainId: slugChain("solana-devnet").id, // Solana Devnet
         address: "6CCTEtYrk8unNhjYQ7npiLUf1iKQQJU88JSYn8EJLNYy",
+        isActive: true,
+      },
+    }),
+    // takumi_pay on Stellar Testnet — Soroban contract deployed from
+    // ../contract/stellar, see
+    // ../contract/stellar/deployments/testnet/v1.json.
+    prisma.smartContract.upsert({
+      where: { id: "smart-contract-payment-stellar-testnet" },
+      update: {
+        name: "takumi_pay",
+        type: "payment",
+        address: "CAEVSB5RGLRR3MVXUNMG67JRA4AAMZH4GR5WNCODSITO6YQI2W7XWD32",
+      },
+      create: {
+        id: "smart-contract-payment-stellar-testnet",
+        name: "takumi_pay",
+        type: "payment",
+        blockchainId: slugChain("stellar-testnet").id,
+        address: "CAEVSB5RGLRR3MVXUNMG67JRA4AAMZH4GR5WNCODSITO6YQI2W7XWD32",
+        isActive: true,
+      },
+    }),
+    // Circle Gateway wallet/minter contracts on Arc — SmartContract, not
+    // scalar Blockchain columns (see the schema comment on
+    // Blockchain.metadata). The x402 EIP-712 verifying contract is the same
+    // address as gateway_wallet by protocol design, so no separate
+    // "x402_verifying" row is needed — buildX402() falls back to
+    // gateway_wallet when x402_verifying is absent.
+    prisma.smartContract.upsert({
+      where: { id: "smart-contract-gateway-wallet-arc-testnet" },
+      update: { address: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9" },
+      create: {
+        id: "smart-contract-gateway-wallet-arc-testnet",
+        name: "gateway_wallet",
+        type: "gateway",
+        blockchainId: evmChain(5042002).id,
+        address: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+        isActive: true,
+      },
+    }),
+    prisma.smartContract.upsert({
+      where: { id: "smart-contract-gateway-minter-arc-testnet" },
+      update: { address: "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B" },
+      create: {
+        id: "smart-contract-gateway-minter-arc-testnet",
+        name: "gateway_minter",
+        type: "gateway",
+        blockchainId: evmChain(5042002).id,
+        address: "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B",
         isActive: true,
       },
     }),
@@ -1126,6 +1190,7 @@ async function main() {
       create: {
         id: "aave-v3-pool-ethereum",
         name: "aave_v3_pool",
+        type: "protocol",
         blockchainId: evmChain(1).id, // Ethereum
         address: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
         isActive: true,
@@ -1137,6 +1202,7 @@ async function main() {
       create: {
         id: "aave-v3-data-provider-ethereum",
         name: "aave_v3_data_provider",
+        type: "protocol",
         blockchainId: evmChain(1).id,
         address: "0x7B4EB56E7CD4b454BA8ff71E4518426369a138a3",
         isActive: true,
@@ -1148,6 +1214,7 @@ async function main() {
       create: {
         id: "aave-v3-pool-base",
         name: "aave_v3_pool",
+        type: "protocol",
         blockchainId: evmChain(8453).id, // Base Mainnet
         address: "0xA238Dd80C259a72e81d7e4674A983a59f1ad673e",
         isActive: true,
@@ -1159,6 +1226,7 @@ async function main() {
       create: {
         id: "aave-v3-data-provider-base",
         name: "aave_v3_data_provider",
+        type: "protocol",
         blockchainId: evmChain(8453).id,
         address: "0xd82a47fdebB5bf5329b09441C3DaB4b5df2153Ad",
         isActive: true,
@@ -1170,6 +1238,7 @@ async function main() {
       create: {
         id: "aave-v3-pool-arbitrum",
         name: "aave_v3_pool",
+        type: "protocol",
         blockchainId: evmChain(42161).id, // Arbitrum Mainnet (index 7 — see §5 of seed block)
         address: "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
         isActive: true,
@@ -1181,6 +1250,7 @@ async function main() {
       create: {
         id: "aave-v3-data-provider-arbitrum",
         name: "aave_v3_data_provider",
+        type: "protocol",
         blockchainId: evmChain(42161).id,
         address: "0x7F23D86Ee20D869112572136221e173428DD740B",
         isActive: true,
@@ -1193,6 +1263,7 @@ async function main() {
       create: {
         id: "aave-v3-pool-sepolia",
         name: "aave_v3_pool",
+        type: "protocol",
         blockchainId: evmChain(11155111).id, // Ethereum Sepolia
         address: "0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951",
         isActive: true,
@@ -1204,6 +1275,7 @@ async function main() {
       create: {
         id: "aave-v3-pool-base-sepolia",
         name: "aave_v3_pool",
+        type: "protocol",
         blockchainId: evmChain(84532).id, // Base Sepolia
         address: "0x07eA79F68B2B3df564D0A34F8e19D9B1e339814b",
         isActive: true,
@@ -1215,6 +1287,7 @@ async function main() {
       create: {
         id: "aave-v3-pool-arbitrum-sepolia",
         name: "aave_v3_pool",
+        type: "protocol",
         blockchainId: evmChain(421614).id, // Arb Sepolia
         address: "0xBfC91D59fdAA134A4ED45f7B584cAf96D7792Eff",
         isActive: true,
@@ -1233,6 +1306,7 @@ async function main() {
       // carries blockchainId/address so a re-seed corrects/rotates in place.
       update: {
         name: "intent_receipt",
+        type: "protocol",
         blockchainId: blockchains.find((b) => b.chainSlug === "sui-testnet")!
           .id,
         address:
@@ -1242,6 +1316,7 @@ async function main() {
       create: {
         id: "intent-receipt-sui-testnet",
         name: "intent_receipt",
+        type: "protocol",
         blockchainId: blockchains.find((b) => b.chainSlug === "sui-testnet")!
           .id,
         address:
@@ -1255,6 +1330,7 @@ async function main() {
       where: { id: "intent-receipt-sui-mainnet" },
       update: {
         name: "intent_receipt",
+        type: "protocol",
         blockchainId: blockchains.find((b) => b.chainSlug === "sui-mainnet")!
           .id,
         address:
@@ -1264,6 +1340,7 @@ async function main() {
       create: {
         id: "intent-receipt-sui-mainnet",
         name: "intent_receipt",
+        type: "protocol",
         blockchainId: blockchains.find((b) => b.chainSlug === "sui-mainnet")!
           .id,
         address:
@@ -1279,6 +1356,7 @@ async function main() {
       create: {
         id: "lido-steth-ethereum",
         name: "lido_steth",
+        type: "protocol",
         blockchainId: evmChain(1).id, // Ethereum
         address: "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",
         isActive: true,
@@ -1290,6 +1368,7 @@ async function main() {
       create: {
         id: "lido-wsteth-ethereum",
         name: "lido_wsteth",
+        type: "protocol",
         blockchainId: evmChain(1).id,
         address: "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0",
         isActive: true,
@@ -1301,6 +1380,7 @@ async function main() {
       create: {
         id: "lido-withdrawal-queue-ethereum",
         name: "lido_withdrawal_queue",
+        type: "protocol",
         blockchainId: evmChain(1).id,
         address: "0x889edC2eDab5f40e902b864aD4d7AdE8E412F9B1",
         isActive: true,
@@ -1313,6 +1393,7 @@ async function main() {
       create: {
         id: "lido-steth-holesky",
         name: "lido_steth",
+        type: "protocol",
         blockchainId: evmChain(17000).id, // Ethereum Holesky
         address: "0x3F1c547b21f65e10480dE3ad8E19fAAC46C95034",
         isActive: true,
@@ -1324,6 +1405,7 @@ async function main() {
       create: {
         id: "lido-wsteth-holesky",
         name: "lido_wsteth",
+        type: "protocol",
         blockchainId: evmChain(17000).id,
         address: "0x8d09a4502Cc8Cf1547aD300E066060D043f6982D",
         isActive: true,
@@ -1335,6 +1417,7 @@ async function main() {
       create: {
         id: "lido-withdrawal-queue-holesky",
         name: "lido_withdrawal_queue",
+        type: "protocol",
         blockchainId: evmChain(17000).id,
         address: "0xc7cc160b58F8Bb0baC94b80847E2CF2800565C50",
         isActive: true,
@@ -1347,6 +1430,7 @@ async function main() {
       create: {
         id: "curve-3pool-ethereum",
         name: "curve_3pool",
+        type: "protocol",
         blockchainId: evmChain(1).id,
         address: "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
         isActive: true,
@@ -1358,6 +1442,7 @@ async function main() {
       create: {
         id: "curve-3pool-lp-ethereum",
         name: "curve_3pool_lp",
+        type: "protocol",
         blockchainId: evmChain(1).id,
         address: "0x6c3F90f043a72FA612cbac8115EE7e52BDe6E490",
         isActive: true,
@@ -1372,6 +1457,7 @@ async function main() {
       create: {
         id: "morpho-steakhouse-usdc-ethereum",
         name: "morpho_steakhouse_usdc",
+        type: "protocol",
         blockchainId: evmChain(1).id,
         address: "0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB",
         isActive: true,
@@ -1383,6 +1469,7 @@ async function main() {
       create: {
         id: "morpho-flagship-usdc-base",
         name: "morpho_flagship_usdc",
+        type: "protocol",
         blockchainId: evmChain(8453).id, // Base Mainnet
         address: "0xc1256Ae5FF1cf2719D4937adb3bbCCab2E00A2Ca",
         isActive: true,
@@ -1396,6 +1483,7 @@ async function main() {
       create: {
         id: "yearn-router-ethereum",
         name: "yearn_router",
+        type: "protocol",
         blockchainId: evmChain(1).id,
         address: "0x1112dbCF805682e828606f74AB717abf4b4FD8DE",
         isActive: true,
@@ -1407,6 +1495,7 @@ async function main() {
       create: {
         id: "yearn-v3-usdc-ethereum",
         name: "yearn_v3_usdc",
+        type: "protocol",
         blockchainId: evmChain(1).id,
         address: "0xBe53A109B494E5c9f97b9Cd39Fe969BE68BF6204",
         isActive: true,
@@ -1421,6 +1510,7 @@ async function main() {
       create: {
         id: "eigenlayer-strategy-manager-ethereum",
         name: "eigenlayer_strategy_manager",
+        type: "protocol",
         blockchainId: evmChain(1).id,
         address: "0x858646372CC42E1A627fcE94aa7A7033e7CF075A",
         isActive: true,
@@ -1432,6 +1522,7 @@ async function main() {
       create: {
         id: "eigenlayer-delegation-manager-ethereum",
         name: "eigenlayer_delegation_manager",
+        type: "protocol",
         blockchainId: evmChain(1).id,
         address: "0x39053D51B77DC0d36036Fc1fCc8Cb819df8Ef37A",
         isActive: true,
@@ -1443,6 +1534,7 @@ async function main() {
       create: {
         id: "eigenlayer-steth-strategy-ethereum",
         name: "eigenlayer_steth_strategy",
+        type: "protocol",
         blockchainId: evmChain(1).id,
         address: "0x93c4b944D05dfe6df7645A86cd2206016c51564D",
         isActive: true,
@@ -1454,6 +1546,7 @@ async function main() {
       create: {
         id: "eigenlayer-strategy-manager-holesky",
         name: "eigenlayer_strategy_manager",
+        type: "protocol",
         blockchainId: evmChain(17000).id, // Holesky
         address: "0xdfB5f6CE42aAA7830E94ECFCcAd411beF4d4D5b6",
         isActive: true,
@@ -1465,6 +1558,7 @@ async function main() {
       create: {
         id: "eigenlayer-delegation-manager-holesky",
         name: "eigenlayer_delegation_manager",
+        type: "protocol",
         blockchainId: evmChain(17000).id,
         address: "0xA44151489861Fe9e3055d95adC98FbD462B948e7",
         isActive: true,
@@ -1478,6 +1572,7 @@ async function main() {
       create: {
         id: "ethena-susde-ethereum",
         name: "ethena_susde",
+        type: "protocol",
         blockchainId: evmChain(1).id,
         address: "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497",
         isActive: true,
@@ -1489,6 +1584,7 @@ async function main() {
       create: {
         id: "ethena-usde-ethereum",
         name: "ethena_usde",
+        type: "protocol",
         blockchainId: evmChain(1).id,
         address: "0x4c9EDD5852cd905f086C759E8383e09bff1E68B3",
         isActive: true,
@@ -1502,6 +1598,7 @@ async function main() {
       create: {
         id: "gmx-v2-exchange-router-arbitrum",
         name: "gmx_v2_exchange_router",
+        type: "protocol",
         blockchainId: evmChain(42161).id, // Arbitrum Mainnet
         address: "0xb7a9C9D9D7c0e8Db8Df0DCe9eDDFc83AC0a3f74D",
         isActive: true,
@@ -1513,6 +1610,7 @@ async function main() {
       create: {
         id: "gmx-v2-deposit-vault-arbitrum",
         name: "gmx_v2_deposit_vault",
+        type: "protocol",
         blockchainId: evmChain(42161).id,
         address: "0xF89e77e8Dc11691C9e8757e84aaFbCD8A67d7A55",
         isActive: true,
@@ -1524,6 +1622,7 @@ async function main() {
       create: {
         id: "gmx-v2-withdrawal-vault-arbitrum",
         name: "gmx_v2_withdrawal_vault",
+        type: "protocol",
         blockchainId: evmChain(42161).id,
         address: "0x0628D46b5D145f183AdB6Ef1f2c97eD1C4701C55",
         isActive: true,
@@ -1539,6 +1638,7 @@ async function main() {
       create: {
         id: "maple-syrup-usdc-ethereum",
         name: "maple_syrup_usdc",
+        type: "protocol",
         blockchainId: evmChain(1).id,
         address: "0x80ac24aA929eaF5013f6436cdA2a7ba190f5Cc0b",
         isActive: true,
@@ -1555,6 +1655,7 @@ async function main() {
       create: {
         id: "spl-stake-pool-program",
         name: "spl_stake_pool_program",
+        type: "protocol",
         blockchainId: slugChain("solana-mainnet").id, // Solana mainnet
         address: "SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy",
         isActive: true,
@@ -1566,6 +1667,7 @@ async function main() {
       create: {
         id: "jito-stake-pool",
         name: "jito_stake_pool",
+        type: "protocol",
         blockchainId: slugChain("solana-mainnet").id,
         address: "Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb",
         isActive: true,
@@ -1577,6 +1679,7 @@ async function main() {
       create: {
         id: "jito-sol-mint",
         name: "jito_sol_mint",
+        type: "protocol",
         blockchainId: slugChain("solana-mainnet").id,
         address: "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn",
         isActive: true,
@@ -2408,7 +2511,10 @@ async function main() {
     [
       "stellar-testnet",
       "USD Coin (Testnet)",
-      "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      // Self-issued demo asset (../contract/stellar/deployments/testnet/usdc-test-asset.json),
+      // NOT Circle's official testnet USDC — that issuer's faucet is outside our
+      // control, so takumi_pay's demo flow mints unlimited balances from this one instead.
+      "GB427BU6PWBPJYNIN4RXN4432VBSZPHYYJXGOFOVYR63BUMXLM6P2RPV",
     ],
   ] as const) {
     const stellarChainId = slugChain(slug).id;
@@ -3748,7 +3854,7 @@ async function seedPointPriceConfigs() {
   console.log("\n💎 Seeding point price configs...");
 
   const configs = [
-    { currency: "IDR", baseRate: "15" },
+    { currency: "IDR", baseRate: "1" },
     { currency: "USD", baseRate: "0.001" },
     { currency: "JPY", baseRate: "0.15" },
   ];

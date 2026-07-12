@@ -17,6 +17,7 @@ function buildHarness(opts: {
   refIdCreateError?: { code: string };
   existingPointTx?: Record<string, unknown> | null;
   existingByHash?: Record<string, unknown> | null;
+  walletLinks?: { walletAddress: string }[];
 } = {}) {
   const txCalls = {
     pointBalance: {
@@ -81,6 +82,9 @@ function buildHarness(opts: {
         return { id: "ri" };
       }),
       update: jest.fn(async () => ({})),
+    },
+    walletAccountLink: {
+      findMany: jest.fn(async () => opts.walletLinks ?? []),
     },
   } as unknown as PrismaService;
 
@@ -341,6 +345,38 @@ describe("PointsService.createDeposit happy path", () => {
       expect.objectContaining({ attempts: 5 }),
     );
     expect(out.status).toBe("PENDING");
+  });
+
+  it("accepts a deposit whose payer is a linked (non-primary) address and records it", async () => {
+    // Mirrors the Stellar case: the user's primary address is EVM, but the
+    // on-chain payer is their linked G-address. Ownership is satisfied via
+    // WalletAccountLink, and the payer is persisted for the verifier.
+    const stellarDto = {
+      ...dto,
+      refId: "ref_link",
+      txHash: "0xhash_link",
+      walletAddress: "GSTELLARPAYER",
+    };
+    const { svc, prisma } = buildHarness({
+      user: { id: "u1", walletAddress: "0xUSER" },
+      walletLinks: [{ walletAddress: "GSTELLARPAYER" }],
+      token: {
+        isActive: true,
+        isStablecoin: true,
+        symbol: "IDRX",
+        peggedCurrency: "IDR",
+      },
+      blockchain: { isActive: true },
+      contract: { id: "sc_1", isActive: true },
+      priceConfig: { baseRate: "1" },
+    });
+    const out = await svc.createDeposit("u1", stellarDto as never);
+    expect(out.status).toBe("PENDING");
+    expect(prisma.pointTransaction.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ walletAddress: "GSTELLARPAYER" }),
+      }),
+    );
   });
 });
 

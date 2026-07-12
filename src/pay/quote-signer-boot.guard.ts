@@ -29,7 +29,7 @@ export class QuoteSignerBootGuard implements OnModuleInit {
     if (nodeEnv === "test") return;
 
     const chains = await this.prisma.blockchain.findMany({
-      where: { isActive: true, isEVM: true, quoteSignerAddress: { not: null } },
+      where: { isActive: true, type: "EVM", quoteSignerAddress: { not: null } },
     });
 
     const signerAddress = this.quoteSigner.signerAddress.toLowerCase();

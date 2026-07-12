@@ -63,21 +63,26 @@ export class PointDepositProcessor extends WorkerHost {
       if (!token.contractAddress) {
         throw new Error(`Token ${token.symbol} has no contract address`);
       }
-      if (!blockchain.isEVM || blockchain.chainId == null) {
-        throw new Error(
-          `Point deposits only supported on EVM chains (blockchain: ${blockchain.name})`,
-        );
+      // Only EVM chains need a real chainId — Solana/Stellar dispatch off
+      // blockchainId instead (see BlockchainVerificationService.verifyPointDeposit).
+      if (blockchain.type === "EVM" && blockchain.chainId == null) {
+        throw new Error(`EVM blockchain ${blockchain.name} is missing chainId`);
       }
 
       await this.blockchainVerification.verifyPointDeposit({
         txHash: pointTx.txHash!,
-        chainId: blockchain.chainId,
-        contractAddress: pointTx.contractAddress!,
+        chainId: blockchain.chainId ?? 0,
+        contractAddress: pointTx.contractAddress ?? "",
         refId: pointTx.refId!,
-        expectedWalletAddress: user.walletAddress,
+        // Prefer the deposit's own recorded payer (validated against the
+        // user's linked addresses at submission time) so non-EVM chains
+        // verify the real on-chain payer; fall back to the user's primary
+        // address for legacy rows created before this column existed.
+        expectedWalletAddress: pointTx.walletAddress ?? user.walletAddress,
         expectedTokenAddress: token.contractAddress,
         expectedAmount: BigInt(pointTx.tokenAmount!.toFixed(0)),
         minConfirmations: 12,
+        blockchainId: blockchain.id,
       });
 
       // 5. Mark CONFIRMED
@@ -92,7 +97,12 @@ export class PointDepositProcessor extends WorkerHost {
       const humanAmount = new Prisma.Decimal(pointTx.tokenAmount!.toString()).div(
         new Prisma.Decimal(10).pow(token.decimals),
       );
-      const points = BigInt(humanAmount.mul(pointRate).floor().toFixed(0));
+      // Round rather than floor: the deposited token amount is quantized to
+      // the token's decimals, so it will essentially never multiply back to
+      // an exact integer point count. Flooring always rounds that quantization
+      // noise against the user; round-half-up is unbiased and matches what
+      // the depositor actually requested.
+      const points = BigInt(humanAmount.mul(pointRate).round().toFixed(0));
 
       // 7. Credit points atomically
       await this.prisma.$transaction(async (tx) => {

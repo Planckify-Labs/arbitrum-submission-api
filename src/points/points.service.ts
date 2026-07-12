@@ -101,9 +101,15 @@ export class PointsService {
           priceInCurrency: tokenPriceInCurrency.toString(),
         },
         pointsPerToken: pointsPerToken.toString(),
-        tokenPerPoint: tokenPerPoint.toSignificantDigits(6).toString(),
+        // Full precision — this is the rate mobile multiplies by the
+        // requested point count to derive the token amount to deposit.
+        // Truncating it (previously 6 sig figs) understates the token
+        // amount needed, and since the crediting worker recomputes points
+        // from the actually-deposited amount, that shortfall silently
+        // costs the user points (worse at larger deposits).
+        tokenPerPoint: tokenPerPoint.toSignificantDigits(18).toString(),
         minimumPoints: MINIMUM_POINTS,
-        minimumTokenAmount: minimumTokenAmount.toSignificantDigits(8).toString(),
+        minimumTokenAmount: minimumTokenAmount.toSignificantDigits(18).toString(),
         updatedAt: new Date().toISOString(),
       };
     });
@@ -127,10 +133,27 @@ export class PointsService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
 
-    if (
-      !user.walletAddress ||
-      !addressesEqual(user.walletAddress, dto.walletAddress)
-    ) {
+    // Ownership: the deposit's on-chain payer must be an address this user
+    // controls. For EVM that's their primary `walletAddress` (proven at
+    // sign-in). For non-EVM chains (e.g. Stellar) the on-chain payer is a
+    // per-chain address (the G-address) that differs from the primary — accept
+    // it when the user has linked it to their account (WalletAccountLink, via
+    // POST /auth/google/wallets). The linked address is then bound to this
+    // deposit and re-verified against the on-chain payer by the worker.
+    let ownsDepositAddress = addressesEqual(
+      user.walletAddress,
+      dto.walletAddress,
+    );
+    if (!ownsDepositAddress) {
+      const links = await this.prisma.walletAccountLink.findMany({
+        where: { userId },
+        select: { walletAddress: true },
+      });
+      ownsDepositAddress = links.some((l) =>
+        addressesEqual(l.walletAddress, dto.walletAddress),
+      );
+    }
+    if (!ownsDepositAddress) {
       throw new BadRequestException(
         "Wallet address does not belong to the authenticated user",
       );
@@ -268,6 +291,7 @@ export class PointsService {
         tokenId: dto.tokenId,
         blockchainId: dto.blockchainId,
         contractAddress: dto.contractAddress,
+        walletAddress: dto.walletAddress,
         tokenAmount: new Prisma.Decimal(dto.tokenAmount),
         pointRate,
       },
