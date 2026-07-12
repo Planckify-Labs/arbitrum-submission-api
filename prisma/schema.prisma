@@ -132,12 +132,12 @@ model User {
   paymentIntentsAsPayer PaymentIntent[]  @relation("PaymentIntentPayer")
   gatewayDeposits       GatewayDeposit[]
 
-  devicePushTokens      DevicePushToken[]
+  devicePushTokens DevicePushToken[]
 
   // Wallets this (social) account has set up on some device. Lets a
   // returning user on a new device be told "we found your wallet" even
   // when there is no local storage and no Drive backup.
-  walletLinks           WalletAccountLink[]
+  walletLinks WalletAccountLink[]
 
   @@unique([authProvider, socialId])
   @@index([role])
@@ -229,7 +229,14 @@ model Blockchain {
   chainSlug         String?            @unique
   rpcUrl            String
   blockExplorer     String
-  isEVM             Boolean            @default(true)
+  // Chain family — "EVM" | "SVM" | "MOVE_VM" | "STELLAR" (see
+  // src/blockchains/chain-family.ts for the validated TS union). Deliberately
+  // a plain string, not a Postgres enum: adding a new chain to an existing
+  // family needs zero migration, and a genuinely new family only needs a
+  // one-line addition to CHAIN_FAMILIES + a data backfill, not a schema
+  // change. assertChainFamily() enforces this at every read site instead of
+  // at the DB layer — see that file's doc comment for the tradeoff.
+  type              String
   isActive          Boolean            @default(true)
   tokens            Token[]
   createdAt         DateTime           @default(now())
@@ -239,22 +246,30 @@ model Blockchain {
   pointTransactions PointTransaction[]
   nftAssets         NftAsset[]
 
-  // Onchain settlement coordinates (Phase 1)
-  takumiWalletContract String?
-  quoteSignerAddress   String?
-  minConfirmations     Int?
+  // Onchain settlement coordinates (Phase 1). `takumiWalletContract` was
+  // removed — it was NULL on every row (never actually populated by ops or
+  // seed) and duplicated the same address already tracked as a
+  // SmartContract row (name: "takumi_pay"), same pattern as Solana/Stellar.
+  quoteSignerAddress String?
+  minConfirmations   Int?
 
-  // Circle Gateway / Paymaster / x402 coordinates (§7.1). Nullable — Gateway is
-  // not deployed on every chain, and Arc itself has no Paymaster (USDC=gas).
-  // Populated by ops via seed/SQL; x402_* columns are also rewritten by the
-  // boot-time `GET /gateway/v1/x402/supported` refresh (§6.5).
-  gatewayWalletContract String?
-  gatewayMinterContract String?
-  paymasterAddress      String?
-  x402DomainName        String?
-  x402DomainVersion     String?
-  x402VerifyingContract String?
-  x402FacilitatorUrl    String?
+  // Circle Gateway / Paymaster contract addresses live in `SmartContract`
+  // (name: "gateway_wallet" / "gateway_minter" / "paymaster"), not scalar
+  // columns here — they were previously duplicated: `gatewayWalletContract`
+  // and `x402VerifyingContract` held the identical address on Arc (Circle's
+  // Gateway wallet contract *is* the x402 EIP-712 verifying contract by
+  // protocol design, not a coincidence), with no sync guarantee between the
+  // two columns. `x402VerifyingContract` resolves from the "gateway_wallet"
+  // SmartContract row unless a chain seeds a distinct "x402_verifying" row
+  // (see blockchain-enricher.ts#buildX402) — future-proofing for a chain
+  // where they genuinely differ, without re-introducing the duplication for
+  // the common case.
+  //
+  // x402DomainName / x402DomainVersion / x402FacilitatorUrl (genuine
+  // per-chain config, not addresses) live in `metadata` below. Nullable —
+  // Gateway is not deployed on every chain, and Arc itself has no Paymaster
+  // (USDC=gas).
+  metadata Json?
 
   // ERC-4337 bundler URL (task 37 — `POST /v1/userop/submit`). Currently
   // carries the provider API key in the query string (`?apikey=…`). This
@@ -265,8 +280,24 @@ model Blockchain {
   bundlerUrl String?
 
   // Solana-specific fields (Solana contract integration)
-  solanaCluster      String?
-  takumiPayProgramId String?
+  solanaCluster String?
+
+  // NOTE: on Stellar rows, `rpcUrl` holds the Soroban RPC endpoint (what
+  // this API actually calls for contract reads/simulation) — not Horizon.
+  // A prior version of this model had a separate `stellarSorobanRpcUrl`
+  // column reasoned from "the mobile wallet already expects `rpcUrl` to be
+  // Horizon" (mobile-app/docs/stellar-chain-support-spec.md §3.8); removed
+  // by deliberate choice to keep one endpoint column per chain like every
+  // other chain here, accepting that mobile's Horizon connectivity is a
+  // separate, not-yet-reconciled concern in a different repo.
+
+  // NOTE: the takumi_pay program/contract address for Solana and Stellar is
+  // NOT stored here — it lives in `SmartContract` (name: "takumi_pay"),
+  // the same per-chain contract registry EVM already uses. A dedicated
+  // scalar column here would just duplicate that row (this is exactly what
+  // happened before this comment was written: `takumiPayProgramId` on this
+  // model and a `SmartContract` row held the same Solana address with no
+  // sync guarantee — removed in favor of a single source of truth).
 }
 
 model Token {
@@ -421,6 +452,12 @@ model VendorAPI {
 model SmartContract {
   id           String     @id @default(ulid())
   name         String
+  // Category of contract, e.g. "payment" (takumi_pay), "gateway" (Circle
+  // Gateway wallet/minter/paymaster), "protocol" (DeFi integrations like
+  // Aave/Curve/Lido). Free-text, not an enum — new integrations add new
+  // categories without a migration.
+  type         String
+  version      Int        @default(1)
   blockchain   Blockchain @relation(fields: [blockchainId], references: [id])
   blockchainId String
   address      String
@@ -759,6 +796,12 @@ model PointTransaction {
   tokenId         String?
   blockchainId    String?
   contractAddress String?
+  // On-chain depositor address (the account that signed/paid the deposit).
+  // Stored so the verifier checks the *actual* payer rather than the user's
+  // single primary `walletAddress` — required for non-EVM chains (e.g.
+  // Stellar), where the on-chain payer is a per-chain address the user has
+  // linked to their account (WalletAccountLink) rather than their primary.
+  walletAddress   String?
   tokenAmount     Decimal? @db.Decimal(36, 18)
   pointRate       Decimal? @db.Decimal(18, 8)
 
@@ -1240,11 +1283,11 @@ model StrategyPosition {
 }
 
 model OpportunityCache {
-  id                   String   @id @default(cuid())
+  id                   String    @id @default(cuid())
   protocolSlug         String
   chainId              Int // 0 for non-EVM (carry namespace below)
   namespace            String
-  chainName            String   @default("") // DeFiLlama's `chain` field, e.g. "Ethereum", "Arbitrum", "Base", "Solana"
+  chainName            String    @default("") // DeFiLlama's `chain` field, e.g. "Ethereum", "Arbitrum", "Base", "Solana"
   assetSymbol          String
   assetContract        String? // ERC-20 / SPL mint / Sui coin type the protocol's underlying reserve uses; null when not resolvable (e.g. mainnet defillama-scored rows that need a later resolver pass)
   poolId               String // DeFiLlama pool id

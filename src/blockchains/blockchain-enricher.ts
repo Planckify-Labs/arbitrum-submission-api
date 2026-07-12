@@ -36,19 +36,24 @@ export interface TBlockchainRow {
   chainSlug?: string | null;
   rpcUrl: string;
   blockExplorer: string;
-  isEVM: boolean;
+  // Chain family — "EVM" | "SVM" | "MOVE_VM" | "STELLAR". The public
+  // `isEVM` field on EnrichedBlockchainResponseDto is derived from this at
+  // serialization time (see enrichBlockchain below), not stored — mobile's
+  // wire contract keeps the boolean, the DB doesn't duplicate it.
+  type: string;
   isActive: boolean;
   isTestnet: boolean | null;
   updatedAt: Date;
-  gatewayWalletContract: string | null;
-  gatewayMinterContract: string | null;
-  paymasterAddress: string | null;
-  x402DomainName: string | null;
-  x402DomainVersion: string | null;
-  x402VerifyingContract: string | null;
-  x402FacilitatorUrl: string | null;
+  // Genuine per-chain config (not an address) — see the schema comment on
+  // Blockchain.metadata for why this isn't a scalar column.
+  metadata?: { x402DomainName?: string; x402DomainVersion?: string; x402FacilitatorUrl?: string } | null;
   tokens?: TTokenRow[] | null;
   SmartContract?: TSmartContractRow[] | null;
+}
+
+/** Finds a SmartContract row by its stable machine-key `name`, not a display label. */
+function findContract(row: TBlockchainRow, name: string): TSmartContractRow | undefined {
+  return row.SmartContract?.find((s) => s.isActive && s.name === name);
 }
 
 export interface TSmartContractRow {
@@ -73,7 +78,7 @@ export interface TTokenRow {
 }
 
 export function buildCaip2Id(row: TBlockchainRow): string | null {
-  if (row.isEVM && row.chainId != null) {
+  if (row.type === "EVM" && row.chainId != null) {
     return `eip155:${row.chainId}`;
   }
   // Non-EVM rows are keyed by `chainSlug` (e.g. `sui-mainnet`,
@@ -99,20 +104,23 @@ export function buildCaip2Id(row: TBlockchainRow): string | null {
 export function buildGateway(
   row: TBlockchainRow,
 ): GatewayContractsDto | null {
-  if (!row.gatewayWalletContract || !row.gatewayMinterContract) {
+  const wallet = findContract(row, "gateway_wallet");
+  const minter = findContract(row, "gateway_minter");
+  if (!wallet || !minter) {
     return null;
   }
   return {
-    walletContract: row.gatewayWalletContract,
-    minterContract: row.gatewayMinterContract,
+    walletContract: wallet.address,
+    minterContract: minter.address,
   };
 }
 
 export function buildPaymaster(row: TBlockchainRow): PaymasterDto | null {
-  if (!row.paymasterAddress) {
+  const paymaster = findContract(row, "paymaster");
+  if (!paymaster) {
     return null;
   }
-  return { address: row.paymasterAddress };
+  return { address: paymaster.address };
 }
 
 /**
@@ -121,15 +129,25 @@ export function buildPaymaster(row: TBlockchainRow): PaymasterDto | null {
  * null, falls back to the Circle-supplied in-memory snapshot. This is the
  * "task 22 may not have written DB yet" safety net described in task 21 scope
  * item 1d.
+ *
+ * `verifyingContract` resolves from a distinct "x402_verifying" SmartContract
+ * row if one is seeded, else falls back to "gateway_wallet" — Circle's
+ * Gateway wallet contract *is* the x402 EIP-712 verifying contract by
+ * protocol design on every chain seeded so far, not a coincidence, so a
+ * chain doesn't need to duplicate the same address under a second name
+ * unless it genuinely differs.
  */
 export function buildX402(
   row: TBlockchainRow,
   x402Svc?: X402SupportedService | null,
 ): X402DomainDto | null {
-  let domainName = row.x402DomainName;
-  let domainVersion = row.x402DomainVersion;
-  let verifyingContract = row.x402VerifyingContract;
-  const facilitatorUrl = row.x402FacilitatorUrl;
+  let domainName = row.metadata?.x402DomainName ?? null;
+  let domainVersion = row.metadata?.x402DomainVersion ?? null;
+  let verifyingContract =
+    findContract(row, "x402_verifying")?.address ??
+    findContract(row, "gateway_wallet")?.address ??
+    null;
+  const facilitatorUrl = row.metadata?.x402FacilitatorUrl ?? null;
 
   const missingCore = !domainName || !domainVersion || !verifyingContract;
   if (missingCore && x402Svc && row.chainId != null) {
@@ -208,7 +226,7 @@ export function enrichBlockchain(
     caip2Id: buildCaip2Id(row),
     rpcUrl: row.rpcUrl,
     blockExplorer: row.blockExplorer,
-    isEVM: row.isEVM,
+    isEVM: row.type === "EVM",
     isActive: row.isActive,
     isTestnet: row.isTestnet ?? false,
     nativeCurrency: buildNativeCurrency(row),

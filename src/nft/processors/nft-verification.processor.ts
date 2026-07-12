@@ -59,7 +59,7 @@ export class NftVerificationProcessor extends WorkerHost {
 
     for (const asset of assets) {
       try {
-        if (!asset.blockchain.isEVM || asset.blockchain.chainId == null) {
+        if (asset.blockchain.type !== "EVM" || asset.blockchain.chainId == null) {
           this.logger.debug(
             `Skipping non-EVM NFT ${asset.contractAddress}#${asset.tokenId} on ${asset.blockchain.name}`,
           );

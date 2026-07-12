@@ -48,6 +48,7 @@
     "@solana/keys": "^2.3.0",
     "@solana/web3.js": "^1.98.4",
     "@stellar/stellar-base": "^15.0.0",
+    "@stellar/stellar-sdk": "^16.0.1",
     "@valkey/valkey-glide": "^2.0.1",
     "argon2": "^0.43.1",
     "bullmq": "^5.58.5",
@@ -109,8 +110,18 @@
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
+      "node_modules/@noble/.+\\.js$": [
+        "ts-jest",
+        {
+          "tsconfig": "<rootDir>/../tsconfig.jest.json",
+          "isolatedModules": true
+        }
+      ],
+      "^(?!.*node_modules).+\\.(t|j)s$": "ts-jest"
     },
+    "transformIgnorePatterns": [
+      "node_modules/\\.pnpm/(?!@noble\\+[a-z0-9-]+@)"
+    ],
     "moduleNameMapper": {
       "^@generated/prisma$": "<rootDir>/generated/prisma/client",
       "^@generated/(.*)$": "<rootDir>/generated/$1"

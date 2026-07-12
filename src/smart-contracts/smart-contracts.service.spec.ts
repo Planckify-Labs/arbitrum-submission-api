@@ -105,7 +105,7 @@ describe("SmartContractsService", () => {
     expect(findMany.where.blockchainId).toBe("bc_x");
     expect(findMany.where.blockchain.name.contains).toBe("Polygon");
     expect(findMany.where.blockchain.chainId).toBe(137);
-    expect(findMany.where.blockchain.isEVM).toBe(true);
+    expect(findMany.where.blockchain.type).toBe("EVM");
     expect(findMany.where.address).toBe("0xAA");
     expect(findMany.where.isActive).toBe(true);
   });

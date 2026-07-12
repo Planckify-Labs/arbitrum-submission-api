@@ -1,5 +1,6 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsString, IsInt, IsBoolean, IsUrl, IsOptional } from "class-validator";
+import { IsString, IsInt, IsBoolean, IsUrl, IsOptional, IsIn } from "class-validator";
+import { CHAIN_FAMILIES, type ChainFamily } from "../chain-family";
 
 export class CreateBlockchainDto {
   @ApiProperty({
@@ -8,6 +9,14 @@ export class CreateBlockchainDto {
   })
   @IsString()
   name: string;
+
+  @ApiProperty({
+    description: "Chain family — which VM/ledger model this chain uses",
+    example: "EVM",
+    enum: CHAIN_FAMILIES,
+  })
+  @IsIn(CHAIN_FAMILIES)
+  type: ChainFamily;
 
   @ApiProperty({
     description: "The chain ID of the blockchain",
@@ -29,15 +38,6 @@ export class CreateBlockchainDto {
   })
   @IsUrl()
   blockExplorer: string;
-
-  @ApiProperty({
-    description: "Whether the blockchain is EVM compatible",
-    example: true,
-    default: true,
-  })
-  @IsBoolean()
-  @IsOptional()
-  isEVM?: boolean;
 
   @ApiProperty({
     description: "Whether the blockchain is active",

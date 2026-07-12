@@ -19,6 +19,15 @@ export class SearchSmartContractDto {
   name?: string;
 
   @ApiProperty({
+    description: "Filter by contract type, e.g. payment, gateway, protocol",
+    example: "payment",
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  type?: string;
+
+  @ApiProperty({
     description: "Filter by blockchain ID",
     example: "01H1G5V...",
     required: false,

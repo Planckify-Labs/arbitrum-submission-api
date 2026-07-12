@@ -24,7 +24,7 @@
  *
  * Environment:
  *   - ADMIN_WALLET_PRIVATE_KEY: 0x-prefixed, 66-char hex private key
- *   - DATABASE_URL: for resolving Blockchain.takumiWalletContract
+ *   - DATABASE_URL: for resolving the "takumi_pay" SmartContract row
  */
 
 export async function main() {

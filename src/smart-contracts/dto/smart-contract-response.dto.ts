@@ -15,6 +15,19 @@ export class SmartContractResponseDto {
   name: string;
 
   @ApiProperty({
+    description:
+      "The category of the smart contract, e.g. payment, gateway, protocol",
+    example: "payment",
+  })
+  type: string;
+
+  @ApiProperty({
+    description: "The contract version",
+    example: 1,
+  })
+  version: number;
+
+  @ApiProperty({
     description: "The blockchain where the contract is deployed",
   })
   blockchain: BlockchainResponseDto;

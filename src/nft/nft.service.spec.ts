@@ -54,7 +54,7 @@ describe("NftService.addNftAsset prerequisite checks", () => {
 
   it("rejects non-EVM chain (NFT path is EVM-only)", async () => {
     const { svc } = buildHarness({
-      blockchain: { id: "bc_x", isEVM: false, chainId: null, name: "Solana" },
+      blockchain: { id: "bc_x", type: "SVM", chainId: null, name: "Solana" },
     });
     await expect(
       svc.addNftAsset("u1", "0xUSER", {
@@ -78,7 +78,7 @@ describe("NftService.addNftAsset ownership verification", () => {
       .mockResolvedValueOnce("ipfs://meta") // tokenURI (not reached)
       .mockResolvedValueOnce("Test"); // name fallback
     const { svc } = buildHarness({
-      blockchain: { id: "bc_x", isEVM: true, chainId: 1, name: "ETH" },
+      blockchain: { id: "bc_x", type: "EVM", chainId: 1, name: "ETH" },
     });
     await expect(
       svc.addNftAsset("u1", "0xUSER000000000000000000000000000000000000", {
@@ -94,7 +94,7 @@ describe("NftService.addNftAsset ownership verification", () => {
       .mockResolvedValueOnce(true) // supportsInterface ERC-1155 → yes
       .mockResolvedValueOnce(0n); // balanceOf
     const { svc } = buildHarness({
-      blockchain: { id: "bc_x", isEVM: true, chainId: 1, name: "ETH" },
+      blockchain: { id: "bc_x", type: "EVM", chainId: 1, name: "ETH" },
     });
     await expect(
       svc.addNftAsset("u1", "0xUSER", {
@@ -110,7 +110,7 @@ describe("NftService.addNftAsset ownership verification", () => {
       .mockResolvedValueOnce(false)
       .mockRejectedValueOnce(new Error("revert"));
     const { svc } = buildHarness({
-      blockchain: { id: "bc_x", isEVM: true, chainId: 1, name: "ETH" },
+      blockchain: { id: "bc_x", type: "EVM", chainId: 1, name: "ETH" },
     });
     await expect(
       svc.addNftAsset("u1", "0xUSER", {

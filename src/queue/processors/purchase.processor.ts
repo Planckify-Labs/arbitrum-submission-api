@@ -271,7 +271,7 @@ export class PurchaseProcessor extends WorkerHost {
       throw new Error(`Network ${blockchain?.name || networkId} is not active`);
     }
 
-    if (blockchain.isEVM) {
+    if (blockchain.type === "EVM") {
       const smartContract = await this.contractCache.getByBlockchainAndAddress(
         networkId,
         contractAddress,

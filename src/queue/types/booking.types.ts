@@ -31,7 +31,7 @@ export interface TBookingWithRelations {
     id: string;
     chainId: number | null;
     name: string;
-    isEVM: boolean;
+    type: string;
   };
   smartContract: {
     address: string;

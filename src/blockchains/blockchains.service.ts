@@ -211,7 +211,7 @@ export class BlockchainsService {
     }
 
     if (isEVM !== undefined) {
-      where.isEVM = isEVM;
+      where.type = isEVM ? "EVM" : { not: "EVM" };
     }
 
     if (isActive !== undefined) {

@@ -235,7 +235,7 @@ export function ApiGetSmartContractByChainIdPublic() {
     ApiOperation({
       summary: "Get active smart contract by chain ID (Public API)",
       description:
-        "Returns the first active smart contract for the specified chain ID, ordered by creation date (newest first)",
+        'Returns the active "payment" contract (takumi_pay) for the specified chain ID, ordered by creation date (newest first). Gateway/protocol contracts on the same chain are excluded.',
     }),
     ApiParam({
       name: "chainId",

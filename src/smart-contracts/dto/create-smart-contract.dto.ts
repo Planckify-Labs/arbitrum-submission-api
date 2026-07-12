@@ -1,5 +1,5 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsString, IsBoolean, IsOptional } from "class-validator";
+import { IsString, IsBoolean, IsOptional, IsInt, Min } from "class-validator";
 
 export class CreateSmartContractDto {
   @ApiProperty({
@@ -8,6 +8,24 @@ export class CreateSmartContractDto {
   })
   @IsString()
   name: string;
+
+  @ApiProperty({
+    description:
+      "The category of the smart contract, e.g. payment, gateway, protocol",
+    example: "payment",
+  })
+  @IsString()
+  type: string;
+
+  @ApiProperty({
+    description: "The contract version",
+    example: 1,
+    default: 1,
+  })
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  version?: number;
 
   @ApiProperty({
     description: "The blockchain ID where the contract is deployed",

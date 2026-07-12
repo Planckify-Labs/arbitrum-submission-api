@@ -34,17 +34,21 @@ describe("blockchain-enricher", () => {
     chainId: 5042002,
     rpcUrl: "https://rpc.testnet.arc.network",
     blockExplorer: "https://testnet.arcscan.app",
-    isEVM: true,
+    type: "EVM",
     isActive: true,
     isTestnet: true,
     updatedAt: new Date("2025-01-01T00:00:00.000Z"),
-    gatewayWalletContract: arcGatewayWallet,
-    gatewayMinterContract: arcGatewayMinter,
-    paymasterAddress: null, // Arc has no paymaster — USDC is gas
-    x402DomainName: "GatewayWalletBatched",
-    x402DomainVersion: "1",
-    x402VerifyingContract: arcGatewayWallet,
-    x402FacilitatorUrl: null,
+    metadata: {
+      x402DomainName: "GatewayWalletBatched",
+      x402DomainVersion: "1",
+    },
+    // No "paymaster" row — Arc has no paymaster (USDC is gas). No distinct
+    // "x402_verifying" row — falls back to gateway_wallet (same address by
+    // protocol design).
+    SmartContract: [
+      { name: "gateway_wallet", address: arcGatewayWallet, isActive: true },
+      { name: "gateway_minter", address: arcGatewayMinter, isActive: true },
+    ],
     tokens: [
       {
         ...tokenDefaults,
@@ -66,17 +70,12 @@ describe("blockchain-enricher", () => {
     chainId: 1,
     rpcUrl: "https://mainnet.infura.io/v3/x",
     blockExplorer: "https://etherscan.io",
-    isEVM: true,
+    type: "EVM",
     isActive: true,
     isTestnet: false,
     updatedAt: new Date(),
-    gatewayWalletContract: null,
-    gatewayMinterContract: null,
-    paymasterAddress: null,
-    x402DomainName: null,
-    x402DomainVersion: null,
-    x402VerifyingContract: null,
-    x402FacilitatorUrl: null,
+    metadata: null,
+    SmartContract: [],
     tokens: [],
   };
 
@@ -86,7 +85,7 @@ describe("blockchain-enricher", () => {
     });
 
     it("returns null for non-EVM rows", () => {
-      expect(buildCaip2Id({ ...bareRow, isEVM: false })).toBeNull();
+      expect(buildCaip2Id({ ...bareRow, type: "SVM" })).toBeNull();
     });
   });
 
@@ -98,10 +97,13 @@ describe("blockchain-enricher", () => {
       });
     });
 
-    it("returns null (NOT an object-of-nulls) when either column is missing", () => {
+    it("returns null (NOT an object-of-nulls) when either contract is missing", () => {
       expect(buildGateway(bareRow)).toBeNull();
       expect(
-        buildGateway({ ...arcRow, gatewayMinterContract: null }),
+        buildGateway({
+          ...arcRow,
+          SmartContract: arcRow.SmartContract?.filter((s) => s.name !== "gateway_minter"),
+        }),
       ).toBeNull();
     });
   });
@@ -112,7 +114,13 @@ describe("blockchain-enricher", () => {
     });
 
     it("returns object when address present", () => {
-      const row = { ...arcRow, paymasterAddress: "0xpaymaster" };
+      const row: TBlockchainRow = {
+        ...arcRow,
+        SmartContract: [
+          ...(arcRow.SmartContract ?? []),
+          { name: "paymaster", address: "0xpaymaster", isActive: true },
+        ],
+      };
       expect(buildPaymaster(row)).toEqual({ address: "0xpaymaster" });
     });
   });

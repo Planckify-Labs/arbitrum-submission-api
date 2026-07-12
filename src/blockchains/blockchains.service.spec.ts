@@ -21,17 +21,18 @@ describe("BlockchainsService - enriched config", () => {
       chainId: 5042002,
       rpcUrl: "https://rpc.testnet.arc.network",
       blockExplorer: "https://testnet.arcscan.app",
-      isEVM: true,
+      type: "EVM",
       isActive: true,
       isTestnet: true,
       updatedAt: arcUpdatedAt,
-      gatewayWalletContract: arcGatewayWallet,
-      gatewayMinterContract: arcGatewayMinter,
-      paymasterAddress: null,
-      x402DomainName: "GatewayWalletBatched",
-      x402DomainVersion: "1",
-      x402VerifyingContract: arcGatewayWallet,
-      x402FacilitatorUrl: null,
+      metadata: {
+        x402DomainName: "GatewayWalletBatched",
+        x402DomainVersion: "1",
+      },
+      SmartContract: [
+        { name: "gateway_wallet", address: arcGatewayWallet, isActive: true },
+        { name: "gateway_minter", address: arcGatewayMinter, isActive: true },
+      ],
       tokens: [
         {
           symbol: "USDC",
@@ -105,13 +106,8 @@ describe("BlockchainsService - enriched config", () => {
       chainId: 1,
       rpcUrl: "https://mainnet.infura.io/v3/x",
       blockExplorer: "https://etherscan.io",
-      gatewayWalletContract: null,
-      gatewayMinterContract: null,
-      paymasterAddress: null,
-      x402DomainName: null,
-      x402DomainVersion: null,
-      x402VerifyingContract: null,
-      x402FacilitatorUrl: null,
+      metadata: null,
+      SmartContract: [],
       tokens: [],
     });
     const { svc } = makeService({ rows: [bareRow] });
@@ -125,9 +121,7 @@ describe("BlockchainsService - enriched config", () => {
 
   it("falls back to X402SupportedService when DB columns are null", async () => {
     const rowWithNullX402 = makeArcRow({
-      x402DomainName: null,
-      x402DomainVersion: null,
-      x402VerifyingContract: null,
+      metadata: {},
     });
     const { svc } = makeService({
       rows: [rowWithNullX402],

@@ -89,7 +89,7 @@ export class NftService {
     if (!blockchain) {
       throw new BadRequestException(`Unknown blockchainId: ${dto.blockchainId}`);
     }
-    if (!blockchain.isEVM || blockchain.chainId == null) {
+    if (blockchain.type !== "EVM" || blockchain.chainId == null) {
       throw new BadRequestException(
         `NFT verification currently supports EVM chains only (blockchain: ${blockchain.name})`,
       );

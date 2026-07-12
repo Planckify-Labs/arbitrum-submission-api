@@ -70,6 +70,7 @@ export class SmartContractsService {
     const useSkip = typeof skip === "number" && skip > 0;
     const {
       name,
+      type,
       blockchainId,
       blockchainName,
       chainId,
@@ -85,6 +86,10 @@ export class SmartContractsService {
         contains: name,
         mode: "insensitive",
       };
+    }
+
+    if (type) {
+      where.type = type;
     }
 
     if (blockchainId) {
@@ -108,7 +113,7 @@ export class SmartContractsService {
     }
 
     if (isBlockchainEVM !== undefined) {
-      blockchainWhere.isEVM = isBlockchainEVM;
+      blockchainWhere.type = isBlockchainEVM ? "EVM" : { not: "EVM" };
       hasBlockchainFilters = true;
     }
 
@@ -178,6 +183,11 @@ export class SmartContractsService {
           blockchain: {
             chainId: chainId,
           },
+          // A chain can also carry gateway/protocol SmartContract rows
+          // (Circle Gateway, Aave, etc.) alongside takumi_pay — without this
+          // filter the "newest first" tiebreak below can return one of
+          // those instead of the payment contract callers actually want.
+          type: "payment",
           isActive: true,
         },
         include: {
