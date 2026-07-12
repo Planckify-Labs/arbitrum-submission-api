@@ -8,6 +8,7 @@ import { OtpCacheService } from "../valkey/services/otp-cache.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { SiwsService } from "./siws/siws.service";
 import { SiwsSuiService } from "./siws-sui/siws-sui.service";
+import { SiwsStellarService } from "./siws-stellar/siws-stellar.service";
 
 /**
  * Guards the two-step contract: `startGoogleLogin` must never mint a session,
@@ -92,6 +93,7 @@ describe("Google two-step OTP sign-in", () => {
       email as EmailService,
       {} as SiwsService,
       {} as SiwsSuiService,
+      {} as SiwsStellarService,
     );
   });
 
