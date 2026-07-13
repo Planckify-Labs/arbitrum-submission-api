@@ -3,7 +3,8 @@ import { IsArray, IsString, MinLength } from "class-validator";
 
 export class RegisterPushTokenDto {
   @ApiProperty({
-    description: 'Expo push token. Format: "ExponentPushToken[…]" or "ExpoPushToken[…]".',
+    description:
+      'Expo push token. Format: "ExponentPushToken[…]" or "ExpoPushToken[…]".',
   })
   @IsString()
   @MinLength(16)
@@ -17,7 +18,8 @@ export class RegisterPushTokenDto {
   platform: string;
 
   @ApiProperty({
-    description: "All wallet addresses currently held on this device. Any chain format accepted.",
+    description:
+      "All wallet addresses currently held on this device. Any chain format accepted.",
     type: [String],
     example: ["0xabc...", "BPFLoader2..."],
   })

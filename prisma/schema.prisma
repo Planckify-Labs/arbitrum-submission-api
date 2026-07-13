@@ -174,14 +174,17 @@ model WalletAccountLink {
 model DevicePushToken {
   id           String    @id @default(cuid())
   token        String    @unique
-  userId       String
+  /// Nullable — devices can register before the user authenticates.
+  /// Populated once a JWT is presented (see PushController); wallet
+  /// targeting via WalletPushSubscription does not depend on this.
+  userId       String?
   platform     String
   lastPushedAt DateTime?
   failCount    Int       @default(0)
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  user          User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user          User?                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   subscriptions WalletPushSubscription[]
 
   @@index([userId])

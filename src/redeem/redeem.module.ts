@@ -7,6 +7,7 @@ import { PrismaModule } from "../prisma/prisma.module";
 import { VendorAPIModule } from "../providers/vendor-api/vendor-api.module";
 import { ValkeyModule } from "../valkey/valkey.module";
 import { ProductsModule } from "../products/products.module";
+import { PushModule } from "../push/push.module";
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { ProductsModule } from "../products/products.module";
     VendorAPIModule,
     ValkeyModule,
     ProductsModule,
+    PushModule,
   ],
   controllers: [RedeemController],
   providers: [RedeemService, RedeemProcessor],

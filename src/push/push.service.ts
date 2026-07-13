@@ -1,13 +1,22 @@
+import type { Prisma } from "@generated/prisma";
+import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import type { Queue } from "bullmq";
 import {
   Expo,
   type ExpoPushErrorReceipt,
   type ExpoPushMessage,
   type ExpoPushTicket,
 } from "expo-server-sdk";
-import type { Prisma } from "@generated/prisma";
 import { PrismaService } from "../prisma/prisma.service";
+
+/** One outstanding delivery to verify once Expo's receipt is ready. */
+export interface PushReceiptEntry {
+  ticketId: string;
+  deviceId: string;
+  token: string;
+}
 
 export interface SendPushArgs {
   title: string;
@@ -42,10 +51,13 @@ export class PushService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
+    @InjectQueue("push-receipts")
+    private readonly receiptQueue: Queue<{ entries: PushReceiptEntry[] }>,
   ) {
     const accessToken = this.configService.get<string>("EXPO_ACCESS_TOKEN");
     this.expo = new Expo({
-      accessToken: accessToken && accessToken.length > 0 ? accessToken : undefined,
+      accessToken:
+        accessToken && accessToken.length > 0 ? accessToken : undefined,
     });
     if (!accessToken) {
       this.logger.log(
@@ -59,16 +71,22 @@ export class PushService {
    * Idempotent — upserts the DevicePushToken, then replaces all
    * WalletPushSubscription rows for that device so the server is always
    * authoritative from the last successful call.
+   *
+   * `userId` is optional — the endpoint is public (API-key gated) so a
+   * device can register before the user signs in, keyed only by wallet
+   * address. If a userId is later presented (user signed in on a
+   * subsequent call), it gets attached to the existing row; we never
+   * clear an already-known userId back to null on an anonymous call.
    */
   async registerToken(input: {
-    userId: string;
+    userId: string | null;
     token: string;
     platform: string;
     wallets: string[];
   }): Promise<void> {
     if (!Expo.isExpoPushToken(input.token)) {
       this.logger.warn(
-        `[registerToken] rejected: not a valid Expo push token (user=${input.userId})`,
+        `[registerToken] rejected: not a valid Expo push token (user=${input.userId ?? "anonymous"})`,
       );
       return;
     }
@@ -81,7 +99,7 @@ export class PushService {
         platform: input.platform,
       },
       update: {
-        userId: input.userId,
+        ...(input.userId ? { userId: input.userId } : {}),
         platform: input.platform,
         failCount: 0,
       },
@@ -107,7 +125,7 @@ export class PushService {
     ]);
 
     this.logger.log(
-      `[registerToken] upserted device=${device.id} user=${input.userId} wallets=${unique.length}`,
+      `[registerToken] upserted device=${device.id} user=${input.userId ?? "anonymous"} wallets=${unique.length}`,
     );
   }
 
@@ -201,13 +219,28 @@ export class PushService {
     const toPrune: string[] = [];
     const toPruneIds: string[] = [];
     let accepted = 0;
+    // An "ok" ticket only means Expo accepted the message for delivery —
+    // it is not a delivery confirmation. Real delivery errors (stale FCM
+    // registration, mismatched sender ID, etc.) only surface later via
+    // the receipts endpoint, so we track ticket ids here and verify them
+    // asynchronously instead of trusting the ticket alone.
+    const okReceiptEntries: PushReceiptEntry[] = [];
 
     tickets.forEach((ticket, i) => {
       if (ticket.status === "ok") {
         accepted += 1;
+        const device = devices[i];
+        if (device) {
+          okReceiptEntries.push({
+            ticketId: ticket.id,
+            deviceId: device.id,
+            token: device.token,
+          });
+        }
         return;
       }
-      const details = (ticket as { details?: ExpoPushErrorReceipt["details"] }).details;
+      const details = (ticket as { details?: ExpoPushErrorReceipt["details"] })
+        .details;
       if (details?.error === "DeviceNotRegistered") {
         const token = messages[i]?.to;
         if (typeof token === "string") {
@@ -221,6 +254,23 @@ export class PushService {
         );
       }
     });
+
+    if (okReceiptEntries.length > 0) {
+      // Expo recommends waiting at least ~15 minutes before receipts are
+      // queryable; 20 minutes gives margin without leaving the token's
+      // delivery status unverified for too long.
+      await this.receiptQueue
+        .add(
+          "check-receipts",
+          { entries: okReceiptEntries },
+          { delay: 20 * 60 * 1000 },
+        )
+        .catch((err) => {
+          this.logger.warn(
+            `[dispatch] failed to enqueue receipt check: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+    }
 
     await this.prisma
       .$transaction(async (tx) => {
@@ -268,5 +318,69 @@ export class PushService {
       `[dispatch] source=${args.source ?? "unknown"} attempted=${messages.length} accepted=${accepted} pruned=${toPrune.length}`,
     );
     return { attempted: messages.length, accepted, pruned: toPrune.length };
+  }
+
+  /**
+   * Verify previously-"ok" tickets against Expo's receipts endpoint. This
+   * is where delivery failures actually show up (DeviceNotRegistered from
+   * a stale/rotated FCM registration, MismatchSenderId, InvalidCredentials,
+   * etc.) — the initial ticket only confirms Expo accepted the request,
+   * never that the OS delivered it. Called from `PushReceiptProcessor`
+   * on a delay so receipts have had time to populate.
+   */
+  async checkReceipts(entries: PushReceiptEntry[]): Promise<void> {
+    if (entries.length === 0) return;
+
+    const byTicketId = new Map(entries.map((e) => [e.ticketId, e]));
+    const ticketIds = entries.map((e) => e.ticketId);
+    const chunks = this.expo.chunkPushNotificationReceiptIds(ticketIds);
+
+    const toPruneIds = new Set<string>();
+
+    for (const chunk of chunks) {
+      let receipts: Awaited<
+        ReturnType<Expo["getPushNotificationReceiptsAsync"]>
+      >;
+      try {
+        receipts = await this.expo.getPushNotificationReceiptsAsync(chunk);
+      } catch (err) {
+        this.logger.warn(
+          `[checkReceipts] getPushNotificationReceiptsAsync failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        continue;
+      }
+
+      for (const [ticketId, receipt] of Object.entries(receipts)) {
+        const entry = byTicketId.get(ticketId);
+        if (!entry) continue;
+
+        if (receipt.status === "ok") continue;
+
+        const details = (receipt as ExpoPushErrorReceipt).details;
+        if (details?.error === "DeviceNotRegistered") {
+          toPruneIds.add(entry.deviceId);
+          continue;
+        }
+
+        // Surfaces the real reason a push silently never showed up on
+        // the device — invisible from the initial "ok" ticket alone.
+        this.logger.warn(
+          `[checkReceipts] delivery failed for device=${entry.deviceId}: ${receipt.message ?? "unknown"} (code=${details?.error ?? "n/a"})`,
+        );
+      }
+    }
+
+    if (toPruneIds.size > 0) {
+      await this.prisma.devicePushToken
+        .deleteMany({ where: { id: { in: [...toPruneIds] } } })
+        .catch((err) => {
+          this.logger.warn(
+            `[checkReceipts] failed to prune stale devices: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+      this.logger.log(
+        `[checkReceipts] pruned ${toPruneIds.size} unregistered device(s)`,
+      );
+    }
   }
 }

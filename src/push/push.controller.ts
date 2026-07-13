@@ -8,7 +8,9 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { OptionalJwtAuthGuard } from "../auth/guards/optional-jwt-auth.guard";
+import { ApiKey } from "../decorators/api-key.decorator";
+import { Public } from "../decorators/public.decorator";
 import { RegisterPushTokenDto } from "./dto/register-push-token.dto";
 import { PushService } from "./push.service";
 
@@ -18,24 +20,24 @@ interface AuthedRequest {
 
 @ApiTags("push")
 @Controller("users/me")
-@UseGuards(JwtAuthGuard)
 export class PushController {
   constructor(private readonly pushService: PushService) {}
 
   @Post("push-token")
   @HttpCode(HttpStatus.NO_CONTENT)
+  @Public()
+  @ApiKey()
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({
     summary:
-      "Register the device Expo push token and its wallet subscriptions. Idempotent — safe to call on every cold start or after wallet list changes.",
+      "Register the device Expo push token and its wallet subscriptions. Public (X-API-Key gated) so devices can register before sign-in; if a valid JWT is also presented the token is linked to that user. Idempotent — safe to call on every cold start or after wallet list changes.",
   })
   async registerPushToken(
     @Request() req: AuthedRequest,
     @Body() dto: RegisterPushTokenDto,
   ): Promise<void> {
-    const userId = req.user?.id;
-    if (!userId) return;
     await this.pushService.registerToken({
-      userId,
+      userId: req.user?.id ?? null,
       token: dto.token,
       platform: dto.platform,
       wallets: dto.wallets,
