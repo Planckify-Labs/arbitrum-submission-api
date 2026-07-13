@@ -1,6 +1,17 @@
 import { NotFoundException } from "@nestjs/common";
 import type { PrismaService } from "../prisma/prisma.service";
+import type { PushService } from "../push/push.service";
 import { TransactionsService } from "./transactions.service";
+
+// PushService pulls in expo-server-sdk, which ships pure ESM and isn't
+// transformed by Jest's default config. Nothing here ever instantiates
+// the real PushService, so a trivial stub avoids Jest ever parsing it.
+jest.mock("expo-server-sdk", () => ({ Expo: class {} }));
+
+const pushServiceStub = {
+  sendToWallet: jest.fn(async () => ({ attempted: 0, accepted: 0, pruned: 0 })),
+  sendToUser: jest.fn(async () => ({ attempted: 0, accepted: 0, pruned: 0 })),
+} as unknown as PushService;
 
 /**
  * TransactionsService unit tests.
@@ -11,15 +22,17 @@ import { TransactionsService } from "./transactions.service";
  * either invariant fails loudly.
  */
 
-function buildPrismaStub(opts: {
-  txs?: Record<string, unknown>[];
-  user?: Record<string, unknown> | null;
-  blockchain?: Record<string, unknown> | null;
-  token?: Record<string, unknown> | null;
-  purchases?: Record<string, unknown>[];
-  intent?: Record<string, unknown> | null;
-  cursorTx?: Record<string, unknown> | null;
-} = {}) {
+function buildPrismaStub(
+  opts: {
+    txs?: Record<string, unknown>[];
+    user?: Record<string, unknown> | null;
+    blockchain?: Record<string, unknown> | null;
+    token?: Record<string, unknown> | null;
+    purchases?: Record<string, unknown>[];
+    intent?: Record<string, unknown> | null;
+    cursorTx?: Record<string, unknown> | null;
+  } = {},
+) {
   const txs = opts.txs ?? [];
   const findMany = jest.fn(async () => txs);
   const count = jest.fn(async () => txs.length);
@@ -56,7 +69,7 @@ function buildPrismaStub(opts: {
 describe("TransactionsService.create", () => {
   it("persists exactly the wire fields and returns the row with token included", async () => {
     const prisma = buildPrismaStub();
-    const svc = new TransactionsService(prisma);
+    const svc = new TransactionsService(prisma, pushServiceStub);
 
     const result = await svc.create("user_1", {
       tokenId: "tk_1",
@@ -72,7 +85,8 @@ describe("TransactionsService.create", () => {
       paymentIntentId: "pi_1",
     } as never);
 
-    const create = (prisma.transactionHistory.create as jest.Mock).mock.calls[0][0];
+    const create = (prisma.transactionHistory.create as jest.Mock).mock
+      .calls[0][0];
     expect(create.data).toMatchObject({
       userId: "user_1",
       tokenId: "tk_1",
@@ -92,15 +106,193 @@ describe("TransactionsService.create", () => {
   });
 });
 
+describe("TransactionsService.create — transfer notifications", () => {
+  function buildTransferPrismaStub(
+    tokenOverrides: Record<string, unknown> = {},
+  ) {
+    return {
+      transactionHistory: {
+        create: jest.fn(
+          async ({ data }: { data: Record<string, unknown> }) => ({
+            id: "tx_transfer",
+            createdAt: new Date("2026-01-01T00:00:00Z"),
+            ...data,
+            token: {
+              id: data.tokenId,
+              symbol: "USDC",
+              decimals: 6,
+              ...tokenOverrides,
+            },
+          }),
+        ),
+      },
+    } as unknown as PrismaService;
+  }
+
+  it("pushes to the recipient wallet on a TRANSFER with a different sender and recipient", async () => {
+    const sendToWallet = jest.fn(async () => ({
+      attempted: 1,
+      accepted: 1,
+      pruned: 0,
+    }));
+    const push = {
+      sendToWallet,
+      sendToUser: jest.fn(),
+    } as unknown as PushService;
+    const svc = new TransactionsService(buildTransferPrismaStub(), push);
+
+    await svc.create("user_1", {
+      tokenId: "tk_usdc",
+      type: "TRANSFER",
+      amount: "5000000",
+      fromAddress: "0xSENDER",
+      toAddress: "0xRECIPIENT",
+    } as never);
+
+    expect(sendToWallet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        walletAddress: "0xRECIPIENT",
+        body: expect.stringContaining("5 USDC"),
+        channelId: "transfers",
+        source: "transfer",
+        data: {
+          type: "transfer",
+          transactionId: "tx_transfer",
+          senderAddress: "0xSENDER",
+          recipientAddress: "0xRECIPIENT",
+          tokenSymbol: "USDC",
+        },
+      }),
+    );
+  });
+
+  it("includes the token logo as a rich-content image when the token has one", async () => {
+    const sendToWallet = jest.fn(async () => ({
+      attempted: 1,
+      accepted: 1,
+      pruned: 0,
+    }));
+    const push = {
+      sendToWallet,
+      sendToUser: jest.fn(),
+    } as unknown as PushService;
+    const svc = new TransactionsService(
+      buildTransferPrismaStub({ logoUrl: "https://example.com/usdc.png" }),
+      push,
+    );
+
+    await svc.create("user_1", {
+      tokenId: "tk_usdc",
+      type: "TRANSFER",
+      amount: "1000000",
+      fromAddress: "0xSENDER",
+      toAddress: "0xRECIPIENT",
+    } as never);
+
+    expect(sendToWallet).toHaveBeenCalledWith(
+      expect.objectContaining({ imageUrl: "https://example.com/usdc.png" }),
+    );
+  });
+
+  it("shows truncated sender and recipient addresses in the body", async () => {
+    const sendToWallet = jest.fn(async () => ({
+      attempted: 1,
+      accepted: 1,
+      pruned: 0,
+    }));
+    const push = {
+      sendToWallet,
+      sendToUser: jest.fn(),
+    } as unknown as PushService;
+    const svc = new TransactionsService(buildTransferPrismaStub(), push);
+
+    await svc.create("user_1", {
+      tokenId: "tk_usdc",
+      type: "TRANSFER",
+      amount: "1000000",
+      fromAddress: "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      toAddress: "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    } as never);
+
+    expect(sendToWallet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.stringContaining("0xAAAAAA...AAAAAAAA"),
+      }),
+    );
+    expect(sendToWallet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.stringContaining("0xBBBBBB...BBBBBBBB"),
+      }),
+    );
+  });
+
+  it("does not push when sender and recipient are the same wallet (self-transfer)", async () => {
+    const sendToWallet = jest.fn();
+    const push = {
+      sendToWallet,
+      sendToUser: jest.fn(),
+    } as unknown as PushService;
+    const svc = new TransactionsService(buildTransferPrismaStub(), push);
+
+    await svc.create("user_1", {
+      tokenId: "tk_usdc",
+      type: "TRANSFER",
+      amount: "1000000",
+      fromAddress: "0xSAME",
+      toAddress: "0xsame",
+    } as never);
+
+    expect(sendToWallet).not.toHaveBeenCalled();
+  });
+
+  it("does not push for non-TRANSFER types (e.g. PAYMENT)", async () => {
+    const sendToWallet = jest.fn();
+    const push = {
+      sendToWallet,
+      sendToUser: jest.fn(),
+    } as unknown as PushService;
+    const svc = new TransactionsService(buildTransferPrismaStub(), push);
+
+    await svc.create("user_1", {
+      tokenId: "tk_usdc",
+      type: "PAYMENT",
+      amount: "1000000",
+      fromAddress: "0xA",
+      toAddress: "0xB",
+    } as never);
+
+    expect(sendToWallet).not.toHaveBeenCalled();
+  });
+
+  it("never throws when the push dispatch fails", async () => {
+    const push = {
+      sendToWallet: jest.fn(() => Promise.reject(new Error("network blip"))),
+      sendToUser: jest.fn(),
+    } as unknown as PushService;
+    const svc = new TransactionsService(buildTransferPrismaStub(), push);
+
+    await expect(
+      svc.create("user_1", {
+        tokenId: "tk_usdc",
+        type: "TRANSFER",
+        amount: "1000000",
+        fromAddress: "0xSENDER",
+        toAddress: "0xRECIPIENT",
+      } as never),
+    ).resolves.toMatchObject({ id: "tx_transfer" });
+  });
+});
+
 describe("TransactionsService.findAll", () => {
   it("uses createdAt-based cursor pagination on the hypertable", async () => {
     const prisma = buildPrismaStub({
       cursorTx: { createdAt: new Date("2026-01-01T00:00:00Z") },
     });
-    const svc = new TransactionsService(prisma);
+    const svc = new TransactionsService(prisma, pushServiceStub);
     await svc.findAll({ cursor: "tx_after", take: 25 });
 
-    const findMany = (prisma.transactionHistory.findMany as jest.Mock).mock.calls[0][0];
+    const findMany = (prisma.transactionHistory.findMany as jest.Mock).mock
+      .calls[0][0];
     expect(findMany.where.createdAt.lt).toBeInstanceOf(Date);
     expect(findMany.take).toBe(25);
     expect(findMany.orderBy).toEqual({ createdAt: "desc" });
@@ -108,18 +300,20 @@ describe("TransactionsService.findAll", () => {
 
   it("falls back to skip pagination when skip > 0 (and ignores cursor)", async () => {
     const prisma = buildPrismaStub();
-    const svc = new TransactionsService(prisma);
+    const svc = new TransactionsService(prisma, pushServiceStub);
     await svc.findAll({ skip: 30, take: 10, cursor: "tx_x" });
-    const findMany = (prisma.transactionHistory.findMany as jest.Mock).mock.calls[0][0];
+    const findMany = (prisma.transactionHistory.findMany as jest.Mock).mock
+      .calls[0][0];
     expect(findMany.skip).toBe(30);
     expect(findMany.where).toEqual({});
   });
 
   it("returns empty where clause when no cursor and no skip", async () => {
     const prisma = buildPrismaStub();
-    const svc = new TransactionsService(prisma);
+    const svc = new TransactionsService(prisma, pushServiceStub);
     await svc.findAll({});
-    const findMany = (prisma.transactionHistory.findMany as jest.Mock).mock.calls[0][0];
+    const findMany = (prisma.transactionHistory.findMany as jest.Mock).mock
+      .calls[0][0];
     expect(findMany.where).toEqual({});
   });
 });
@@ -127,9 +321,13 @@ describe("TransactionsService.findAll", () => {
 describe("TransactionsService.findOne", () => {
   it("404s when no transaction matches the id", async () => {
     const prisma = buildPrismaStub();
-    (prisma.transactionHistory.findFirst as jest.Mock).mockResolvedValueOnce(null);
-    const svc = new TransactionsService(prisma);
-    await expect(svc.findOne("missing")).rejects.toBeInstanceOf(NotFoundException);
+    (prisma.transactionHistory.findFirst as jest.Mock).mockResolvedValueOnce(
+      null,
+    );
+    const svc = new TransactionsService(prisma, pushServiceStub);
+    await expect(svc.findOne("missing")).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 
   it("returns the row including blockchain + user details", async () => {
@@ -140,7 +338,7 @@ describe("TransactionsService.findOne", () => {
       token: { blockchain: { name: "Polygon" } },
       user: { id: "u" },
     });
-    const svc = new TransactionsService(prisma);
+    const svc = new TransactionsService(prisma, pushServiceStub);
     const out = await svc.findOne("tx_x");
     expect(out.id).toBe("tx_x");
   });
@@ -149,8 +347,10 @@ describe("TransactionsService.findOne", () => {
 describe("TransactionsService.findPaymentDetail", () => {
   it("404s when transaction missing", async () => {
     const prisma = buildPrismaStub();
-    (prisma.transactionHistory.findFirst as jest.Mock).mockResolvedValueOnce(null);
-    const svc = new TransactionsService(prisma);
+    (prisma.transactionHistory.findFirst as jest.Mock).mockResolvedValueOnce(
+      null,
+    );
+    const svc = new TransactionsService(prisma, pushServiceStub);
     await expect(svc.findPaymentDetail("missing")).rejects.toBeInstanceOf(
       NotFoundException,
     );
@@ -163,7 +363,7 @@ describe("TransactionsService.findPaymentDetail", () => {
       type: "DEPOSIT",
       paymentIntentId: null,
     });
-    const svc = new TransactionsService(prisma);
+    const svc = new TransactionsService(prisma, pushServiceStub);
     await expect(svc.findPaymentDetail("tx_y")).rejects.toBeInstanceOf(
       NotFoundException,
     );
@@ -184,7 +384,7 @@ describe("TransactionsService.findPaymentDetail", () => {
       type: "PAYMENT",
       paymentIntentId: "pi_attached",
     });
-    const svc = new TransactionsService(prisma);
+    const svc = new TransactionsService(prisma, pushServiceStub);
     const out = await svc.findPaymentDetail("tx_z");
     expect(out.intent?.merchant?.displayName).toBe("Toko");
   });
@@ -196,7 +396,7 @@ describe("TransactionsService.findPaymentDetail", () => {
       type: "PAYMENT",
       paymentIntentId: null,
     });
-    const svc = new TransactionsService(prisma);
+    const svc = new TransactionsService(prisma, pushServiceStub);
     const out = await svc.findPaymentDetail("tx_z2");
     expect(out.intent).toBeNull();
   });
@@ -210,10 +410,11 @@ describe("TransactionsService.updateStatus", () => {
       id: "tx_u",
       createdAt: baseDate,
     });
-    const svc = new TransactionsService(prisma);
+    const svc = new TransactionsService(prisma, pushServiceStub);
     await svc.updateStatus("tx_u", { status: "COMPLETED" } as never);
 
-    const update = (prisma.transactionHistory.update as jest.Mock).mock.calls[0][0];
+    const update = (prisma.transactionHistory.update as jest.Mock).mock
+      .calls[0][0];
     expect(update.where).toEqual({
       id_createdAt: { id: "tx_u", createdAt: baseDate },
     });
@@ -224,13 +425,13 @@ describe("TransactionsService.updateStatus", () => {
 describe("TransactionsService.findByUser / findByBlockchain / findByToken", () => {
   it("findByUser 404s when user missing", async () => {
     const prisma = buildPrismaStub({ user: null });
-    const svc = new TransactionsService(prisma);
+    const svc = new TransactionsService(prisma, pushServiceStub);
     await expect(svc.findByUser("u")).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it("findByBlockchain 404s when blockchain missing", async () => {
     const prisma = buildPrismaStub({ blockchain: null });
-    const svc = new TransactionsService(prisma);
+    const svc = new TransactionsService(prisma, pushServiceStub);
     await expect(svc.findByBlockchain("bc_x")).rejects.toBeInstanceOf(
       NotFoundException,
     );
@@ -238,7 +439,7 @@ describe("TransactionsService.findByUser / findByBlockchain / findByToken", () =
 
   it("findByToken 404s when token missing", async () => {
     const prisma = buildPrismaStub({ token: null });
-    const svc = new TransactionsService(prisma);
+    const svc = new TransactionsService(prisma, pushServiceStub);
     await expect(svc.findByToken("tk_x")).rejects.toBeInstanceOf(
       NotFoundException,
     );
@@ -249,9 +450,10 @@ describe("TransactionsService.findByUser / findByBlockchain / findByToken", () =
       user: { id: "u" },
       cursorTx: { createdAt: new Date("2026-02-02T00:00:00Z") },
     });
-    const svc = new TransactionsService(prisma);
+    const svc = new TransactionsService(prisma, pushServiceStub);
     await svc.findByUser("u", { cursor: "tx_x" });
-    const findMany = (prisma.transactionHistory.findMany as jest.Mock).mock.calls[0][0];
+    const findMany = (prisma.transactionHistory.findMany as jest.Mock).mock
+      .calls[0][0];
     expect(findMany.where.userId).toBe("u");
     expect(findMany.where.createdAt.lt).toBeInstanceOf(Date);
   });
@@ -274,11 +476,9 @@ describe("TransactionsService.findUserTransactionHistory", () => {
           token: { blockchain: { name: "Polygon" } },
         },
       ],
-      purchases: [
-        { transactionId: "tx_a", productVariant: { name: "X" } },
-      ],
+      purchases: [{ transactionId: "tx_a", productVariant: { name: "X" } }],
     });
-    const svc = new TransactionsService(prisma);
+    const svc = new TransactionsService(prisma, pushServiceStub);
     const out = await svc.findUserTransactionHistory("u", "PAYMENT");
     expect(out).toHaveLength(2);
     expect(out[0].purchase).toBeDefined();
@@ -289,12 +489,10 @@ describe("TransactionsService.findUserTransactionHistory", () => {
 describe("TransactionsService.search", () => {
   it("composes filters (type, status, txHash, range) into where + uses cursor on hypertable", async () => {
     const prisma = buildPrismaStub({
-      txs: [
-        { id: "tx_p", type: "PAYMENT", createdAt: new Date(), token: {} },
-      ],
+      txs: [{ id: "tx_p", type: "PAYMENT", createdAt: new Date(), token: {} }],
       cursorTx: { createdAt: new Date("2026-03-01T00:00:00Z") },
     });
-    const svc = new TransactionsService(prisma);
+    const svc = new TransactionsService(prisma, pushServiceStub);
     const result = await svc.search(
       {
         type: "PAYMENT",
@@ -310,7 +508,8 @@ describe("TransactionsService.search", () => {
       { cursor: "tx_after", take: 5 },
     );
     expect(result.items).toHaveLength(1);
-    const findMany = (prisma.transactionHistory.findMany as jest.Mock).mock.calls[0][0];
+    const findMany = (prisma.transactionHistory.findMany as jest.Mock).mock
+      .calls[0][0];
     expect(findMany.where.type).toBe("PAYMENT");
     expect(findMany.where.status).toBe("COMPLETED");
     expect(findMany.where.txHash).toEqual({

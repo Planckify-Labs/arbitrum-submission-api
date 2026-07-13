@@ -1,17 +1,30 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
-import { PrismaService } from "../prisma/prisma.service";
-import { CreateTransactionDto } from "./dto/create-transaction.dto";
-import { UpdateTransactionDto } from "./dto/update-transaction.dto";
-import { SearchTransactionDto } from "./dto/search-transaction.dto";
 import { Prisma, TransactionType } from "@generated/prisma";
+import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
+import { PrismaService } from "../prisma/prisma.service";
+import { PushService } from "../push/push.service";
+import { truncateAddress } from "../utils/address";
+import { CreateTransactionDto } from "./dto/create-transaction.dto";
+import { SearchTransactionDto } from "./dto/search-transaction.dto";
+import { UpdateTransactionDto } from "./dto/update-transaction.dto";
+
+// Matches the "en-US" grouping used for points/currency everywhere else
+// in the app (see mobile `utils/currencyUtils.ts` formatNumber).
+const AMOUNT_NUMBER_FORMAT = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 6,
+});
 
 @Injectable()
 export class TransactionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(TransactionsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly pushService: PushService,
+  ) {}
 
   async create(userId: string, createTransactionDto: CreateTransactionDto) {
-    return await this.prisma.transactionHistory.create({
+    const transaction = await this.prisma.transactionHistory.create({
       data: {
         userId,
         tokenId: createTransactionDto.tokenId,
@@ -30,6 +43,53 @@ export class TransactionsService {
         token: true,
       },
     });
+
+    // Records are written by the sender's own client right after their
+    // on-chain tx is submitted, but the row already carries the
+    // recipient's address — no need to wait for the recipient's own
+    // client to do anything. Route by wallet address, not userId: the
+    // recipient may be an entirely different backend User than the
+    // sender, or may not be one of our users at all (sendToWallet is a
+    // safe no-op when nothing is subscribed for that address).
+    if (
+      transaction.type === TransactionType.TRANSFER &&
+      transaction.recipientAddress &&
+      transaction.recipientAddress.toLowerCase() !==
+        transaction.senderAddress?.toLowerCase()
+    ) {
+      const humanAmount = new Prisma.Decimal(transaction.amount.toString())
+        .div(new Prisma.Decimal(10).pow(transaction.token.decimals))
+        .toNumber();
+      const amountFormatted = AMOUNT_NUMBER_FORMAT.format(humanAmount);
+      const senderShort = transaction.senderAddress
+        ? truncateAddress(transaction.senderAddress)
+        : "another wallet";
+      const recipientShort = truncateAddress(transaction.recipientAddress);
+
+      await this.pushService
+        .sendToWallet({
+          walletAddress: transaction.recipientAddress,
+          title: "Transfer Received",
+          body: `You received ${amountFormatted} ${transaction.token.symbol} from ${senderShort} to ${recipientShort}.`,
+          imageUrl: transaction.token.logoUrl ?? undefined,
+          data: {
+            type: "transfer",
+            transactionId: transaction.id,
+            senderAddress: transaction.senderAddress,
+            recipientAddress: transaction.recipientAddress,
+            tokenSymbol: transaction.token.symbol,
+          },
+          channelId: "transfers",
+          source: "transfer",
+        })
+        .catch((err) => {
+          this.logger.warn(
+            `[transactions] transfer push failed for tx ${transaction.id}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+    }
+
+    return transaction;
   }
 
   async findAll(paginationDto: CursorPaginationDto) {

@@ -25,6 +25,13 @@ export interface SendPushArgs {
   data?: Record<string, unknown>;
   /** Android channel id; iOS ignores. */
   channelId?: string;
+  /**
+   * Big-picture/rich-content image (e.g. a token logo). Renders natively
+   * on Android via expo-notifications. iOS needs a Notification Service
+   * Extension to download and attach it — not configured in this app yet,
+   * so this is a no-op there until that's added.
+   */
+  imageUrl?: string;
   /** Recorded in NotificationLog for audit/debug. */
   source?: string;
 }
@@ -132,11 +139,43 @@ export class PushService {
 
   /** Send a push to every device registered to a user. */
   async sendToUser(args: SendToUserArgs): Promise<SendPushResult> {
-    const devices = await this.prisma.devicePushToken.findMany({
+    const directDevices = await this.prisma.devicePushToken.findMany({
       where: { userId: args.userId },
       select: { id: true, token: true },
     });
-    return this.dispatch(devices, args, { userId: args.userId });
+
+    // Every wallet address is its own backend User row with its own JWT
+    // (find-or-create by walletAddressLower — see auth.service.ts). A
+    // single physical device only re-POSTs its push token when the
+    // wallet *list* changes (see app/_layout.tsx's walletKey effect),
+    // not when the user merely switches which wallet is active — so
+    // DevicePushToken.userId can be stuck on whichever wallet was active
+    // at the last registration, leaving every other wallet's userId with
+    // zero directly-matching devices. WalletPushSubscription is already
+    // populated for every wallet address the device has ever reported
+    // (registration POSTs the full wallet list, not just the active
+    // one), so fall back to it via this user's own wallet address.
+    const user = await this.prisma.user.findUnique({
+      where: { id: args.userId },
+      select: { walletAddress: true },
+    });
+
+    const walletDevices = user?.walletAddress
+      ? (
+          await this.prisma.walletPushSubscription.findMany({
+            where: { walletAddress: user.walletAddress.toLowerCase() },
+            select: { deviceToken: { select: { id: true, token: true } } },
+          })
+        ).map((s) => s.deviceToken)
+      : [];
+
+    const devicesById = new Map(
+      [...directDevices, ...walletDevices].map((d) => [d.id, d]),
+    );
+
+    return this.dispatch([...devicesById.values()], args, {
+      userId: args.userId,
+    });
   }
 
   /** Send a push to every device subscribed to a wallet address. */
@@ -202,6 +241,7 @@ export class PushService {
       data: args.data ?? {},
       channelId: args.channelId,
       priority: "high",
+      ...(args.imageUrl ? { richContent: { image: args.imageUrl } } : {}),
     }));
 
     const chunks = this.expo.chunkPushNotifications(messages);
