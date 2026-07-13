@@ -220,9 +220,19 @@ model NotificationLog {
   recipientCount Int
   sentAt         DateTime @default(now())
 
+  // Delivery verification — an "ok" Expo ticket at send time only means
+  // Expo accepted the request, not that the OS actually delivered it.
+  // "pending" until the delayed receipt check (see PushReceiptProcessor)
+  // resolves it to "delivered" | "undelivered" | "unregistered". Queryable
+  // so delivery failures are diagnosable without tailing server logs.
+  deliveryStatus    String    @default("pending")
+  expoTicketIds     String[]  @default([])
+  deliveryCheckedAt DateTime?
+
   @@index([userId])
   @@index([walletAddress])
   @@index([sentAt])
+  @@index([deliveryStatus])
 }
 
 model Blockchain {

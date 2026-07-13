@@ -16,6 +16,7 @@ export interface PushReceiptEntry {
   ticketId: string;
   deviceId: string;
   token: string;
+  notificationLogId: string;
 }
 
 export interface SendPushArgs {
@@ -206,32 +207,26 @@ export class PushService {
     const chunks = this.expo.chunkPushNotifications(messages);
     const tickets: ExpoPushTicket[] = [];
     for (const chunk of chunks) {
-      try {
-        const batch = await this.expo.sendPushNotificationsAsync(chunk);
-        tickets.push(...batch);
-      } catch (err) {
-        this.logger.warn(
-          `[dispatch] sendPushNotificationsAsync failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
+      const batch = await this.sendChunkWithRetry(chunk);
+      if (batch) tickets.push(...batch);
     }
 
     const toPrune: string[] = [];
-    const toPruneIds: string[] = [];
     let accepted = 0;
     // An "ok" ticket only means Expo accepted the message for delivery —
     // it is not a delivery confirmation. Real delivery errors (stale FCM
     // registration, mismatched sender ID, etc.) only surface later via
     // the receipts endpoint, so we track ticket ids here and verify them
     // asynchronously instead of trusting the ticket alone.
-    const okReceiptEntries: PushReceiptEntry[] = [];
+    const okTickets: { ticketId: string; deviceId: string; token: string }[] =
+      [];
 
     tickets.forEach((ticket, i) => {
       if (ticket.status === "ok") {
         accepted += 1;
         const device = devices[i];
         if (device) {
-          okReceiptEntries.push({
+          okTickets.push({
             ticketId: ticket.id,
             deviceId: device.id,
             token: device.token,
@@ -243,11 +238,7 @@ export class PushService {
         .details;
       if (details?.error === "DeviceNotRegistered") {
         const token = messages[i]?.to;
-        if (typeof token === "string") {
-          toPrune.push(token);
-          const deviceId = devices[i]?.id;
-          if (deviceId) toPruneIds.push(deviceId);
-        }
+        if (typeof token === "string") toPrune.push(token);
       } else {
         this.logger.warn(
           `[dispatch] expo ticket error: ${ticket.message ?? "unknown"} (code=${details?.error ?? "n/a"})`,
@@ -255,31 +246,18 @@ export class PushService {
       }
     });
 
-    if (okReceiptEntries.length > 0) {
-      // Expo recommends waiting at least ~15 minutes before receipts are
-      // queryable; 20 minutes gives margin without leaving the token's
-      // delivery status unverified for too long.
-      await this.receiptQueue
-        .add(
-          "check-receipts",
-          { entries: okReceiptEntries },
-          { delay: 20 * 60 * 1000 },
-        )
-        .catch((err) => {
-          this.logger.warn(
-            `[dispatch] failed to enqueue receipt check: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        });
-    }
-
-    await this.prisma
+    // "pending" only makes sense if there's an ok ticket to eventually
+    // verify — if every ticket errored out (or the send itself failed
+    // after retries), we already know the outcome, no need to wait 20
+    // minutes to find out what we already know.
+    const notificationLog = await this.prisma
       .$transaction(async (tx) => {
         if (toPrune.length > 0) {
           await tx.devicePushToken.deleteMany({
             where: { token: { in: toPrune } },
           });
         }
-        await tx.notificationLog.create({
+        return tx.notificationLog.create({
           data: {
             userId: logCtx.userId,
             walletAddress: logCtx.walletAddress,
@@ -288,6 +266,9 @@ export class PushService {
             data: (args.data ?? {}) as Prisma.InputJsonValue,
             source: args.source ?? "unknown",
             recipientCount: accepted,
+            expoTicketIds: okTickets.map((t) => t.ticketId),
+            deliveryStatus: okTickets.length > 0 ? "pending" : "undelivered",
+            deliveryCheckedAt: okTickets.length > 0 ? null : new Date(),
           },
         });
       })
@@ -295,7 +276,25 @@ export class PushService {
         this.logger.warn(
           `[dispatch] prune/log transaction failed: ${err instanceof Error ? err.message : String(err)}`,
         );
+        return null;
       });
+
+    if (notificationLog && okTickets.length > 0) {
+      const entries: PushReceiptEntry[] = okTickets.map((t) => ({
+        ...t,
+        notificationLogId: notificationLog.id,
+      }));
+      // Expo recommends waiting at least ~15 minutes before receipts are
+      // queryable; 20 minutes gives margin without leaving the token's
+      // delivery status unverified for too long.
+      await this.receiptQueue
+        .add("check-receipts", { entries }, { delay: 20 * 60 * 1000 })
+        .catch((err) => {
+          this.logger.warn(
+            `[dispatch] failed to enqueue receipt check: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+    }
 
     // Update lastPushedAt for successfully reached devices
     if (accepted > 0) {
@@ -321,6 +320,40 @@ export class PushService {
   }
 
   /**
+   * A thrown error here is a transport-level failure (network blip, Expo
+   * 5xx) — distinct from a ticket coming back with an error status, which
+   * is a per-message rejection handled by the caller. Without a retry, a
+   * single flaky request silently drops the notification with nothing but
+   * a log line to show for it. Returns null (not an empty array) after
+   * exhausting retries so the caller can tell "nothing sent" apart from
+   * "sent, zero accepted".
+   */
+  private async sendChunkWithRetry(
+    chunk: ExpoPushMessage[],
+    attempts = 3,
+  ): Promise<ExpoPushTicket[] | null> {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        return await this.expo.sendPushNotificationsAsync(chunk);
+      } catch (err) {
+        const isLast = attempt === attempts;
+        const message = err instanceof Error ? err.message : String(err);
+        if (isLast) {
+          this.logger.error(
+            `[dispatch] sendPushNotificationsAsync failed after ${attempts} attempts: ${message}`,
+          );
+          return null;
+        }
+        this.logger.warn(
+          `[dispatch] sendPushNotificationsAsync failed (attempt ${attempt}/${attempts}): ${message}`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 300 * attempt));
+      }
+    }
+    return null;
+  }
+
+  /**
    * Verify previously-"ok" tickets against Expo's receipts endpoint. This
    * is where delivery failures actually show up (DeviceNotRegistered from
    * a stale/rotated FCM registration, MismatchSenderId, InvalidCredentials,
@@ -336,6 +369,22 @@ export class PushService {
     const chunks = this.expo.chunkPushNotificationReceiptIds(ticketIds);
 
     const toPruneIds = new Set<string>();
+    // A single dispatch can fan out to multiple devices, so aggregate per
+    // NotificationLog row: "delivered" wins if any device got it,
+    // "unregistered" only if every device came back DeviceNotRegistered
+    // (nothing left to retry), otherwise "undelivered".
+    type Outcome = "delivered" | "unregistered" | "undelivered";
+    const outcomeByLogId = new Map<string, Outcome>();
+    const recordOutcome = (logId: string, outcome: Outcome) => {
+      const existing = outcomeByLogId.get(logId);
+      if (existing === "delivered") return;
+      outcomeByLogId.set(
+        logId,
+        existing === undefined || existing === outcome
+          ? outcome
+          : "undelivered",
+      );
+    };
 
     for (const chunk of chunks) {
       let receipts: Awaited<
@@ -354,11 +403,15 @@ export class PushService {
         const entry = byTicketId.get(ticketId);
         if (!entry) continue;
 
-        if (receipt.status === "ok") continue;
+        if (receipt.status === "ok") {
+          recordOutcome(entry.notificationLogId, "delivered");
+          continue;
+        }
 
         const details = (receipt as ExpoPushErrorReceipt).details;
         if (details?.error === "DeviceNotRegistered") {
           toPruneIds.add(entry.deviceId);
+          recordOutcome(entry.notificationLogId, "unregistered");
           continue;
         }
 
@@ -367,6 +420,7 @@ export class PushService {
         this.logger.warn(
           `[checkReceipts] delivery failed for device=${entry.deviceId}: ${receipt.message ?? "unknown"} (code=${details?.error ?? "n/a"})`,
         );
+        recordOutcome(entry.notificationLogId, "undelivered");
       }
     }
 
@@ -382,5 +436,20 @@ export class PushService {
         `[checkReceipts] pruned ${toPruneIds.size} unregistered device(s)`,
       );
     }
+
+    await Promise.all(
+      [...outcomeByLogId.entries()].map(([logId, status]) =>
+        this.prisma.notificationLog
+          .update({
+            where: { id: logId },
+            data: { deliveryStatus: status, deliveryCheckedAt: new Date() },
+          })
+          .catch((err) => {
+            this.logger.warn(
+              `[checkReceipts] failed to update NotificationLog ${logId}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }),
+      ),
+    );
   }
 }
