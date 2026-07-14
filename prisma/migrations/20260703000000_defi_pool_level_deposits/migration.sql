@@ -8,6 +8,7 @@
 ALTER TABLE "OpportunityCache" ADD COLUMN "poolMeta" TEXT;
 ALTER TABLE "OpportunityCache" ADD COLUMN "depositTarget" JSONB;
 ALTER TABLE "OpportunityCache" ADD COLUMN "targetResolvedAt" TIMESTAMP(3);
+ALTER TABLE "OpportunityCache" ADD COLUMN "assetContract" TEXT;
 
 -- StrategyPosition: pin the exact DeFiLlama pool the position was opened against.
 ALTER TABLE "StrategyPosition" ADD COLUMN "poolId" TEXT;
