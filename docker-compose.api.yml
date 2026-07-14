@@ -10,6 +10,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 4000
+      RUN_SEED: ${RUN_SEED:-false}
       # Database (external - set in Dokploy environment)
       DATABASE_URL: ${DATABASE_URL}
       # Valkey/Redis (external - set in Dokploy environment)
