@@ -46,6 +46,8 @@ services:
       SVM_SETTLER_PRIVATE_KEY: ${SVM_SETTLER_PRIVATE_KEY}
       PLATFORM_TREASURY_ADDRESS_SVM: ${PLATFORM_TREASURY_ADDRESS_SVM}
       SOLANA_QUOTE_SIGNER_PRIVATE_KEY: ${SOLANA_QUOTE_SIGNER_PRIVATE_KEY}
+      # Stellar settlement
+      STELLAR_QUOTE_SIGNER_PRIVATE_KEY: ${STELLAR_QUOTE_SIGNER_PRIVATE_KEY}
       # Circle x402
       CIRCLE_X402_SUPPORTED_URL: ${CIRCLE_X402_SUPPORTED_URL}
       CIRCLE_API_KEY: ${CIRCLE_API_KEY}
@@ -106,6 +108,10 @@ services:
       DEFI_AUTO_COMPOUND_INTERVAL_DAYS: ${DEFI_AUTO_COMPOUND_INTERVAL_DAYS:-7}
       # Push notifications (Expo Push) — leave blank for free anonymous relay
       EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN}
+      # Email (Resend) — OTP emails silently fail to send if these are unset
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL}
+      OTP_EXPIRE_MINUTES: ${OTP_EXPIRE_MINUTES:-10}
     depends_on:
       postgres:
         condition: service_healthy
