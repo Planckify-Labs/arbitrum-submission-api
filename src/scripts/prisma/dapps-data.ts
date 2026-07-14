@@ -195,6 +195,32 @@ export const DAPP_SEED: DappSeed[] = [
     logoUrl: "https://trade.bluefin.io/favicon.ico",
     cat: "dex",
   },
+  {
+    id: "lumenswap-dapp",
+    name: "Lumenswap",
+    description: "Decentralized exchange on the Stellar network",
+    websiteUrl: "https://lumenswap.io",
+    logoUrl: "https://lumenswap.io/favicon.ico",
+    cat: "dex",
+    popular: true,
+  },
+  {
+    id: "stellarterm-dapp",
+    name: "StellarTerm",
+    description: "Open-source trading client for the Stellar DEX",
+    websiteUrl: "https://stellarterm.com",
+    logoUrl: "https://stellarterm.com/favicon.ico",
+    cat: "dex",
+  },
+  {
+    id: "soroswap-dapp",
+    name: "Soroswap",
+    description: "DEX aggregator for Soroban smart contracts on Stellar",
+    websiteUrl: "https://soroswap.finance",
+    logoUrl: "https://soroswap.finance/favicon.ico",
+    cat: "dex",
+    popular: true,
+  },
   // ── DeFi ──
   {
     id: "aave-dapp",
@@ -285,6 +311,24 @@ export const DAPP_SEED: DappSeed[] = [
     websiteUrl: "https://app.scallop.io",
     logoUrl: "https://app.scallop.io/favicon.ico",
     cat: "defi",
+  },
+  {
+    id: "aquarius-dapp",
+    name: "Aquarius",
+    description: "AMM and liquidity management hub for Stellar DeFi",
+    websiteUrl: "https://aqua.network",
+    logoUrl: "https://aqua.network/favicon.ico",
+    cat: "defi",
+    popular: true,
+  },
+  {
+    id: "blend-dapp",
+    name: "Blend",
+    description: "Modular lending pools — the largest DeFi protocol on Stellar",
+    websiteUrl: "https://blend.capital",
+    logoUrl: "https://blend.capital/favicon.ico",
+    cat: "defi",
+    popular: true,
   },
   // ── Launchpads ──
   {
@@ -384,6 +428,14 @@ export const DAPP_SEED: DappSeed[] = [
     description: "Sui-native NFT marketplace",
     websiteUrl: "https://sui.bluemove.net",
     logoUrl: "https://sui.bluemove.net/favicon.ico",
+    cat: "nft",
+  },
+  {
+    id: "litemint-dapp",
+    name: "Litemint",
+    description: "NFT marketplace and digital collectibles on Stellar",
+    websiteUrl: "https://market.litemint.com",
+    logoUrl: "https://market.litemint.com/favicon.ico",
     cat: "nft",
   },
   // ── Gaming & Metaverse ──
@@ -515,6 +567,14 @@ export const DAPP_SEED: DappSeed[] = [
     description: "Naming service for Sui addresses",
     websiteUrl: "https://suins.io",
     logoUrl: "https://suins.io/favicon.ico",
+    cat: "tools",
+  },
+  {
+    id: "stellarexpert-dapp",
+    name: "StellarExpert",
+    description: "Stellar network block explorer and analytics",
+    websiteUrl: "https://stellar.expert",
+    logoUrl: "https://stellar.expert/favicon.ico",
     cat: "tools",
   },
 ];
