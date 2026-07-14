@@ -20,6 +20,8 @@ import {
   type PublicClient,
 } from "viem";
 import { readContract } from "viem/actions";
+import { SignJWT } from "jose";
+import { encryptAccountNumber } from "../../payout/account-number-crypto";
 import { DUITKU_CHANNEL_CODES } from "../../payout/duitku-channels";
 import { FLIP_CHANNEL_CODES } from "../../payout/flip-channels";
 import { XENDIT_CHANNEL_CODES } from "../../payout/xendit-channels";
@@ -2502,11 +2504,14 @@ async function main() {
   // stellar.expert / stellarchain.io (spec §3.7) — re-verify against
   // Circle's live docs at deploy time regardless, since issuer
   // addresses can rotate.
-  for (const [slug, label, issuer] of [
+  for (const [slug, label, issuer, isPaymentEnabled] of [
     [
       "stellar-mainnet",
       "USD Coin",
       "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      // No mainnet takumi_pay deployment yet (see the Blockchain seed
+      // comment above) — not payment-enabled until that lands.
+      false,
     ],
     [
       "stellar-testnet",
@@ -2515,6 +2520,11 @@ async function main() {
       // NOT Circle's official testnet USDC — that issuer's faucet is outside our
       // control, so takumi_pay's demo flow mints unlimited balances from this one instead.
       "GB427BU6PWBPJYNIN4RXN4432VBSZPHYYJXGOFOVYR63BUMXLM6P2RPV",
+      // Live takumi_pay deployment on Stellar testnet (deployments/testnet/v1.json)
+      // accepts any SAC token for create_transaction — there's no on-chain
+      // payment-token allowlist to register against (only deposit_points has
+      // one, via AllowedPointToken). Payment eligibility is gated here instead.
+      true,
     ],
   ] as const) {
     const stellarChainId = slugChain(slug).id;
@@ -2536,6 +2546,8 @@ async function main() {
           isStablecoin: true,
           isNativeCurrency: false,
           isActive: true,
+          isPaymentEnabled,
+          peggedCurrency: "USD",
         },
       });
     } else {
@@ -2550,6 +2562,8 @@ async function main() {
           isStablecoin: true,
           isNativeCurrency: false,
           isActive: true,
+          isPaymentEnabled,
+          peggedCurrency: "USD",
         },
       });
     }
@@ -3836,6 +3850,8 @@ async function main() {
 
   await seedPointPriceConfigs();
 
+  await seedTestMerchants();
+
   console.log("");
   console.log("🎉 Seed data created successfully!");
   console.log("");
@@ -3875,6 +3891,124 @@ async function seedPointPriceConfigs() {
     console.log(
       `  ✅ ${config.currency}: 1 point = ${config.baseRate} ${config.currency}`,
     );
+  }
+}
+
+/**
+ * 26-char Crockford base32 ULID, mirroring `MerchantsService`'s local
+ * helper — the id is generated up-front so the JWS `merchantId` claim
+ * matches the row before it's persisted.
+ */
+function generateMerchantUlid(): string {
+  const ENC = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+  const time = Date.now();
+  let timeEnc = "";
+  let t = time;
+  for (let i = 0; i < 10; i++) {
+    timeEnc = ENC[t % 32] + timeEnc;
+    t = Math.floor(t / 32);
+  }
+  let rand = "";
+  for (let i = 0; i < 16; i++) {
+    rand += ENC[Math.floor(Math.random() * 32)];
+  }
+  return timeEnc + rand;
+}
+
+/**
+ * Real-world static QRIS stickers registered for local payment-flow
+ * testing (scan-to-pay via `/pay-merchant`). Mirrors
+ * `MerchantsService.signup()` (same JWS signing, same account-number
+ * encryption) so the row is indistinguishable from one created through
+ * the real endpoint. `qrisPan` is the EMVCo tag 26/51 sub-01 value —
+ * see `extractQrisPan()` in `src/pay/intents.service.ts` for the
+ * matching lookup rule.
+ */
+async function seedTestMerchants() {
+  console.log("\n🏪 Seeding test merchants...");
+
+  const testMerchants = [
+    {
+      // Decoded from a printed "GTron, SELONG" (Lombok Timur) QRIS
+      // sticker, NMID ID1024347475146. Acquirer block is GoPay
+      // (COM.GO-JEK.WWW), so the payout channel below mirrors that —
+      // the account number is a placeholder, not the real merchant's.
+      qrisPan: "936009143669405532",
+      displayName: "GTron, SELONG",
+      contactPhone: "081298765432",
+      payoutChannelCode: "GOPAY",
+      payoutAccountNumber: "081298765432",
+      payoutAccountHolderName: "GTron, SELONG",
+    },
+  ];
+
+  for (const tm of testMerchants) {
+    const existing = await prisma.merchant.findFirst({
+      where: { qrisPan: tm.qrisPan },
+    });
+    if (existing) {
+      console.log(
+        `  ⏭️  ${tm.displayName} already registered (qrisPan ${tm.qrisPan})`,
+      );
+      continue;
+    }
+
+    const pem = process.env.TAKUMIPAY_QR_PRIVATE_KEY_PEM;
+    if (!pem) {
+      console.log(
+        `  ⚠️  Skipping ${tm.displayName}: TAKUMIPAY_QR_PRIVATE_KEY_PEM not set`,
+      );
+      continue;
+    }
+
+    const merchantId = generateMerchantUlid();
+    const normalizedPem = pem.includes("\\n") ? pem.replace(/\\n/g, "\n") : pem;
+    const key = crypto.createPrivateKey({ key: normalizedPem, format: "pem" });
+    const kid = process.env.TAKUMIPAY_QR_KID ?? "2026-04-20";
+    const iat = Math.floor(Date.now() / 1000);
+    const jws = await new SignJWT({
+      merchantId,
+      merchantName: tm.displayName,
+      displayName: tm.displayName,
+      country: "ID",
+      currency: "IDR",
+      amountMinor: null,
+      qrisPan: tm.qrisPan,
+    })
+      .setProtectedHeader({ alg: "ES256", typ: "JWT", kid })
+      .setIssuedAt(iat)
+      .sign(key);
+
+    await prisma.$transaction(async (tx) => {
+      const merchant = await tx.merchant.create({
+        data: {
+          id: merchantId,
+          displayName: tm.displayName,
+          contactPhone: tm.contactPhone,
+          country: "ID",
+          payoutChannelCode: tm.payoutChannelCode,
+          payoutAccountNumber: encryptAccountNumber(tm.payoutAccountNumber),
+          payoutAccountHolderName: tm.payoutAccountHolderName,
+          qrisPan: tm.qrisPan,
+          qrisStickerPhotoKey: null,
+          jwsQr: `takumipay:v1:${jws}`,
+          jwsIssuedAt: new Date(iat * 1000),
+          jwsExpiresAt: null,
+          payoutProvider: "duitku",
+          isActive: true,
+        },
+      });
+      await tx.merchantQrisClaim.create({
+        data: {
+          merchantId: merchant.id,
+          qrisPan: tm.qrisPan,
+          stickerPhotoKey: "",
+          claimedAt: new Date(),
+        },
+      });
+    });
+
+    console.log(`  ✅ Registered ${tm.displayName} (qrisPan ${tm.qrisPan})`);
   }
 }
 
