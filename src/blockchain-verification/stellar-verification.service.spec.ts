@@ -67,7 +67,8 @@ describe("StellarVerificationService.signMerchantQuote", () => {
     const svc = buildService();
     await svc.onModuleInit();
 
-    // From ../../../contract/stellar/deployments/testnet/v1.json backendSignerPubkey.
+    // From ../../../contract/stellar/deployments/testnet/v2.json backendSignerPubkey
+    // (same signer key reused from v1.json — only the contract ID changed).
     expect(svc.getSignerPublicKey()).toBe(
       "04466f114c2f959229d812cc68731c4625fb869e8eefcf47d3da251f82ba93b4",
     );

@@ -1134,20 +1134,20 @@ async function main() {
     }),
     // takumi_pay on Stellar Testnet — Soroban contract deployed from
     // ../contract/stellar, see
-    // ../contract/stellar/deployments/testnet/v1.json.
+    // ../contract/stellar/deployments/testnet/v2.json.
     prisma.smartContract.upsert({
       where: { id: "smart-contract-payment-stellar-testnet" },
       update: {
         name: "takumi_pay",
         type: "payment",
-        address: "CAEVSB5RGLRR3MVXUNMG67JRA4AAMZH4GR5WNCODSITO6YQI2W7XWD32",
+        address: "CCLFTLVPHOKKDZYTMGU6UNXKFEN6VF3QVYEAJNULGIC7ZXTETAIPKKRZ",
       },
       create: {
         id: "smart-contract-payment-stellar-testnet",
         name: "takumi_pay",
         type: "payment",
         blockchainId: slugChain("stellar-testnet").id,
-        address: "CAEVSB5RGLRR3MVXUNMG67JRA4AAMZH4GR5WNCODSITO6YQI2W7XWD32",
+        address: "CCLFTLVPHOKKDZYTMGU6UNXKFEN6VF3QVYEAJNULGIC7ZXTETAIPKKRZ",
         isActive: true,
       },
     }),
@@ -2520,10 +2520,12 @@ async function main() {
       // NOT Circle's official testnet USDC — that issuer's faucet is outside our
       // control, so takumi_pay's demo flow mints unlimited balances from this one instead.
       "GB427BU6PWBPJYNIN4RXN4432VBSZPHYYJXGOFOVYR63BUMXLM6P2RPV",
-      // Live takumi_pay deployment on Stellar testnet (deployments/testnet/v1.json)
-      // accepts any SAC token for create_transaction — there's no on-chain
-      // payment-token allowlist to register against (only deposit_points has
-      // one, via AllowedPointToken). Payment eligibility is gated here instead.
+      // Live takumi_pay v2 deployment on Stellar testnet
+      // (deployments/testnet/v2.json) enforces an on-chain AllowedPaymentToken
+      // allowlist across create_transaction, process_merchant_payment, AND
+      // deposit_points — this SAC is registered via add_allowed_payment_token
+      // (see deployments/testnet/usdc-test-asset.json). Payment eligibility is
+      // still gated here too via isPaymentEnabled.
       true,
     ],
   ] as const) {
