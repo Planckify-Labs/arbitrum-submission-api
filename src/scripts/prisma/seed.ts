@@ -1157,9 +1157,21 @@ async function main() {
     // address as gateway_wallet by protocol design, so no separate
     // "x402_verifying" row is needed — buildX402() falls back to
     // gateway_wallet when x402_verifying is absent.
+    // Keyed on (blockchainId, address) rather than a fixed id: the
+    // 20260712053000_gateway_contracts_and_x402_metadata migration already
+    // auto-created this row (with a random uuid id) from the pre-existing
+    // Blockchain.gatewayWalletContract column on any cloud env seeded before
+    // this script carried Circle Gateway contracts. Upserting on `id` would
+    // miss that row and collide with the (blockchainId, address) unique
+    // constraint trying to INSERT a duplicate.
     prisma.smartContract.upsert({
-      where: { id: "smart-contract-gateway-wallet-arc-testnet" },
-      update: { address: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9" },
+      where: {
+        blockchainId_address: {
+          blockchainId: evmChain(5042002).id,
+          address: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+        },
+      },
+      update: { name: "gateway_wallet", type: "gateway", isActive: true },
       create: {
         id: "smart-contract-gateway-wallet-arc-testnet",
         name: "gateway_wallet",
@@ -1170,8 +1182,13 @@ async function main() {
       },
     }),
     prisma.smartContract.upsert({
-      where: { id: "smart-contract-gateway-minter-arc-testnet" },
-      update: { address: "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B" },
+      where: {
+        blockchainId_address: {
+          blockchainId: evmChain(5042002).id,
+          address: "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B",
+        },
+      },
+      update: { name: "gateway_minter", type: "gateway", isActive: true },
       create: {
         id: "smart-contract-gateway-minter-arc-testnet",
         name: "gateway_minter",
