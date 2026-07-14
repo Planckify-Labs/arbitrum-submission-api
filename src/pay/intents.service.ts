@@ -225,8 +225,10 @@ export class IntentsService {
     @Inject(PAYOUT_PROVIDER)
     private readonly payoutProvider: IPayoutProvider | null = null,
     @Optional()
+    @Inject(BlockchainVerificationService)
     private readonly blockchainVerification: BlockchainVerificationService | null = null,
     @Optional()
+    @Inject(StellarVerificationService)
     private readonly stellarVerification: StellarVerificationService | null = null,
     @Optional()
     @Inject(CIRCLE_SETTLE_SVM_CLIENT)
@@ -292,10 +294,22 @@ export class IntentsService {
       }
       const existing = await this.prisma.paymentIntent.findUnique({
         where: { id: cached.intentId },
-        include: { merchant: true },
+        select: { id: true },
       });
       if (existing) {
-        return await this.toResponseDto(existing, /* includeNanopay */ true);
+        // Delegate to `getIntent` rather than a bespoke idempotent-replay
+        // serializer: the two used to diverge (`toResponseDto` never grew
+        // the onchain-settlement fields — `quoteCommitmentStellar`,
+        // `quoteCommitmentSvm`, `contractAddress`, `takumiPayContractId`,
+        // etc. — that `getIntent` reconstructs), so a retried create
+        // request with the same Idempotency-Key silently returned a quote
+        // stripped of everything `pathOnchainSettlement*.ts` needs to pay.
+        // One serializer, one source of truth.
+        return await this.getIntent({
+          intentId: existing.id,
+          userId: payerUserId,
+          walletAddress: payerAddress,
+        });
       }
       // Cache points at a vanished row (prune + cold-read fell through race).
       // Treat as a fresh request — re-creating the intent is safer than 500ing.
@@ -1106,6 +1120,40 @@ export class IntentsService {
             backendSignerPubkey: this.svmSignerKeypair?.publicKeyBase58,
           }
         : {}),
+      // Stellar counterpart of the SVM block above. Unlike SVM, the signed
+      // quote isn't persisted on create (see `createOnchainIntent`) — Ed25519
+      // signing is deterministic (RFC 8032), so re-deriving via the same
+      // `buildMerchantQuoteSignature` helper on every poll reproduces byte-
+      // identical output without a schema change. Without this the mobile
+      // client's `useIntentStatus` poll (every 3s) overwrites the create
+      // response's quote fields with `undefined`, and `pay-merchant.tsx`
+      // throws `MISSING_QUOTE` the moment the user confirms after the first
+      // poll lands.
+      ...((() => {
+        if (blockchain?.type !== "STELLAR" || !this.stellarVerification || !intent.sourceToken) {
+          return {};
+        }
+        const scale = 10n ** BigInt(Math.max(intent.sourceToken.decimals - 6, 0));
+        const signed = this.stellarVerification.buildMerchantQuoteSignature({
+          blockchainId: blockchain.id,
+          refId: intent.id,
+          merchantId: intent.merchantId,
+          tokenCompound: intent.sourceToken.contractAddress ?? "",
+          amount: (intent.nanopayUsdcAmountMicros ?? 0n) * scale,
+          platformFeeAmount: (intent.platformFeeAmountMinor ?? 0n) * scale,
+          fiatAmountMinor: BigInt(intent.fiatAmountMinor),
+          fiatCurrency: intent.fiatCurrency,
+          exchangeRateId: BigInt(intent.exchangeRateId),
+          expiresAt: BigInt(Math.floor(intent.expiresAt.getTime() / 1000)),
+        });
+        if (!signed) return {};
+        return {
+          quoteCommitmentStellar: signed.commitment,
+          quoteSignatureStellar: signed.signatureBase64,
+          backendSignerPubkeyStellar: signed.backendSignerPubkeyHex,
+          takumiPayContractId: signed.contractId,
+        };
+      })()),
     };
   }
 
@@ -2546,100 +2594,6 @@ export class IntentsService {
     }
   }
 
-  /**
-   * Convert a persisted PaymentIntent row + merchant to the wire response.
-   * Kept here so the same projection can be reused by the idempotent-hit
-   * branch without re-reading the merchant on every retry.
-   */
-  private async toResponseDto(
-    row: {
-      id: string;
-      status: PaymentIntentStatus;
-      path: string;
-      nanopayUsdcAmountMicros: bigint | null;
-      nanopayUsdcSourceChainId: number | null;
-      nanopayUsdcTreasuryAddress: string | null;
-      nanopayNonce: Buffer | Uint8Array;
-      nanopayValidAfter: number;
-      nanopayValidBefore: number;
-      expiresAt: Date;
-      fiatCurrency: string;
-    },
-    includeNanopay: boolean,
-  ): Promise<PaymentIntentResponseDto> {
-    const chainId = row.nanopayUsdcSourceChainId ?? 0;
-    const isSvm = isSvmChainId(chainId);
-    const nonceHex =
-      `0x${Buffer.from(row.nanopayNonce).toString("hex")}` as const;
-    const x402Entry = isSvm
-      ? (this.x402Supported.getSupportedForNetwork("solana:mainnet") ??
-        this.x402Supported.getSupportedForNetwork("solana:mainnet-beta"))
-      : this.x402Supported.getSupportedForChain(chainId);
-
-    let nanopay: NanopayPayloadResponseDto | null = null;
-    if (includeNanopay && isSvm) {
-      let usdcMint = x402Entry?.asset;
-      if (!usdcMint) {
-        const svmRow = await this.resolveSvmBlockchainRow(chainId);
-        usdcMint = svmRow
-          ? await this.resolveSvmUsdcMint(svmRow.id)
-          : USDC_SPL_MINT_MAINNET_FALLBACK;
-      }
-      nanopay = {
-        kind: "svm_partial_tx",
-        cluster:
-          chainId === SVM_DEVNET_SENTINEL_CHAIN_ID
-            ? "devnet"
-            : "mainnet-beta",
-        usdcMint,
-        feePayer: x402Entry?.authorizedSigners?.[0],
-        sourceChainId: chainId,
-        value: (row.nanopayUsdcAmountMicros ?? 0n).toString(),
-        validAfter: row.nanopayValidAfter,
-        validBefore: row.nanopayValidBefore,
-      };
-    } else if (
-      includeNanopay &&
-      x402Entry &&
-      x402Entry.domainName &&
-      x402Entry.domainVersion &&
-      x402Entry.verifyingContract &&
-      x402Entry.asset
-    ) {
-      nanopay = {
-        kind: "evm_eip3009",
-        usdc: x402Entry.asset as `0x${string}`,
-        sourceChainId: chainId,
-        domain: {
-          name: x402Entry.domainName,
-          version: x402Entry.domainVersion,
-          verifyingContract: x402Entry.verifyingContract as `0x${string}`,
-        },
-        // NOTE: `from` is not persisted today — the idempotent-hit branch
-        // echoes the original nanopay block, which means re-reading requires
-        // joining the original payer. For M2 we return an empty address on
-        // idempotent replay; task 24's submit proxy rebuilds the `from` field
-        // from the submitted signature anyway.
-        from: "0x0000000000000000000000000000000000000000",
-        to: (row.nanopayUsdcTreasuryAddress ?? "") as `0x${string}`,
-        value: (row.nanopayUsdcAmountMicros ?? 0n).toString(),
-        validAfter: row.nanopayValidAfter,
-        validBefore: row.nanopayValidBefore,
-        nonce: nonceHex,
-      };
-    }
-
-    return {
-      id: row.id,
-      status: DB_TO_MOBILE_STATUS[row.status],
-      path: row.path,
-      nanopayUsdcAmountMicros: (row.nanopayUsdcAmountMicros ?? 0n).toString(),
-      nanopayUsdcSourceChainId: chainId,
-      nanopayUsdcTreasuryAddress: row.nanopayUsdcTreasuryAddress ?? "",
-      nanopay,
-      expiresAt: row.expiresAt.getTime(),
-    };
-  }
 }
 
 /**
