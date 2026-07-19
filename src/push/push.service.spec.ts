@@ -102,8 +102,10 @@ describe("PushService.sendToUser", () => {
 
     expect(result.attempted).toBe(3);
     expect(result.accepted).toBe(3);
+    // Stellar (base32) is case-significant — the lookup must use the address
+    // verbatim, NOT a corrupting lowercase fold.
     expect(prisma.walletPushSubscription.findMany).toHaveBeenCalledWith({
-      where: { walletAddress: "gabc123" },
+      where: { walletAddress: "GABC123" },
       select: { deviceToken: { select: { id: true, token: true } } },
     });
   });

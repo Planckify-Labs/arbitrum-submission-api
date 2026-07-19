@@ -28,6 +28,7 @@ import { SiwsSuiService } from "./siws-sui/siws-sui.service";
 import { suiChainSlugToNetwork } from "./siws-sui/siws-sui-message";
 import { SiwsStellarService } from "./siws-stellar/siws-stellar.service";
 import { stellarChainSlugToNetwork } from "./siws-stellar/siws-stellar-message";
+import { canonicalizeWalletAddress } from "../utils/address";
 
 export type AddressNamespace = "eip155" | "solana" | "sui" | "stellar";
 
@@ -321,17 +322,18 @@ export class AuthService {
     address: string,
     namespace: AddressNamespace,
   ): Promise<AuthResponseDto> {
-    const inputLower = namespace === "eip155" ? address.toLowerCase() : address;
+    // Canonical form is the case-insensitive dedup key: `walletAddress @unique`
+    // now does the job the dropped `walletAddressLower` column used to.
+    const canonical = canonicalizeWalletAddress(address, namespace);
 
     let user = await this.prisma.user.findUnique({
-      where: { walletAddressLower: inputLower },
+      where: { walletAddress: canonical },
     });
 
     if (!user) {
       user = await this.prisma.user.create({
         data: {
-          walletAddress: address,
-          walletAddressLower: inputLower,
+          walletAddress: canonical,
           authProvider: AuthProvider.WALLET,
         },
       });
@@ -862,7 +864,6 @@ export class AuthService {
       select: {
         id: true,
         walletAddress: true,
-        walletAddressLower: true,
         username: true,
         email: true,
         role: true,

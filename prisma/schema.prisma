@@ -98,8 +98,10 @@ model Vendor {
 
 model User {
   id                 String               @id @default(ulid())
+  // Stored canonical per-chain (checksummed EVM / verbatim Solana+Stellar) via
+  // canonicalizeWalletAddress, so this @unique is itself the case-insensitive
+  // dedup key. Replaced the former walletAddressLower fold column.
   walletAddress      String?              @unique
-  walletAddressLower String?              @unique
   email              String?              @unique
   username           String?              @unique
   password           String?

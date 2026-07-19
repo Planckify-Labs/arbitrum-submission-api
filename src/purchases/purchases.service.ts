@@ -9,6 +9,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { CreatePurchaseDto, UpdatePurchaseDto } from "./dto/purchase.dto";
 import { SearchPurchaseDto } from "./dto/search-purchase.dto";
 import { addressesEqual } from "../auth/address-compare";
+import { canonicalizeWalletAddress } from "../utils/address";
 import { Prisma, PurchaseStatus, ReferenceIdStatus } from "@generated/prisma";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import { ReferenceIdService } from "../reference-id/reference-id.service";
@@ -179,18 +180,23 @@ export class PurchasesService {
     }
 
     // Purchase flow is EVM-only (smart-contract transactions via viem).
-    // Solana purchases would require namespace-aware User upsert.
+    // `normalizedWalletAddress` stays lowercase for the transaction's
+    // `senderAddress` (tx search filters on it case-sensitively); the User
+    // row is deduped by the canonical (checksummed) form instead.
     const normalizedWalletAddress = walletAddress.toLowerCase();
+    const canonicalWalletAddress = canonicalizeWalletAddress(
+      walletAddress,
+      "eip155",
+    );
 
     let user = await this.prisma.user.findUnique({
-      where: { walletAddressLower: normalizedWalletAddress },
+      where: { walletAddress: canonicalWalletAddress },
     });
 
     if (!user) {
       user = await this.prisma.user.create({
         data: {
-          walletAddress: normalizedWalletAddress,
-          walletAddressLower: normalizedWalletAddress,
+          walletAddress: canonicalWalletAddress,
           authProvider: "WALLET",
         },
       });

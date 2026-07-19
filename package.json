@@ -27,7 +27,8 @@
     "docker:prod:logs": "docker compose -f docker-compose.prod.yml logs -f",
     "db:setup": "./scripts/setup-db.sh",
     "db:setup:prod": "./scripts/setup-db-prod.sh",
-    "pushNotif:test": "ts-node --transpile-only scripts/push-notif-test.ts"
+    "pushNotif:test": "ts-node --transpile-only scripts/push-notif-test.ts",
+    "backfill:canonical-address": "ts-node --transpile-only -r tsconfig-paths/register src/scripts/backfill-canonical-wallet-address.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",

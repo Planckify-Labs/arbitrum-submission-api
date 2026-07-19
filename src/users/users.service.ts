@@ -11,7 +11,6 @@ export class UsersService {
   private static readonly USER_SAFE_SELECT = {
     id: true,
     walletAddress: true,
-    walletAddressLower: true,
     email: true,
     username: true,
     name: true,

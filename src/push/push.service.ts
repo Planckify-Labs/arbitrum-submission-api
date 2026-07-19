@@ -10,6 +10,7 @@ import {
   type ExpoPushTicket,
 } from "expo-server-sdk";
 import { PrismaService } from "../prisma/prisma.service";
+import { canonicalizeWalletAddress } from "../utils/address";
 
 /** One outstanding delivery to verify once Expo's receipt is ready. */
 export interface PushReceiptEntry {
@@ -125,7 +126,9 @@ export class PushService {
             this.prisma.walletPushSubscription.createMany({
               data: unique.map((address) => ({
                 deviceTokenId: device.id,
-                walletAddress: address.toLowerCase(),
+                // Canonical per-chain form (never a blanket lowercase, which
+                // would corrupt case-sensitive Solana/Stellar addresses).
+                walletAddress: canonicalizeWalletAddress(address),
               })),
             }),
           ]
@@ -145,7 +148,7 @@ export class PushService {
     });
 
     // Every wallet address is its own backend User row with its own JWT
-    // (find-or-create by walletAddressLower — see auth.service.ts). A
+    // (find-or-create by canonical walletAddress — see auth.service.ts). A
     // single physical device only re-POSTs its push token when the
     // wallet *list* changes (see app/_layout.tsx's walletKey effect),
     // not when the user merely switches which wallet is active — so
@@ -163,7 +166,9 @@ export class PushService {
     const walletDevices = user?.walletAddress
       ? (
           await this.prisma.walletPushSubscription.findMany({
-            where: { walletAddress: user.walletAddress.toLowerCase() },
+            where: {
+              walletAddress: canonicalizeWalletAddress(user.walletAddress),
+            },
             select: { deviceToken: { select: { id: true, token: true } } },
           })
         ).map((s) => s.deviceToken)
@@ -181,7 +186,7 @@ export class PushService {
   /** Send a push to every device subscribed to a wallet address. */
   async sendToWallet(args: SendToWalletArgs): Promise<SendPushResult> {
     const subs = await this.prisma.walletPushSubscription.findMany({
-      where: { walletAddress: args.walletAddress.toLowerCase() },
+      where: { walletAddress: canonicalizeWalletAddress(args.walletAddress) },
       select: { deviceToken: { select: { id: true, token: true } } },
     });
     const devices = subs.map((s) => s.deviceToken);
