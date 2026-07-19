@@ -12,6 +12,11 @@ import type { X402SupportedService } from "../x402/x402-supported.service";
 import type { ICircleSettleSvmClient } from "./circle-settle-svm.client";
 import type { ICircleSettleClient } from "./circle-settle.client";
 import type { BlockchainCacheService } from "../valkey/services/blockchain-cache.service";
+
+// PushService pulls in expo-server-sdk, which ships pure ESM and isn't
+// transformed by Jest's default config. Nothing here ever instantiates
+// the real PushService, so a trivial stub avoids Jest ever parsing it.
+jest.mock("expo-server-sdk", () => ({ Expo: class {} }));
 import type { TransactionsService } from "../transactions/transactions.service";
 import { IntentsService } from "./intents.service";
 
@@ -85,7 +90,7 @@ function valkeyStub(): Pick<ValkeyService, "get" | "set"> {
 
 function configStub(env: Record<string, string | undefined>): ConfigService {
   return {
-    get: jest.fn(<T,>(key: string, fallback?: T): T | undefined => {
+    get: jest.fn(<T>(key: string, fallback?: T): T | undefined => {
       const raw = env[key];
       if (raw === undefined || raw === "") return fallback;
       return raw as unknown as T;
@@ -116,7 +121,9 @@ function svmPrismaStub(opts?: {
           chainSlug: "solana-mainnet",
           isActive: true,
           type: "SVM",
-          metadata: { x402FacilitatorUrl: "https://facilitator.example/v1/settle" },
+          metadata: {
+            x402FacilitatorUrl: "https://facilitator.example/v1/settle",
+          },
         }
       : opts.blockchain;
   const createdIntent = opts?.createdIntent ?? {
@@ -146,22 +153,26 @@ function svmPrismaStub(opts?: {
         }
       : opts.fxRow;
 
-  const nanopaySubmissionCreate = jest.fn(async (args: { data: Record<string, unknown> }) => ({
-    id: "sub_svm_01",
-    intentId: args.data.intentId,
-    signature: args.data.signature,
-    submittedAt: args.data.submittedAt,
-    circleSettleTxUuid: args.data.circleSettleTxUuid ?? null,
-    circleSettleResponseReceivedAt:
-      args.data.circleSettleResponseReceivedAt ?? null,
-    circleSettleNetwork: args.data.circleSettleNetwork ?? null,
-    failureCode: args.data.failureCode ?? null,
-    failureMessage: args.data.failureMessage ?? null,
-  }));
-  const paymentIntentUpdate = jest.fn(async (args: { data: Record<string, unknown> }) => ({
-    ...(intent ?? {}),
-    status: args.data.status,
-  }));
+  const nanopaySubmissionCreate = jest.fn(
+    async (args: { data: Record<string, unknown> }) => ({
+      id: "sub_svm_01",
+      intentId: args.data.intentId,
+      signature: args.data.signature,
+      submittedAt: args.data.submittedAt,
+      circleSettleTxUuid: args.data.circleSettleTxUuid ?? null,
+      circleSettleResponseReceivedAt:
+        args.data.circleSettleResponseReceivedAt ?? null,
+      circleSettleNetwork: args.data.circleSettleNetwork ?? null,
+      failureCode: args.data.failureCode ?? null,
+      failureMessage: args.data.failureMessage ?? null,
+    }),
+  );
+  const paymentIntentUpdate = jest.fn(
+    async (args: { data: Record<string, unknown> }) => ({
+      ...(intent ?? {}),
+      status: args.data.status,
+    }),
+  );
 
   const $transaction = jest.fn(async (cb: (tx: unknown) => unknown) =>
     cb({
@@ -227,8 +238,12 @@ function buildSvmService(overrides: {
   };
 
   const bcCache = {
-    getByChainId: jest.fn(async (_chainId: number, fallback: () => Promise<unknown>) => fallback()),
-    getByChainSlug: jest.fn(async (_slug: string, fallback: () => Promise<unknown>) => fallback()),
+    getByChainId: jest.fn(
+      async (_chainId: number, fallback: () => Promise<unknown>) => fallback(),
+    ),
+    getByChainSlug: jest.fn(
+      async (_slug: string, fallback: () => Promise<unknown>) => fallback(),
+    ),
   };
 
   const svc = new IntentsService(
@@ -243,7 +258,9 @@ function buildSvmService(overrides: {
     null, // stellarVerification
     svmSettle,
     {} as unknown as QrSigningService,
-    { create: jest.fn().mockResolvedValue({}) } as unknown as TransactionsService, // transactionsService
+    {
+      create: jest.fn().mockResolvedValue({}),
+    } as unknown as TransactionsService, // transactionsService
   );
   return { svc, prisma, svmSettle };
 }
@@ -322,7 +339,8 @@ describe("IntentsService.createIntent (SVM)", () => {
         status: "QUOTED",
         nanopayUsdcAmountMicros: 941_294n,
         nanopayUsdcSourceChainId: 5042002,
-        nanopayUsdcTreasuryAddress: "0x00000000000000000000000000000000abCDef01",
+        nanopayUsdcTreasuryAddress:
+          "0x00000000000000000000000000000000abCDef01",
         nanopayNonce: Buffer.alloc(32, 0x11),
         nanopayValidAfter: 1_700_000_000,
         nanopayValidBefore: 1_700_262_600,
@@ -332,7 +350,11 @@ describe("IntentsService.createIntent (SVM)", () => {
     });
     const { svc } = buildSvmService({ prisma });
     const result = await svc.createIntent({
-      dto: { merchantId: "mch_123", fiatAmountMinor: 15_000, currency: "IDR" as const },
+      dto: {
+        merchantId: "mch_123",
+        fiatAmountMinor: 15_000,
+        currency: "IDR" as const,
+      },
       ...defaultArgs,
       payerAddress: "0x1111111111111111111111111111111111111111",
       rawBodyForHash:
@@ -382,7 +404,8 @@ describe("IntentsService.submitNanopaySvm", () => {
         kind: "ok",
         response: {
           success: true,
-          transaction: "5xKuT8oXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          transaction:
+            "5xKuT8oXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           network: "solana:mainnet",
         },
         rawBody: {},
@@ -396,7 +419,9 @@ describe("IntentsService.submitNanopaySvm", () => {
     });
 
     expect(result.status).toBe("SETTLED");
-    expect((svmSettle as { settle: jest.Mock }).settle).toHaveBeenCalledTimes(1);
+    expect((svmSettle as { settle: jest.Mock }).settle).toHaveBeenCalledTimes(
+      1,
+    );
     // Intent flipped to SETTLED.
     expect(prisma.paymentIntent.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { status: "SETTLED" } }),
@@ -507,8 +532,9 @@ describe("IntentsService.submitNanopaySvm", () => {
     const prisma = svmPrismaStub({ intent });
     const { svc } = buildSvmService({ prisma });
     // Clear the injected SVM client (simulates a pre-M6 module wiring).
-    (svc as unknown as { circleSettleSvm: ICircleSettleSvmClient | null }).circleSettleSvm =
-      null;
+    (
+      svc as unknown as { circleSettleSvm: ICircleSettleSvmClient | null }
+    ).circleSettleSvm = null;
 
     await expect(
       svc.submitNanopaySvm({

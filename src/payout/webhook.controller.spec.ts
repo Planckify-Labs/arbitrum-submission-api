@@ -4,10 +4,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from "@nestjs/common";
-import {
-  PaymentIntentStatus,
-  ProviderPayoutStatus,
-} from "@generated/prisma";
+import { PaymentIntentStatus, ProviderPayoutStatus } from "@generated/prisma";
 import type { IPayoutProviderAdapter } from "./payout-provider.port";
 import type { PrismaService } from "../prisma/prisma.service";
 import {
@@ -15,6 +12,11 @@ import {
   mapXenditCallbackStatus,
   WebhookController,
 } from "./webhook.controller";
+
+// PushService pulls in expo-server-sdk, which ships pure ESM and isn't
+// transformed by Jest's default config. Nothing here ever instantiates
+// the real PushService, so a trivial stub avoids Jest ever parsing it.
+jest.mock("expo-server-sdk", () => ({ Expo: class {} }));
 
 /**
  * Tests for `POST /webhooks/xendit`. We exercise the controller directly
@@ -55,9 +57,11 @@ function providerStub(
   } as unknown as IPayoutProviderAdapter;
 }
 
-function prismaStub(opts: {
-  findRow?: PayoutRow | null;
-} = {}) {
+function prismaStub(
+  opts: {
+    findRow?: PayoutRow | null;
+  } = {},
+) {
   // Typed as `jest.Mock` (not the narrower generic) so `.mock.calls[0][0]`
   // access in individual tests isn't tripped up by ts-jest's tuple
   // inference on the zero-arg factory form.
@@ -83,17 +87,26 @@ function prismaStub(opts: {
   };
 }
 
-function build(opts: {
-  findRow?: PayoutRow | null;
-  verifyImpl?: IPayoutProviderAdapter["verifyWebhookSignature"];
-  flipVerifyImpl?: IPayoutProviderAdapter["verifyWebhookSignature"];
-} = {}) {
+function build(
+  opts: {
+    findRow?: PayoutRow | null;
+    verifyImpl?: IPayoutProviderAdapter["verifyWebhookSignature"];
+    flipVerifyImpl?: IPayoutProviderAdapter["verifyWebhookSignature"];
+  } = {},
+) {
   const { mock, findFirst, payoutUpdate, intentUpdate, $transaction } =
     prismaStub({ findRow: opts.findRow });
   const provider = providerStub(opts.verifyImpl);
   const flipProvider = providerStub(opts.flipVerifyImpl);
-  const pushService = { sendPaidOutPush: async () => {} } as unknown as import("../push/push.service").PushService;
-  const controller = new WebhookController(mock, pushService, provider, flipProvider);
+  const pushService = {
+    sendPaidOutPush: async () => {},
+  } as unknown as import("../push/push.service").PushService;
+  const controller = new WebhookController(
+    mock,
+    pushService,
+    provider,
+    flipProvider,
+  );
   return {
     controller,
     provider,
@@ -182,7 +195,10 @@ describe("WebhookController.handleXenditCallback — state transitions", () => {
       },
     );
 
-    expect(result).toEqual({ ok: true, status: ProviderPayoutStatus.COMPLETED });
+    expect(result).toEqual({
+      ok: true,
+      status: ProviderPayoutStatus.COMPLETED,
+    });
     expect($transaction).toHaveBeenCalledTimes(1);
 
     // ProviderPayout row flipped to COMPLETED with completedAt set.
@@ -262,7 +278,10 @@ describe("WebhookController.handleXenditCallback — idempotency", () => {
         reference_id: "pi_01HXYZ",
       },
     );
-    expect(result).toEqual({ ok: true, status: ProviderPayoutStatus.COMPLETED });
+    expect(result).toEqual({
+      ok: true,
+      status: ProviderPayoutStatus.COMPLETED,
+    });
     // No DB writes on idempotent delivery — matters because Xendit retries
     // aggressively and we don't want to fire duplicate push notifications.
     expect($transaction).not.toHaveBeenCalled();
@@ -345,10 +364,7 @@ describe("WebhookController.handleFlipCallback — lookup", () => {
   it("throws 400 when `id` is missing from data", async () => {
     const { controller } = build();
     await expect(
-      controller.handleFlipCallback(
-        {},
-        flipBody({ status: "DONE" }),
-      ),
+      controller.handleFlipCallback({}, flipBody({ status: "DONE" })),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 

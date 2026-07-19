@@ -5,7 +5,16 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from "@nestjs/common";
-import { IntentsService, computeUsdcMicros, addMarkup } from "./intents.service";
+import {
+  IntentsService,
+  computeUsdcMicros,
+  addMarkup,
+} from "./intents.service";
+
+// PushService pulls in expo-server-sdk, which ships pure ESM and isn't
+// transformed by Jest's default config. Nothing here ever instantiates
+// the real PushService, so a trivial stub avoids Jest ever parsing it.
+jest.mock("expo-server-sdk", () => ({ Expo: class {} }));
 import type { X402SupportedService } from "../x402/x402-supported.service";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { ValkeyService } from "../valkey/valkey.service";
@@ -57,10 +66,9 @@ function valkeyStub(
   } as unknown as ValkeyService;
 }
 
-function configStub(treasury = "0x00000000000000000000000000000000abCDef01"): Pick<
-  ConfigService,
-  "get"
-> {
+function configStub(
+  treasury = "0x00000000000000000000000000000000abCDef01",
+): Pick<ConfigService, "get"> {
   return {
     get: jest.fn((k: string) =>
       k === "PLATFORM_TREASURY_ADDRESS_EVM" ? treasury : undefined,
@@ -84,7 +92,10 @@ function prismaStub(opts?: {
   fxRow?: Record<string, unknown> | null;
   createdIntent?: Record<string, unknown>;
 }): FakePrisma {
-  const merchant = opts?.merchant === undefined ? { id: "mch_123", isActive: true } : opts.merchant;
+  const merchant =
+    opts?.merchant === undefined
+      ? { id: "mch_123", isActive: true }
+      : opts.merchant;
   const fxRow =
     opts?.fxRow === undefined
       ? {
@@ -124,12 +135,15 @@ function prismaStub(opts?: {
         id: "01ARC",
         isActive: true,
         metadata: {
-          x402FacilitatorUrl: "https://gateway-api-testnet.circle.com/gateway/v1/x402/settle",
+          x402FacilitatorUrl:
+            "https://gateway-api-testnet.circle.com/gateway/v1/x402/settle",
         },
       })),
     },
     smartContract: {
-      findFirst: jest.fn(async () => ({ address: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9" })),
+      findFirst: jest.fn(async () => ({
+        address: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+      })),
     },
   };
 }
@@ -144,7 +158,11 @@ function circleSettleStub() {
   return {
     settle: jest.fn().mockResolvedValue({
       kind: "ok",
-      response: { success: true, transaction: "stub", network: "eip155:5042002" },
+      response: {
+        success: true,
+        transaction: "stub",
+        network: "eip155:5042002",
+      },
       rawBody: {},
     }),
   };
@@ -152,19 +170,25 @@ function circleSettleStub() {
 
 function blockchainCacheStub() {
   return {
-    getByChainId: jest.fn(async (_chainId: number, fallback: () => Promise<unknown>) => fallback()),
-    getByChainSlug: jest.fn(async (_slug: string, fallback: () => Promise<unknown>) => fallback()),
+    getByChainId: jest.fn(
+      async (_chainId: number, fallback: () => Promise<unknown>) => fallback(),
+    ),
+    getByChainSlug: jest.fn(
+      async (_slug: string, fallback: () => Promise<unknown>) => fallback(),
+    ),
   };
 }
 
-function buildService(overrides: {
-  prisma?: FakePrisma;
-  x402?: Pick<X402SupportedService, "getSupportedForChain">;
-  valkey?: Pick<ValkeyService, "get" | "set">;
-  config?: Pick<ConfigService, "get">;
-  circleSettle?: { settle: jest.Mock };
-  blockchainVerification?: { getPublicClient: jest.Mock } | null;
-} = {}) {
+function buildService(
+  overrides: {
+    prisma?: FakePrisma;
+    x402?: Pick<X402SupportedService, "getSupportedForChain">;
+    valkey?: Pick<ValkeyService, "get" | "set">;
+    config?: Pick<ConfigService, "get">;
+    circleSettle?: { settle: jest.Mock };
+    blockchainVerification?: { getPublicClient: jest.Mock } | null;
+  } = {},
+) {
   const prisma = overrides.prisma ?? prismaStub();
   const x402 = overrides.x402 ?? x402Stub();
   const valkey = overrides.valkey ?? valkeyStub();
@@ -184,9 +208,20 @@ function buildService(overrides: {
     null, // stellarVerification — optional, null is valid.
     null, // circleSettleSvm
     {} as unknown as QrSigningService,
-    { create: jest.fn().mockResolvedValue({}) } as unknown as TransactionsService, // transactionsService
+    {
+      create: jest.fn().mockResolvedValue({}),
+    } as unknown as TransactionsService, // transactionsService
   );
-  return { svc, prisma, x402, valkey, config, circleSettle, blockchainVerification, bcCache };
+  return {
+    svc,
+    prisma,
+    x402,
+    valkey,
+    config,
+    circleSettle,
+    blockchainVerification,
+    bcCache,
+  };
 }
 
 describe("IntentsService", () => {
@@ -194,7 +229,8 @@ describe("IntentsService", () => {
     idempotencyKey: "a".repeat(32),
     payerAddress: "0x1111111111111111111111111111111111111111",
     payerUserId: "user_1",
-    rawBodyForHash: '{"currency":"IDR","fiatAmountMinor":15000,"merchantId":"mch_123"}',
+    rawBodyForHash:
+      '{"currency":"IDR","fiatAmountMinor":15000,"merchantId":"mch_123"}',
   };
   const defaultDto = {
     merchantId: "mch_123",
@@ -273,6 +309,25 @@ describe("IntentsService", () => {
       nanopayValidBefore: 2,
       expiresAt: new Date("2026-04-23T01:10:00Z"),
       fiatCurrency: "IDR",
+      // The replay branch delegates to `getIntent`, whose single serializer
+      // reads the joined relations + quote scalars — mirror the `include`
+      // shape of the real query or the replay path throws.
+      payerUserId: defaultArgs.payerUserId,
+      payer: null,
+      merchantId: "mch_123",
+      merchant: {
+        id: "mch_123",
+        userId: defaultArgs.payerUserId,
+        displayName: "Warung Tester",
+      },
+      fiatAmountMinor: 15_000,
+      fxRateSnapshot: 15_700,
+      path: null,
+      createdAt: new Date("2026-04-23T01:00:00Z"),
+      payouts: [],
+      nanopaySubmissions: [],
+      sourceToken: null,
+      quoteSignature: null,
     };
     const prisma = prismaStub({ createdIntent: existing });
     // findUnique returns the existing row for the idempotent branch.
@@ -624,22 +679,26 @@ describe("IntentsService.submitNanopay", () => {
     const intent = opts?.intent === undefined ? storedIntent() : opts.intent;
     const existingSubmission = opts?.existingSubmission ?? null;
 
-    const nanopaySubmissionCreate = jest.fn(async (args: { data: Record<string, unknown> }) => ({
-      id: "sub_01",
-      intentId: args.data.intentId,
-      signature: args.data.signature,
-      submittedAt: args.data.submittedAt,
-      circleSettleTxUuid: args.data.circleSettleTxUuid ?? null,
-      circleSettleResponseReceivedAt:
-        args.data.circleSettleResponseReceivedAt ?? null,
-      circleSettleNetwork: args.data.circleSettleNetwork ?? null,
-      failureCode: args.data.failureCode ?? null,
-      failureMessage: args.data.failureMessage ?? null,
-    }));
-    const paymentIntentUpdate = jest.fn(async (args: { data: Record<string, unknown> }) => ({
-      ...(intent ?? {}),
-      status: args.data.status,
-    }));
+    const nanopaySubmissionCreate = jest.fn(
+      async (args: { data: Record<string, unknown> }) => ({
+        id: "sub_01",
+        intentId: args.data.intentId,
+        signature: args.data.signature,
+        submittedAt: args.data.submittedAt,
+        circleSettleTxUuid: args.data.circleSettleTxUuid ?? null,
+        circleSettleResponseReceivedAt:
+          args.data.circleSettleResponseReceivedAt ?? null,
+        circleSettleNetwork: args.data.circleSettleNetwork ?? null,
+        failureCode: args.data.failureCode ?? null,
+        failureMessage: args.data.failureMessage ?? null,
+      }),
+    );
+    const paymentIntentUpdate = jest.fn(
+      async (args: { data: Record<string, unknown> }) => ({
+        ...(intent ?? {}),
+        status: args.data.status,
+      }),
+    );
 
     // `$transaction(cb)` invokes the callback with a tx-scoped client that
     // has the same shape as the top-level prisma. We hand it the same
@@ -669,12 +728,15 @@ describe("IntentsService.submitNanopay", () => {
           id: "01ARC",
           isActive: true,
           metadata: {
-            x402FacilitatorUrl: "https://gateway-api-testnet.circle.com/gateway/v1/x402/settle",
+            x402FacilitatorUrl:
+              "https://gateway-api-testnet.circle.com/gateway/v1/x402/settle",
           },
         })),
       },
       smartContract: {
-        findFirst: jest.fn(async () => ({ address: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9" })),
+        findFirst: jest.fn(async () => ({
+          address: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+        })),
       },
       $transaction,
     };
@@ -701,7 +763,9 @@ describe("IntentsService.submitNanopay", () => {
     // Spy the payout provider via the service's internal field. Simpler
     // than rebuilding the whole service just to inject a provider.
     const triggerSpy = jest.fn();
-    (svc as unknown as { payoutProvider: unknown }).payoutProvider = { trigger: triggerSpy };
+    (svc as unknown as { payoutProvider: unknown }).payoutProvider = {
+      trigger: triggerSpy,
+    };
 
     const result = await svc.submitNanopay({
       intentId: "pi_01HXYZ",
@@ -958,7 +1022,11 @@ describe("IntentsService.submitNanopay", () => {
       prisma: prisma as unknown as FakePrisma,
       circleSettle,
     });
-    const logger = (svc as unknown as { logger: unknown }).logger as { warn: jest.Mock; error: jest.Mock; log: jest.Mock };
+    const logger = (svc as unknown as { logger: unknown }).logger as {
+      warn: jest.Mock;
+      error: jest.Mock;
+      log: jest.Mock;
+    };
     const warnSpy = jest.spyOn(logger, "warn");
     const errorSpy = jest.spyOn(logger, "error");
     const logSpy = jest.spyOn(logger, "log");
@@ -1060,32 +1128,41 @@ describe("IntentsService.recordDepositReceipt", () => {
     gatewayWalletContract?: string | null;
     gatewayCreateThrows?: Error | null;
   }) {
-    const intent = opts?.intent === undefined ? depositIntentRow() : opts.intent;
+    const intent =
+      opts?.intent === undefined ? depositIntentRow() : opts.intent;
     const priorDeposit = opts?.priorDeposit ?? null;
     const blockchain =
-      opts?.blockchain === undefined ? { id: "01ARC", isActive: true } : opts.blockchain;
+      opts?.blockchain === undefined
+        ? { id: "01ARC", isActive: true }
+        : opts.blockchain;
     const gatewayWalletContract =
-      opts?.gatewayWalletContract === undefined ? GATEWAY_WALLET : opts.gatewayWalletContract;
+      opts?.gatewayWalletContract === undefined
+        ? GATEWAY_WALLET
+        : opts.gatewayWalletContract;
     const gatewayCreateThrows = opts?.gatewayCreateThrows ?? null;
 
-    const gatewayDepositCreate = jest.fn((args: { data: Record<string, unknown> }) => {
-      if (gatewayCreateThrows) return Promise.reject(gatewayCreateThrows);
-      return Promise.resolve({
-        id: "gd_01",
-        userId: args.data.userId,
-        sourceChainId: args.data.sourceChainId,
-        txHash: args.data.txHash,
-        amountMicros: args.data.amountMicros,
-        usedCirclePaymaster: args.data.usedCirclePaymaster,
-        status: args.data.status,
-        createdAt: new Date(),
-        confirmedAt: args.data.confirmedAt,
-      });
-    });
-    const paymentIntentUpdate = jest.fn(async (args: { data: Record<string, unknown> }) => ({
-      ...(intent ?? {}),
-      ...args.data,
-    }));
+    const gatewayDepositCreate = jest.fn(
+      (args: { data: Record<string, unknown> }) => {
+        if (gatewayCreateThrows) return Promise.reject(gatewayCreateThrows);
+        return Promise.resolve({
+          id: "gd_01",
+          userId: args.data.userId,
+          sourceChainId: args.data.sourceChainId,
+          txHash: args.data.txHash,
+          amountMicros: args.data.amountMicros,
+          usedCirclePaymaster: args.data.usedCirclePaymaster,
+          status: args.data.status,
+          createdAt: new Date(),
+          confirmedAt: args.data.confirmedAt,
+        });
+      },
+    );
+    const paymentIntentUpdate = jest.fn(
+      async (args: { data: Record<string, unknown> }) => ({
+        ...(intent ?? {}),
+        ...args.data,
+      }),
+    );
     const gatewayDepositFindUnique = jest.fn(async () => priorDeposit);
     const $transaction = jest.fn(async (cb: (tx: unknown) => unknown) =>
       cb({
@@ -1131,7 +1208,8 @@ describe("IntentsService.recordDepositReceipt", () => {
     const client = {
       getTransactionReceipt: jest.fn(() => {
         if (opts?.receiptNull) return Promise.resolve(null);
-        if (opts?.throwOnGet) return Promise.reject(new Error("RPC unreachable"));
+        if (opts?.throwOnGet)
+          return Promise.reject(new Error("RPC unreachable"));
         return Promise.resolve({ status });
       }),
       getTransaction: jest.fn(async () => ({
@@ -1160,7 +1238,9 @@ describe("IntentsService.recordDepositReceipt", () => {
     const blockchainVerification = bvStub();
     const { svc } = buildService({
       prisma: prisma as unknown as FakePrisma,
-      blockchainVerification: blockchainVerification as { getPublicClient: jest.Mock },
+      blockchainVerification: blockchainVerification as {
+        getPublicClient: jest.Mock;
+      },
     });
 
     const result = await svc.recordDepositReceipt(validArgs);
@@ -1168,7 +1248,9 @@ describe("IntentsService.recordDepositReceipt", () => {
     expect(result.depositId).toBe("gd_01");
     expect(result.status).toBe("CONFIRMED");
     // On-chain verification touched the cached client exactly once per call.
-    expect(blockchainVerification.getPublicClient).toHaveBeenCalledWith(5042002);
+    expect(blockchainVerification.getPublicClient).toHaveBeenCalledWith(
+      5042002,
+    );
     // GatewayDeposit row persisted with status=CONFIRMED + confirmedAt set.
     expect(prisma.gatewayDeposit.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1212,7 +1294,9 @@ describe("IntentsService.recordDepositReceipt", () => {
     const blockchainVerification = bvStub();
     const { svc } = buildService({
       prisma: prisma as unknown as FakePrisma,
-      blockchainVerification: blockchainVerification as { getPublicClient: jest.Mock },
+      blockchainVerification: blockchainVerification as {
+        getPublicClient: jest.Mock;
+      },
     });
 
     const result = await svc.recordDepositReceipt(validArgs);
@@ -1241,9 +1325,9 @@ describe("IntentsService.recordDepositReceipt", () => {
   it("404 when the intent is missing", async () => {
     const prisma = depositPrismaStub({ intent: null });
     const { svc } = buildService({ prisma: prisma as unknown as FakePrisma });
-    await expect(
-      svc.recordDepositReceipt(validArgs),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.recordDepositReceipt(validArgs)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 
   it("400 when the tx is reverted on-chain", async () => {
@@ -1251,11 +1335,13 @@ describe("IntentsService.recordDepositReceipt", () => {
     const blockchainVerification = bvStub({ status: "reverted" });
     const { svc } = buildService({
       prisma: prisma as unknown as FakePrisma,
-      blockchainVerification: blockchainVerification as { getPublicClient: jest.Mock },
+      blockchainVerification: blockchainVerification as {
+        getPublicClient: jest.Mock;
+      },
     });
-    await expect(
-      svc.recordDepositReceipt(validArgs),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.recordDepositReceipt(validArgs)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
     expect(prisma.gatewayDeposit.create).not.toHaveBeenCalled();
   });
 
@@ -1266,11 +1352,13 @@ describe("IntentsService.recordDepositReceipt", () => {
     });
     const { svc } = buildService({
       prisma: prisma as unknown as FakePrisma,
-      blockchainVerification: blockchainVerification as { getPublicClient: jest.Mock },
+      blockchainVerification: blockchainVerification as {
+        getPublicClient: jest.Mock;
+      },
     });
-    await expect(
-      svc.recordDepositReceipt(validArgs),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.recordDepositReceipt(validArgs)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 
   it("accepts a paymaster-sponsored UserOp even when the top-level to is not the Gateway wallet", async () => {
@@ -1284,7 +1372,9 @@ describe("IntentsService.recordDepositReceipt", () => {
     });
     const { svc } = buildService({
       prisma: prisma as unknown as FakePrisma,
-      blockchainVerification: blockchainVerification as { getPublicClient: jest.Mock },
+      blockchainVerification: blockchainVerification as {
+        getPublicClient: jest.Mock;
+      },
     });
 
     const result = await svc.recordDepositReceipt({
@@ -1323,7 +1413,9 @@ describe("IntentsService.recordDepositReceipt", () => {
     const blockchainVerification = bvStub();
     const { svc } = buildService({
       prisma: prisma as unknown as FakePrisma,
-      blockchainVerification: blockchainVerification as { getPublicClient: jest.Mock },
+      blockchainVerification: blockchainVerification as {
+        getPublicClient: jest.Mock;
+      },
     });
     await svc.recordDepositReceipt(validArgs);
     // The deposit row is still persisted for audit — just no intent flip.
@@ -1356,7 +1448,9 @@ describe("IntentsService.recordDepositReceipt", () => {
     const blockchainVerification = bvStub();
     const { svc } = buildService({
       prisma: prisma as unknown as FakePrisma,
-      blockchainVerification: blockchainVerification as { getPublicClient: jest.Mock },
+      blockchainVerification: blockchainVerification as {
+        getPublicClient: jest.Mock;
+      },
     });
     const result = await svc.recordDepositReceipt(validArgs);
     expect(result.depositId).toBe("gd_WINNER");
