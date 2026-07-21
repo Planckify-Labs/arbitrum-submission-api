@@ -15,6 +15,18 @@ import { JwtService } from "@nestjs/jwt";
 import * as argon2 from "argon2";
 import { OAuth2Client, TokenPayload } from "google-auth-library";
 import { SiweMessage } from "siwe";
+import {
+  createPublicClient,
+  http,
+  isAddressEqual,
+  recoverMessageAddress,
+  type Hex,
+} from "viem";
+import {
+  parseSiweMessage,
+  validateSiweMessage,
+  verifySiweMessage,
+} from "viem/siwe";
 import { EmailService } from "../email/email.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { NonceCacheService } from "../valkey/services/nonce-cache.service";
@@ -87,9 +99,15 @@ export class AuthService {
   async generateNonce(
     walletAddress: string,
     namespace: AddressNamespace = "eip155",
+    chainId?: string,
   ): Promise<string> {
     const nonce = randomBytes(32).toString("hex");
-    await this.nonceCacheService.setNonce(namespace, walletAddress, nonce);
+    await this.nonceCacheService.setNonce(
+      namespace,
+      walletAddress,
+      nonce,
+      chainId,
+    );
     return nonce;
   }
 
@@ -105,7 +123,15 @@ export class AuthService {
     const domain = this.configService.get<string>("SIWE_DOMAIN");
     const uri = this.configService.get<string>("SIWE_URI");
     const statement = this.configService.get<string>("SIWE_STATEMENT");
-    const issuedAt = new Date().toISOString();
+    const issuedAtDate = new Date();
+    const issuedAt = issuedAtDate.toISOString();
+    // Give the signed artifact its own expiry, mirroring the Solana/Sui/
+    // Stellar SIWx messages. Previously the EVM message carried no
+    // `expirationTime`, so only the server-side nonce TTL bounded it; the
+    // verifier now enforces this field via `validateSiweMessage`.
+    const expirationTime = new Date(
+      issuedAtDate.getTime() + this.nonceExpireMinutes * 60 * 1000,
+    ).toISOString();
 
     try {
       const message = new SiweMessage({
@@ -117,6 +143,7 @@ export class AuthService {
         chainId: chainId || this.defaultChainId,
         nonce,
         issuedAt,
+        expirationTime,
       });
 
       return message.prepareMessage();
@@ -284,31 +311,7 @@ export class AuthService {
       if (
         message.includes("wants you to sign in with your Ethereum account:")
       ) {
-        const siweMessage = new SiweMessage(message);
-        const { success, data: fields } = await siweMessage.verify({
-          signature,
-        });
-
-        if (!success) return empty;
-
-        if (fields.domain !== this.configService.get<string>("SIWE_DOMAIN")) {
-          this.logger.error(`Domain mismatch: ${fields.domain}`);
-          return empty;
-        }
-
-        const address = fields.address;
-        const cachedData = await this.nonceCacheService.getNonce(
-          "eip155",
-          address,
-        );
-        if (!cachedData || cachedData.nonce !== fields.nonce) return empty;
-
-        await this.nonceCacheService.deleteNonce("eip155", address);
-        return {
-          success: true,
-          address,
-          namespace: "eip155",
-        };
+        return await this.verifyEvmSignature(message, signature);
       }
 
       return empty;
@@ -316,6 +319,99 @@ export class AuthService {
       this.logger.error(`Signature verification failed: ${error.message}`);
       return empty;
     }
+  }
+
+  /**
+   * EIP-4361 (SIWE) verification for the EVM namespace.
+   *
+   * Field validation (domain match + issuedAt/expirationTime/notBefore
+   * window) runs offline via viem's `validateSiweMessage`. The signature
+   * is checked with an **offline EOA recovery** first, so the normal
+   * derived-wallet login never makes an RPC call. Only when that fails do
+   * we fall back to on-chain smart-account verification (EIP-1271, and
+   * ERC-6492 for counterfactual accounts) — and only when an RPC endpoint
+   * is configured, so EOA login is unaffected when it isn't.
+   */
+  private async verifyEvmSignature(
+    message: string,
+    signature: string,
+  ): Promise<VerifyDispatchResult> {
+    const empty: VerifyDispatchResult = {
+      success: false,
+      address: "",
+      namespace: "eip155",
+    };
+
+    const parsed = parseSiweMessage(message);
+    if (!parsed.address || !parsed.domain || !parsed.nonce) {
+      return empty;
+    }
+
+    const expectedDomain = this.configService.get<string>("SIWE_DOMAIN");
+    if (!expectedDomain) return empty;
+
+    const fieldsValid = validateSiweMessage({
+      message: parsed,
+      domain: expectedDomain,
+      time: new Date(),
+    });
+    if (!fieldsValid) {
+      this.logger.warn(`SIWE field validation failed for ${parsed.address}`);
+      return empty;
+    }
+
+    const cached = await this.nonceCacheService.getNonce(
+      "eip155",
+      parsed.address,
+    );
+    if (!cached || cached.nonce !== parsed.nonce) return empty;
+
+    const sig = signature as Hex;
+
+    // Primary path: offline EOA recovery — no RPC round-trip on login.
+    let ok = false;
+    try {
+      const recovered = await recoverMessageAddress({
+        message,
+        signature: sig,
+      });
+      ok = isAddressEqual(recovered, parsed.address);
+    } catch {
+      ok = false;
+    }
+
+    // Fallback: smart-contract accounts (EIP-1271 / ERC-6492). Gated on a
+    // configured RPC so the common EOA path never depends on it.
+    if (!ok) {
+      const rpcUrl = this.configService.get<string>("EVM_VERIFY_RPC_URL");
+      if (rpcUrl) {
+        try {
+          const client = createPublicClient({ transport: http(rpcUrl) });
+          ok = await verifySiweMessage(client, {
+            message,
+            signature: sig,
+            domain: expectedDomain,
+            time: new Date(),
+          });
+        } catch (error) {
+          this.logger.warn(
+            `EVM smart-account verify failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          ok = false;
+        }
+      }
+    }
+
+    if (!ok) return empty;
+
+    await this.nonceCacheService.deleteNonce("eip155", parsed.address);
+    return {
+      success: true,
+      address: parsed.address,
+      namespace: "eip155",
+    };
   }
 
   async login(

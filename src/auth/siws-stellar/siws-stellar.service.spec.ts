@@ -1,6 +1,7 @@
 import type { ConfigService } from "@nestjs/config";
 import { Keypair } from "@stellar/stellar-base";
 import type { NonceCacheService } from "../../valkey/services/nonce-cache.service";
+import { sep53Digest } from "./sep53";
 import { SiwsStellarService } from "./siws-stellar.service";
 
 /**
@@ -13,7 +14,11 @@ function buildSvc(
   envOverrides: Record<string, string> = {
     SIWE_DOMAIN: "com.cstralpt.takumipay",
   },
-  nonceOverride: { nonce: string; expires: number } | null = null,
+  nonceOverride: {
+    nonce: string;
+    expires: number;
+    chainId?: string;
+  } | null = null,
 ) {
   const config = {
     get: jest.fn((k: string) => envOverrides[k]),
@@ -57,7 +62,7 @@ describe("SiwsStellarService.buildMessage / parseMessage", () => {
 });
 
 describe("SiwsStellarService.verify — happy path", () => {
-  it("verifies a real ed25519 signature over the built message and consumes the nonce", async () => {
+  it("verifies a SEP-53 signature over the built message and consumes the nonce", async () => {
     const kp = Keypair.random();
     const { svc, nonceCache } = buildSvc(
       { SIWE_DOMAIN: "com.cstralpt.takumipay" },
@@ -75,9 +80,9 @@ describe("SiwsStellarService.verify — happy path", () => {
       expirationTime: new Date(Date.now() + 60_000).toISOString(),
     });
 
-    // Mirrors mobile `StellarWalletKit.signAuthMessage`: raw ed25519
-    // sign over the UTF-8 message bytes, base64-encoded.
-    const signature = kp.sign(Buffer.from(message, "utf8")).toString("base64");
+    // Mirrors mobile `StellarWalletKit.signAuthMessage`: SEP-53 sign over
+    // SHA-256("Stellar Signed Message:\n" ‖ message), base64-encoded.
+    const signature = kp.sign(sep53Digest(message)).toString("base64");
 
     const result = await svc.verify(message, signature);
     expect(result.success).toBe(true);
@@ -86,6 +91,53 @@ describe("SiwsStellarService.verify — happy path", () => {
       "stellar",
       kp.publicKey(),
     );
+  });
+
+  it("rejects a pre-SEP-53 raw-UTF-8 signature (SEP-53 only, no fallback)", async () => {
+    const kp = Keypair.random();
+    const { svc } = buildSvc(
+      { SIWE_DOMAIN: "com.cstralpt.takumipay" },
+      { nonce: "n123", expires: Date.now() + 60_000 },
+    );
+
+    const message = svc.buildMessage({
+      domain: "com.cstralpt.takumipay",
+      address: kp.publicKey(),
+      uri: "https://example.test",
+      version: "1",
+      chainId: "mainnet",
+      nonce: "n123",
+      issuedAt: new Date().toISOString(),
+      expirationTime: new Date(Date.now() + 60_000).toISOString(),
+    });
+    const signature = kp.sign(Buffer.from(message, "utf8")).toString("base64");
+
+    const result = await svc.verify(message, signature);
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects when the signed Chain ID differs from the network bound to the nonce", async () => {
+    const kp = Keypair.random();
+    const { svc } = buildSvc(
+      { SIWE_DOMAIN: "com.cstralpt.takumipay" },
+      { nonce: "n123", expires: Date.now() + 60_000, chainId: "testnet" },
+    );
+
+    // Message claims mainnet, but the nonce was issued for testnet.
+    const message = svc.buildMessage({
+      domain: "com.cstralpt.takumipay",
+      address: kp.publicKey(),
+      uri: "https://example.test",
+      version: "1",
+      chainId: "mainnet",
+      nonce: "n123",
+      issuedAt: new Date().toISOString(),
+      expirationTime: new Date(Date.now() + 60_000).toISOString(),
+    });
+    const signature = kp.sign(sep53Digest(message)).toString("base64");
+
+    const result = await svc.verify(message, signature);
+    expect(result.success).toBe(false);
   });
 
   it("rejects a signature from a different keypair (wrong signer)", async () => {

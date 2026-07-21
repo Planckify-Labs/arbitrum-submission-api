@@ -30,6 +30,9 @@ import { Roles } from "../decorators/roles.decorator";
 import { UserRole } from "@generated/prisma";
 import { NonceDto } from "./dto/nonce.dto";
 import { Public } from "src/decorators/public.decorator";
+import { chainSlugToCluster } from "./siws/siws-message";
+import { suiChainSlugToNetwork } from "./siws-sui/siws-sui-message";
+import { stellarChainSlugToNetwork } from "./siws-stellar/siws-stellar-message";
 
 @ApiTags("auth")
 @Controller("auth")
@@ -53,6 +56,7 @@ export class AuthController {
         const nonce = await this.authService.generateNonce(
           walletAddress,
           "sui",
+          suiChainSlugToNetwork(nonceDto.chainSlug),
         );
         const message = this.authService.createSiwsSuiMessage(
           walletAddress,
@@ -65,6 +69,7 @@ export class AuthController {
         const nonce = await this.authService.generateNonce(
           walletAddress,
           "solana",
+          chainSlugToCluster(nonceDto.chainSlug),
         );
         const message = this.authService.createSiwsMessage(
           walletAddress,
@@ -77,6 +82,7 @@ export class AuthController {
         const nonce = await this.authService.generateNonce(
           walletAddress,
           "stellar",
+          stellarChainSlugToNetwork(nonceDto.chainSlug),
         );
         const message = this.authService.createSiwsStellarMessage(
           walletAddress,
@@ -100,7 +106,11 @@ export class AuthController {
     const isSuiAddress = /^0x[a-fA-F0-9]{64}$/.test(walletAddress);
     const isStellarAddress = /^G[A-Z2-7]{55}$/.test(walletAddress);
     if (isSuiAddress) {
-      const nonce = await this.authService.generateNonce(walletAddress, "sui");
+      const nonce = await this.authService.generateNonce(
+        walletAddress,
+        "sui",
+        suiChainSlugToNetwork("sui-mainnet"),
+      );
       const message = this.authService.createSiwsSuiMessage(
         walletAddress,
         nonce,
@@ -112,6 +122,7 @@ export class AuthController {
       const nonce = await this.authService.generateNonce(
         walletAddress,
         "stellar",
+        stellarChainSlugToNetwork("stellar-mainnet"),
       );
       const message = this.authService.createSiwsStellarMessage(
         walletAddress,
@@ -124,6 +135,7 @@ export class AuthController {
       const nonce = await this.authService.generateNonce(
         walletAddress,
         "solana",
+        chainSlugToCluster("solana-mainnet"),
       );
       const message = this.authService.createSiwsMessage(
         walletAddress,

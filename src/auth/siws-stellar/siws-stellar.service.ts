@@ -14,6 +14,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Keypair, StrKey } from "@stellar/stellar-base";
 import { NonceCacheService } from "../../valkey/services/nonce-cache.service";
+import { sep53Digest } from "./sep53";
 import {
   buildSiwsStellarMessage,
   parseSiwsStellarMessage,
@@ -98,15 +99,27 @@ export class SiwsStellarService {
         return empty;
       }
 
-      // `Keypair.fromPublicKey` + `.verify` — raw ed25519 verify over
-      // the exact message bytes, no intent-prefix framing (unlike Sui).
+      // SEP-53 message signing: the ed25519 signature must be over
+      // `SHA-256("Stellar Signed Message:\n" ‖ message)`, which
+      // domain-separates a login signature from a transaction signature.
+      // A raw-UTF-8 signature (the pre-SEP-53 form) is rejected — mobile
+      // and server switch to SEP-53 together. Mirrors the mobile signer
+      // (mobile-app/.../stellar/sep53.ts).
       const keypair = Keypair.fromPublicKey(address);
-      const messageBytes = Buffer.from(message, "utf8");
-      const ok = keypair.verify(messageBytes, signatureBytes);
+      const ok = keypair.verify(sep53Digest(message), signatureBytes);
       if (!ok) return empty;
 
       const cached = await this.nonceCache.getNonce("stellar", address);
       if (!cached || cached.nonce !== nonce) {
+        return empty;
+      }
+      // Bind the signed `Chain ID` to the network the challenge was issued
+      // for, so a signature over a testnet message can't satisfy a mainnet
+      // login. Skipped when the nonce predates this binding (legacy).
+      if (cached.chainId && cached.chainId !== chainId) {
+        this.logger.warn(
+          `SIWS-Stellar chainId mismatch: message=${chainId} bound=${cached.chainId}`,
+        );
         return empty;
       }
       await this.nonceCache.deleteNonce("stellar", address);

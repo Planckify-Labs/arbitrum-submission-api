@@ -164,6 +164,15 @@ export class SiwsSuiService {
       if (!cached || cached.nonce !== nonce) {
         return empty;
       }
+      // Bind the signed `Chain ID` to the network the challenge was issued
+      // for, so a signature over a testnet message can't satisfy a mainnet
+      // login. Skipped when the nonce predates this binding (legacy).
+      if (cached.chainId && cached.chainId !== chainId) {
+        this.logger.warn(
+          `SIWS-Sui chainId mismatch: message=${chainId} bound=${cached.chainId}`,
+        );
+        return empty;
+      }
       await this.nonceCache.deleteNonce("sui", address);
 
       return {

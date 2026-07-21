@@ -7,6 +7,15 @@ export type AddressNamespace = "eip155" | "solana" | "sui" | "stellar";
 interface NonceData {
   nonce: string;
   expires: number;
+  /**
+   * The chain/cluster the challenge was issued for (the value that lands
+   * in the signed message's `Chain ID` field — e.g. "mainnet"/"testnet"/
+   * "devnet"). Bound at issuance and compared on verify so a signature
+   * over a message for one network can't satisfy a login for another.
+   * Optional for backward compatibility with nonces issued before this
+   * field existed (the verifier skips the check when it's absent).
+   */
+  chainId?: string;
 }
 
 @Injectable()
@@ -36,6 +45,7 @@ export class NonceCacheService {
     namespaceOrAddress: AddressNamespace | string,
     addressOrNonce: string,
     maybeNonce?: string,
+    chainId?: string,
   ): Promise<void> {
     const { namespace, address, nonce } = this.resolveArgs(
       namespaceOrAddress,
@@ -47,6 +57,7 @@ export class NonceCacheService {
     const nonceData: NonceData = {
       nonce,
       expires: Date.now() + ttlSeconds * 1000,
+      ...(chainId ? { chainId } : {}),
     };
 
     await this.valkeyService.set(key, JSON.stringify(nonceData), {
