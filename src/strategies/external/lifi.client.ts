@@ -6,6 +6,7 @@ import {
   getStatus,
   type LiFiStep,
   type StatusResponse,
+  type Token,
 } from "@lifi/sdk";
 import { DefiError } from "../errors/defi-error";
 
@@ -28,9 +29,69 @@ export interface LifiTransactionRequest {
 }
 
 /**
- * Slim quote shape the mobile executor consumes. The full
- * `LiFiStep` carries far more (tool, action, estimate, includedSteps)
- * than the mobile bridge submission needs.
+ * Token metadata carried alongside every amount.
+ *
+ * `decimals` exists because we used to return `toAmount` WITHOUT it, so
+ * every call site formatted by guesswork (spec §6). That is not
+ * theoretical: Stellar USDC is 7 decimals while USDC everywhere else is
+ * 6, so a shared `USDC_DECIMALS = 6` constant would misprice every
+ * Stellar amount by 10x.
+ */
+export interface LifiQuoteToken {
+  address: string;
+  symbol: string;
+  name?: string;
+  decimals: number;
+  priceUSD?: string;
+  logoURI?: string;
+  chainId: number;
+}
+
+/** One itemised fee line. See `included` — it is the load-bearing field. */
+export interface LifiQuoteFee {
+  name: string;
+  description?: string;
+  amount: string;
+  amountUSD?: string;
+  token: LifiQuoteToken;
+  /**
+   * Whether the fee is ALREADY deducted from the output or charged on
+   * top. Ignoring it means we either double-count or under-report fees
+   * (spec §6).
+   */
+  included: boolean;
+}
+
+export interface LifiQuoteGasCost {
+  type: string;
+  amount: string;
+  amountUSD?: string;
+  token: LifiQuoteToken;
+}
+
+export interface LifiQuoteStep {
+  tool: string;
+  toolName?: string;
+  toolLogoURI?: string;
+  fromToken: LifiQuoteToken;
+  toToken: LifiQuoteToken;
+  fromAmount: string;
+  toAmount: string;
+}
+
+/**
+ * Quote shape the mobile executor consumes.
+ *
+ * Spec §6 (phase 0). This used to keep 8 fields and discard everything a
+ * bridge confirmation must show. Widening is PURELY ADDITIVE — every
+ * previously-present field keeps its name, position, and meaning — so the
+ * shipped `defi_cross_chain_deposit` path is unaffected while gaining the
+ * disclosure numbers §7 requires.
+ *
+ * The two urgent additions:
+ *   - `toAmountMin` is the worst-case guarantee. Without it there is no
+ *     protection number on screen at all.
+ *   - `feeCosts[].included` (above) decides whether fees add or subtract.
  */
 export interface LifiQuote {
   transactionRequest: LifiTransactionRequest;
@@ -41,9 +102,23 @@ export interface LifiQuote {
     fromAmountUSD?: string;
     toAmountUSD?: string;
     approvalAddress?: string;
+    /** Worst-case output the user is guaranteed. */
+    toAmountMin?: string;
+    feeCosts?: LifiQuoteFee[];
+    gasCosts?: LifiQuoteGasCost[];
   };
   tool: string;
   toolName?: string;
+  /** Bridge logo, for the "who am I trusting" disclosure (§7.3). */
+  toolLogoURI?: string;
+  /** Slippage tolerance actually applied, as a visible number (§7.2). */
+  slippage?: number;
+  fromToken?: LifiQuoteToken;
+  toToken?: LifiQuoteToken;
+  /** Destination address the route will credit (§7.4). */
+  toAddress?: string;
+  /** Route breakdown when the transfer is multi-step (§7.3). */
+  includedSteps?: LifiQuoteStep[];
 }
 
 function stringifyBigIntish(
@@ -51,6 +126,23 @@ function stringifyBigIntish(
 ): string | undefined {
   if (v === undefined || v === null) return undefined;
   return typeof v === "string" ? v : String(v);
+}
+
+/**
+ * Map a LI.FI `Token` onto the wire shape, carrying `decimals` through.
+ * Sourcing decimals per token (rather than assuming) is the whole point
+ * of the §6 widening.
+ */
+function toQuoteToken(token: Token): LifiQuoteToken {
+  return {
+    address: token.address,
+    symbol: token.symbol,
+    name: token.name,
+    decimals: token.decimals,
+    priceUSD: token.priceUSD,
+    logoURI: token.logoURI,
+    chainId: token.chainId,
+  };
 }
 
 @Injectable()
@@ -150,9 +242,43 @@ export class LifiClient {
         fromAmountUSD: estimate.fromAmountUSD,
         toAmountUSD: estimate.toAmountUSD,
         approvalAddress: estimate.approvalAddress,
+        toAmountMin: estimate.toAmountMin,
+        feeCosts: (estimate.feeCosts ?? []).map((fee) => ({
+          name: fee.name,
+          description: fee.description,
+          amount: fee.amount,
+          amountUSD: fee.amountUSD,
+          token: toQuoteToken(fee.token),
+          // Never defaulted to `true` — an unknown `included` that we
+          // guessed as "already deducted" would silently under-report the
+          // real cost (§6).
+          included: fee.included === true,
+        })),
+        gasCosts: (estimate.gasCosts ?? []).map((gas) => ({
+          type: gas.type,
+          amount: gas.amount,
+          amountUSD: gas.amountUSD,
+          token: toQuoteToken(gas.token),
+        })),
       },
       tool: step.tool,
       toolName: step.toolDetails?.name,
+      toolLogoURI: step.toolDetails?.logoURI,
+      slippage: step.action?.slippage,
+      fromToken: step.action?.fromToken
+        ? toQuoteToken(step.action.fromToken)
+        : undefined,
+      toToken: step.action?.toToken ? toQuoteToken(step.action.toToken) : undefined,
+      toAddress: step.action?.toAddress,
+      includedSteps: (step.includedSteps ?? []).map((inc) => ({
+        tool: inc.tool,
+        toolName: inc.toolDetails?.name,
+        toolLogoURI: inc.toolDetails?.logoURI,
+        fromToken: toQuoteToken(inc.action.fromToken),
+        toToken: toQuoteToken(inc.action.toToken),
+        fromAmount: inc.action.fromAmount,
+        toAmount: inc.estimate?.toAmount ?? "0",
+      })),
     };
 
     this.logger.log(
