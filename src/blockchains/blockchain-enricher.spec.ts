@@ -84,8 +84,61 @@ describe("blockchain-enricher", () => {
       expect(buildCaip2Id(arcRow)).toBe("eip155:5042002");
     });
 
-    it("returns null for non-EVM rows", () => {
+    it("returns null for non-EVM rows with no chainSlug", () => {
       expect(buildCaip2Id({ ...bareRow, type: "SVM" })).toBeNull();
+    });
+
+    // Solana's CAIP-2 reference is the truncated cluster genesis hash, NOT
+    // the RPC cluster name "mainnet-beta" — this must match the genesis
+    // hash `bridge/providers/lifi.mapping.ts`'s `NON_EVM_CAIP2_BY_LIFI_ID`
+    // table uses, or an exact-match lookup against a live bridge quote's
+    // `chain` field (e.g. the mobile bridge card's destination-chain icon)
+    // silently fails. Regression coverage for that bug.
+    it("returns the genesis-hash CAIP-2 reference for solana-mainnet", () => {
+      expect(
+        buildCaip2Id({ ...bareRow, type: "SVM", chainSlug: "solana-mainnet" }),
+      ).toBe("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp");
+    });
+
+    it("returns the genesis-hash CAIP-2 reference for solana-devnet", () => {
+      expect(
+        buildCaip2Id({ ...bareRow, type: "SVM", chainSlug: "solana-devnet" }),
+      ).toBe("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1");
+    });
+
+    it("falls back to the literal cluster name for an unrecognised solana cluster", () => {
+      expect(
+        buildCaip2Id({ ...bareRow, type: "SVM", chainSlug: "solana-testnet" }),
+      ).toBe("solana:testnet");
+    });
+
+    it("returns sui:<cluster> for sui rows, unaffected by the solana fix", () => {
+      expect(
+        buildCaip2Id({ ...bareRow, type: "MOVE_VM", chainSlug: "sui-mainnet" }),
+      ).toBe("sui:mainnet");
+    });
+
+    // Stellar's CAIP-28 reference is `pubnet`, not `mainnet` — and Stellar
+    // rows used to fall through to `null` entirely, so no lookup keyed on
+    // caip2Id could ever resolve a Stellar chain.
+    it("maps stellar-mainnet to the pubnet CAIP-2 reference", () => {
+      expect(
+        buildCaip2Id({
+          ...bareRow,
+          type: "STELLAR",
+          chainSlug: "stellar-mainnet",
+        }),
+      ).toBe("stellar:pubnet");
+    });
+
+    it("maps stellar-testnet verbatim", () => {
+      expect(
+        buildCaip2Id({
+          ...bareRow,
+          type: "STELLAR",
+          chainSlug: "stellar-testnet",
+        }),
+      ).toBe("stellar:testnet");
     });
   });
 

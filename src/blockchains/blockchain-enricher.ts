@@ -83,23 +83,58 @@ export function buildCaip2Id(row: TBlockchainRow): string | null {
   }
   // Non-EVM rows are keyed by `chainSlug` (e.g. `sui-mainnet`,
   // `solana-devnet`). Translate to CAIP-2:
-  //   `sui-mainnet`    → `sui:mainnet`
-  //   `sui-testnet`    → `sui:testnet`
-  //   `sui-devnet`     → `sui:devnet`
-  //   `solana-mainnet` → `solana:mainnet-beta`  (Solana CAIP-2 uses
-  //                                             "mainnet-beta")
-  //   `solana-devnet`  → `solana:devnet`
+  //   `sui-mainnet`     → `sui:mainnet`
+  //   `sui-testnet`     → `sui:testnet`
+  //   `sui-devnet`      → `sui:devnet`
+  //   `solana-mainnet`  → `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`
+  //   `solana-devnet`   → `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1`
+  //   `stellar-mainnet` → `stellar:pubnet`
+  //   `stellar-testnet` → `stellar:testnet`
+  //
+  // The slug is NOT the CAIP-2 reference for every family, so only Sui can
+  // pass its cluster through verbatim:
+  //
+  //   - Solana's reference is the truncated cluster GENESIS HASH, not the
+  //     RPC cluster name. This file used to emit `solana:mainnet-beta`,
+  //     which is a real Solana identifier (the JSON-RPC cluster name, used
+  //     correctly elsewhere e.g. `pay/intents.service.ts`) but not a valid
+  //     CAIP-2 chain reference.
+  //   - Stellar's (CAIP-28) reference is `pubnet`/`testnet`, not
+  //     `mainnet` — see `bridge/providers/cctp-stellar.adapter.ts`. Stellar
+  //     rows previously fell through to `null` entirely.
+  //
+  // Either mismatch silently breaks any exact-match lookup against
+  // `TBlockchain.caip2Id` (e.g. the mobile bridge card's chain icons),
+  // because the bridge pipeline emits the canonical forms
+  // (`bridge/providers/lifi.mapping.ts`'s `NON_EVM_CAIP2_BY_LIFI_ID`,
+  // `cctp-stellar.adapter.ts`) and so does mobile's `CHAIN_NAMES` table.
+  // Keep these tables in sync with those if a cluster is added.
   if (typeof row.chainSlug === "string") {
     if (row.chainSlug.startsWith("sui-")) {
       return `sui:${row.chainSlug.slice("sui-".length)}`;
     }
     if (row.chainSlug.startsWith("solana-")) {
       const cluster = row.chainSlug.slice("solana-".length);
-      return cluster === "mainnet" ? "solana:mainnet-beta" : `solana:${cluster}`;
+      return `solana:${SOLANA_CAIP2_REFERENCE_BY_CLUSTER[cluster] ?? cluster}`;
+    }
+    if (row.chainSlug.startsWith("stellar-")) {
+      const network = row.chainSlug.slice("stellar-".length);
+      return `stellar:${STELLAR_CAIP2_REFERENCE_BY_NETWORK[network] ?? network}`;
     }
   }
   return null;
 }
+
+/** Truncated cluster genesis hashes — Solana's CAIP-2 chain references. */
+const SOLANA_CAIP2_REFERENCE_BY_CLUSTER: Record<string, string> = {
+  mainnet: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+  devnet: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+};
+
+/** Stellar (CAIP-28) calls its mainnet `pubnet`; `testnet` matches verbatim. */
+const STELLAR_CAIP2_REFERENCE_BY_NETWORK: Record<string, string> = {
+  mainnet: "pubnet",
+};
 
 export function buildGateway(
   row: TBlockchainRow,
