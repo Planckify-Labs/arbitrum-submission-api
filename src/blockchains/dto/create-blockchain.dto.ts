@@ -1,5 +1,13 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsString, IsInt, IsBoolean, IsUrl, IsOptional, IsIn } from "class-validator";
+import {
+  IsString,
+  IsInt,
+  IsBoolean,
+  IsUrl,
+  IsOptional,
+  IsIn,
+  Matches,
+} from "class-validator";
 import { CHAIN_FAMILIES, type ChainFamily } from "../chain-family";
 
 export class CreateBlockchainDto {
@@ -26,10 +34,17 @@ export class CreateBlockchainDto {
   chainId: number;
 
   @ApiProperty({
-    description: "The RPC URL for the blockchain",
-    example: "https://mainnet.infura.io/v3/your-api-key",
+    description:
+      "RPC endpoint for the blockchain. Normally an rpc-proxy route " +
+      '("/evm/1", "/solana/mainnet"), which is resolved against RPC_PROXY_URL ' +
+      "on read — keeping provider credentials out of the database. An absolute " +
+      "URL is still accepted and is passed through to that upstream directly.",
+    example: "/evm/1",
   })
-  @IsUrl()
+  @Matches(/^(\/[\w.-]+\/[\w.-]+.*|https?:\/\/.+)$/, {
+    message:
+      'rpcUrl must be an rpc-proxy route like "/evm/1" or an absolute http(s) URL',
+  })
   rpcUrl: string;
 
   @ApiProperty({

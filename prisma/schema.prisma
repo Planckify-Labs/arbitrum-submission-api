@@ -242,6 +242,13 @@ model Blockchain {
   name              String             @unique
   chainId           Int?               @unique
   chainSlug         String?            @unique
+  // An rpc-proxy route ("/evm/1", "/solana/mainnet"), NOT an absolute URL.
+  // Resolved against RPC_PROXY_URL on read by
+  // src/blockchains/rpc-endpoint.ts, so the proxy origin and its bearer token
+  // stay in env: rotating either is a redeploy, never a re-seed, and no
+  // upstream provider credential is stored here or served from the @Public()
+  // GET /blockchains response. Absolute URLs are still honoured (passed
+  // through unauthenticated) for rows predating the proxy cutover.
   rpcUrl            String
   blockExplorer     String
   // Chain family — "EVM" | "SVM" | "MOVE_VM" | "STELLAR" (see
@@ -297,8 +304,10 @@ model Blockchain {
   // Solana-specific fields (Solana contract integration)
   solanaCluster String?
 
-  // NOTE: on Stellar rows, `rpcUrl` holds the Soroban RPC endpoint (what
+  // NOTE: on Stellar rows, `rpcUrl` routes to the Soroban RPC endpoint (what
   // this API actually calls for contract reads/simulation) — not Horizon.
+  // Which upstream `/stellar/<network>` resolves to is rpc-proxy's decision
+  // now (see rpc-proxy/src/db/seed.ts), not this column's.
   // A prior version of this model had a separate `stellarSorobanRpcUrl`
   // column reasoned from "the mobile wallet already expects `rpcUrl` to be
   // Horizon" (mobile-app/docs/stellar-chain-support-spec.md §3.8); removed

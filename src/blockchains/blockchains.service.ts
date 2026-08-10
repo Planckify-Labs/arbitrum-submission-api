@@ -12,6 +12,7 @@ import {
   enrichBlockchain,
   type TBlockchainRow,
 } from "./blockchain-enricher";
+import { resolveRpcUrl, withResolvedRpcUrl } from "./rpc-endpoint";
 import type { EnrichedBlockchainResponseDto } from "./dto/enriched-blockchain-response.dto";
 import { createHash } from "node:crypto";
 
@@ -53,7 +54,7 @@ export class BlockchainsService {
   async findAll(paginationDto: CursorPaginationDto) {
     const { cursor, take = 10 } = paginationDto;
 
-    return this.blockchainCache.getAllBlockchains(cursor, () =>
+    const rows = await this.blockchainCache.getAllBlockchains(cursor, () =>
       this.prisma.blockchain.findMany({
         take,
         skip: cursor ? 1 : 0,
@@ -70,6 +71,10 @@ export class BlockchainsService {
         },
       }),
     );
+
+    // Resolved outside the cache-aside closure so cached rows keep the bare
+    // route and an RPC_PROXY_URL change needs no flush.
+    return rows.map(withResolvedRpcUrl);
   }
 
   /**
@@ -88,7 +93,7 @@ export class BlockchainsService {
    *   max(updatedAt) + x402-refresh-timestamp so a chain-row edit or a fresh
    *   Circle x402 refresh both bust 304s cleanly.
    */
-  getEnrichedConfig(
+  async getEnrichedConfig(
     country?: string,
   ): Promise<EnrichedResponsePayload> {
     const countrySegment = country ? country.toUpperCase() : "all";
@@ -96,10 +101,45 @@ export class BlockchainsService {
     // Cache-aside at 5 min. Invalidation happens on update/delete via
     // `blockchainCache.invalidateBlockchain` (pattern `blockchains:*`), which
     // already wipes this key.
-    return this.blockchainCache.getEnrichedConfig<EnrichedResponsePayload>(
-      countrySegment,
-      async () => this.buildEnrichedConfig(country),
-    );
+    const cached =
+      await this.blockchainCache.getEnrichedConfig<EnrichedResponsePayload>(
+        countrySegment,
+        async () => this.buildEnrichedConfig(country),
+      );
+
+    // What sits in Valkey mirrors the DB — `rpcUrl` is still a bare route. The
+    // proxy origin is stitched on here, outside the cache, so redeploying with a
+    // different RPC_PROXY_URL is picked up immediately instead of waiting out
+    // the TTL or needing a manual flush.
+    return this.applyRpcOrigin(cached);
+  }
+
+  /**
+   * Turns each cached route into an absolute URL and folds the origin into the
+   * ETag.
+   *
+   * The ETag part is not optional: `computeEtag` hashes DB state only, so two
+   * different `RPC_PROXY_URL` values would otherwise produce byte-different
+   * bodies under the *same* ETag — and any client holding the old one would get
+   * a `304` and keep calling the old host forever.
+   */
+  private applyRpcOrigin(
+    payload: EnrichedResponsePayload,
+  ): EnrichedResponsePayload {
+    const origin = process.env.RPC_PROXY_URL?.trim() ?? "";
+    return {
+      blockchains: payload.blockchains.map((b) => ({
+        ...b,
+        rpcUrl: resolveRpcUrl(b.rpcUrl),
+      })),
+      // Keep `computeEtag`'s weak-ETag format — the controller emits this
+      // verbatim and compares it against `If-None-Match`, so the W/"..." wrapper
+      // has to survive.
+      etag: `W/"${createHash("sha256")
+        .update(`${payload.etag}:${origin}`)
+        .digest("hex")
+        .slice(0, 32)}"`,
+    };
   }
 
   /**
@@ -246,7 +286,7 @@ export class BlockchainsService {
       this.prisma.blockchain.count({ where }),
     ]);
 
-    return { items, total };
+    return { items: items.map(withResolvedRpcUrl), total };
   }
 
   async findOne(id: string) {
@@ -267,7 +307,7 @@ export class BlockchainsService {
       throw new NotFoundException(`Blockchain with ID "${id}" not found`);
     }
 
-    return blockchain;
+    return withResolvedRpcUrl(blockchain);
   }
 
   async update(id: string, updateBlockchainDto: UpdateBlockchainDto) {

@@ -26,6 +26,7 @@ import type {
   MerchantQuoteParams,
 } from "./stellar/takumi-pay/types";
 import type { TTransactionVerificationResult } from "./types/blockchain-verification.types";
+import { resolveRpcEndpoint } from "../blockchains/rpc-endpoint";
 
 /** Stable machine key in SmartContract.name — see blockchain-verification.service.ts's own copy of this constant. */
 const TAKUMI_PAY_CONTRACT_NAME = "takumi_pay";
@@ -126,8 +127,16 @@ export class StellarVerificationService implements OnModuleInit {
 
     for (const chain of chains) {
       // Soroban RPC endpoint — `rpcUrl` on Stellar rows, not a dedicated
-      // column (see the schema comment on `Blockchain.type`).
-      const server = new SorobanServer(chain.rpcUrl);
+      // column (see the schema comment on `Blockchain.type`). Stored as an
+      // rpc-proxy route, so resolve it and carry the proxy bearer.
+      const rpc = resolveRpcEndpoint(chain.rpcUrl);
+      const server = new SorobanServer(rpc.url, {
+        headers: rpc.headers,
+        // SorobanServer refuses plain HTTP unless opted in, and a local
+        // rpc-proxy is http://localhost:8787. Derived from the URL rather than
+        // hardcoded so production (https) stays strict.
+        allowHttp: rpc.url.startsWith("http://"),
+      });
       const networkPassphrase = chain.isTestnet ? Networks.TESTNET : Networks.PUBLIC;
 
       // `takumi_pay`'s contract address lives in SmartContract (name:

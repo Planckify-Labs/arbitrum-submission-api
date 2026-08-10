@@ -259,6 +259,10 @@ export function enrichBlockchain(
     chainId: row.chainId,
     chainSlug: row.chainSlug ?? null,
     caip2Id: buildCaip2Id(row),
+    // Left as the raw rpc-proxy route on purpose. Resolving to an absolute URL
+    // happens at the response boundary (`BlockchainsService.applyRpcOrigin`),
+    // *after* the Valkey read — so the cached payload mirrors the DB exactly and
+    // changing RPC_PROXY_URL takes effect without flushing the cache.
     rpcUrl: row.rpcUrl,
     blockExplorer: row.blockExplorer,
     isEVM: row.type === "EVM",

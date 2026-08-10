@@ -21,6 +21,7 @@ import type {
   MerchantQuoteParams,
 } from "./solana/takumi-pay/types";
 import type { TTransactionVerificationResult } from "./types/blockchain-verification.types";
+import { resolveRpcEndpoint } from "../blockchains/rpc-endpoint";
 import * as nacl from "tweetnacl";
 
 interface SolanaClient {
@@ -75,7 +76,13 @@ export class SolanaVerificationService implements OnModuleInit {
     }
 
     for (const chain of chains) {
-      const connection = new Connection(chain.rpcUrl, "confirmed");
+      // `rpcUrl` is an rpc-proxy route; resolve to an absolute URL and pass the
+      // proxy bearer through (`httpHeaders` is {} when the proxy has no auth).
+      const rpc = resolveRpcEndpoint(chain.rpcUrl);
+      const connection = new Connection(rpc.url, {
+        commitment: "confirmed",
+        httpHeaders: rpc.headers,
+      });
       const dummyWallet = {
         publicKey: PublicKey.default,
         signTransaction: <T>(tx: T) => Promise.resolve(tx),

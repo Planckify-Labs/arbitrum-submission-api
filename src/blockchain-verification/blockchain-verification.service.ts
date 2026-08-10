@@ -22,6 +22,7 @@ import {
 } from "./types/blockchain-verification.types";
 import { VerifyContractTransactionDto } from "./dto/verify-contract-transaction.dto";
 import { getBlockchainConfig } from "../config/app.config";
+import { resolveRpcEndpoint } from "../blockchains/rpc-endpoint";
 import { SolanaVerificationService } from "./solana-verification.service";
 import { computeRefIdHash } from "./solana/takumi-pay/ref-id-hash";
 import { StellarVerificationService } from "./stellar-verification.service";
@@ -87,6 +88,10 @@ export class BlockchainVerificationService {
             continue;
           }
 
+          // `rpcUrl` is an rpc-proxy route; resolve to an absolute URL and pick
+          // up the proxy bearer (empty when the proxy runs without auth).
+          const rpc = resolveRpcEndpoint(blockchain.rpcUrl);
+
           const dynamicChain: Chain = {
             id: blockchain.chainId,
             name: blockchain.name,
@@ -97,10 +102,10 @@ export class BlockchainVerificationService {
             },
             rpcUrls: {
               default: {
-                http: [blockchain.rpcUrl],
+                http: [rpc.url],
               },
               public: {
-                http: [blockchain.rpcUrl],
+                http: [rpc.url],
               },
             },
             blockExplorers: blockchain.blockExplorer
@@ -116,7 +121,7 @@ export class BlockchainVerificationService {
 
           const client = createPublicClient({
             chain: dynamicChain,
-            transport: http(blockchain.rpcUrl),
+            transport: http(rpc.url, { fetchOptions: { headers: rpc.headers } }),
           }) as PublicClient;
 
           this.clients.set(blockchain.chainId, client);

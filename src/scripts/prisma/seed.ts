@@ -686,12 +686,12 @@ async function main() {
     prisma.blockchain.upsert({
       where: { chainId: 1 },
       update: {
-        rpcUrl: "https://eth-mainnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        rpcUrl: "/evm/1",
       },
       create: {
         name: "Ethereum",
         chainId: 1,
-        rpcUrl: "https://eth-mainnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        rpcUrl: "/evm/1",
         blockExplorer: "https://etherscan.io",
         type: "EVM",
         isActive: true,
@@ -701,14 +701,12 @@ async function main() {
     prisma.blockchain.upsert({
       where: { chainId: 137 },
       update: {
-        rpcUrl:
-          "https://polygon-mainnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        rpcUrl: "/evm/137",
       },
       create: {
         name: "Polygon",
         chainId: 137,
-        rpcUrl:
-          "https://polygon-mainnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        rpcUrl: "/evm/137",
         blockExplorer: "https://polygonscan.com",
         type: "EVM",
         isActive: true,
@@ -718,13 +716,13 @@ async function main() {
     prisma.blockchain.upsert({
       where: { chainId: 11155111 },
       update: {
-        rpcUrl: "https://eth-sepolia.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        rpcUrl: "/evm/11155111",
         blockExplorer: "https://sepolia.etherscan.io",
       },
       create: {
         name: "Ethereum Sepolia",
         chainId: 11155111,
-        rpcUrl: "https://eth-sepolia.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        rpcUrl: "/evm/11155111",
         blockExplorer: "https://sepolia.etherscan.io",
         type: "EVM",
         isActive: true,
@@ -734,12 +732,12 @@ async function main() {
     prisma.blockchain.upsert({
       where: { chainId: 84532 },
       update: {
-        rpcUrl: "https://base-sepolia.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        rpcUrl: "/evm/84532",
       },
       create: {
         name: "Base",
         chainId: 84532,
-        rpcUrl: "https://base-sepolia.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        rpcUrl: "/evm/84532",
         blockExplorer: "https://sepolia.basescan.org",
         type: "EVM",
         isActive: true,
@@ -749,12 +747,12 @@ async function main() {
     prisma.blockchain.upsert({
       where: { chainId: 4202 },
       update: {
-        rpcUrl: "https://rpc.sepolia-api.lisk.com",
+        rpcUrl: "/evm/4202",
       },
       create: {
         name: "Lisk",
         chainId: 4202,
-        rpcUrl: "https://rpc.sepolia-api.lisk.com",
+        rpcUrl: "/evm/4202",
         blockExplorer: "https://sepolia-blockscout.lisk.com",
         type: "EVM",
         isActive: true,
@@ -764,12 +762,12 @@ async function main() {
     prisma.blockchain.upsert({
       where: { chainId: 421614 },
       update: {
-        rpcUrl: "https://arb-sepolia.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        rpcUrl: "/evm/421614",
       },
       create: {
         name: "Arbitrum Sepolia",
         chainId: 421614,
-        rpcUrl: "https://arb-sepolia.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        rpcUrl: "/evm/421614",
         blockExplorer: "https://sepolia.arbiscan.io",
         type: "EVM",
         isActive: true,
@@ -779,12 +777,12 @@ async function main() {
     prisma.blockchain.upsert({
       where: { chainId: 17000 },
       update: {
-        rpcUrl: "https://eth-holesky.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        rpcUrl: "/evm/17000",
       },
       create: {
         name: "Ethereum Holesky",
         chainId: 17000,
-        rpcUrl: "https://eth-holesky.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        rpcUrl: "/evm/17000",
         blockExplorer: "https://holesky.etherscan.io",
         type: "EVM",
         isActive: true,
@@ -794,12 +792,12 @@ async function main() {
     prisma.blockchain.upsert({
       where: { chainId: 42161 },
       update: {
-        rpcUrl: "https://arb-mainnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        rpcUrl: "/evm/42161",
       },
       create: {
         name: "Arbitrum",
         chainId: 42161,
-        rpcUrl: "https://arb-mainnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        rpcUrl: "/evm/42161",
         blockExplorer: "https://arbiscan.io",
         type: "EVM",
         isActive: true,
@@ -812,13 +810,13 @@ async function main() {
     prisma.blockchain.upsert({
       where: { chainSlug: "solana-mainnet" },
       update: {
-        rpcUrl: "https://solana-mainnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        rpcUrl: "/solana/mainnet",
         solanaCluster: "mainnet-beta",
       },
       create: {
         name: "Solana",
         chainSlug: "solana-mainnet",
-        rpcUrl: "https://solana-mainnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        rpcUrl: "/solana/mainnet",
         blockExplorer: "https://explorer.solana.com",
         type: "SVM",
         isActive: true,
@@ -829,13 +827,13 @@ async function main() {
     prisma.blockchain.upsert({
       where: { chainSlug: "solana-devnet" },
       update: {
-        rpcUrl: "https://solana-devnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        rpcUrl: "/solana/devnet",
         solanaCluster: "devnet",
       },
       create: {
         name: "Solana Devnet",
         chainSlug: "solana-devnet",
-        rpcUrl: "https://solana-devnet.g.alchemy.com/v2/Xaofr5_-tu8arlXRJTqqX",
+        rpcUrl: "/solana/devnet",
         blockExplorer: "https://explorer.solana.com?cluster=devnet",
         type: "SVM",
         isActive: true,
@@ -855,7 +853,7 @@ async function main() {
     prisma.blockchain.upsert({
       where: { chainId: 5042002 },
       update: {
-        rpcUrl: "https://rpc.testnet.arc.network",
+        rpcUrl: "/evm/5042002",
         blockExplorer: "https://testnet.arcscan.app",
         // Keep x402 metadata in sync on re-seed so drift between envs always
         // converges to the values below (§7.1). Gateway wallet/minter
@@ -876,7 +874,7 @@ async function main() {
       create: {
         name: "Arc Testnet",
         chainId: 5042002,
-        rpcUrl: "https://rpc.testnet.arc.network",
+        rpcUrl: "/evm/5042002",
         blockExplorer: "https://testnet.arcscan.app",
         type: "EVM",
         isActive: true,
@@ -898,13 +896,13 @@ async function main() {
     prisma.blockchain.upsert({
       where: { chainId: 143 },
       update: {
-        rpcUrl: "https://rpc.monad.xyz",
+        rpcUrl: "/evm/143",
         blockExplorer: "https://monadvision.com",
       },
       create: {
         name: "Monad",
         chainId: 143,
-        rpcUrl: "https://rpc.monad.xyz",
+        rpcUrl: "/evm/143",
         blockExplorer: "https://monadvision.com",
         type: "EVM",
         isActive: true,
@@ -918,13 +916,13 @@ async function main() {
     prisma.blockchain.upsert({
       where: { chainSlug: "sui-mainnet" },
       update: {
-        rpcUrl: "https://fullnode.mainnet.sui.io:443",
+        rpcUrl: "/sui/mainnet",
         blockExplorer: "https://suivision.xyz",
       },
       create: {
         name: "Sui",
         chainSlug: "sui-mainnet",
-        rpcUrl: "https://fullnode.mainnet.sui.io:443",
+        rpcUrl: "/sui/mainnet",
         blockExplorer: "https://suivision.xyz",
         type: "MOVE_VM",
         isActive: true,
@@ -935,13 +933,13 @@ async function main() {
     prisma.blockchain.upsert({
       where: { chainSlug: "sui-testnet" },
       update: {
-        rpcUrl: "https://fullnode.testnet.sui.io:443",
+        rpcUrl: "/sui/testnet",
         blockExplorer: "https://testnet.suivision.xyz",
       },
       create: {
         name: "Sui Testnet",
         chainSlug: "sui-testnet",
-        rpcUrl: "https://fullnode.testnet.sui.io:443",
+        rpcUrl: "/sui/testnet",
         blockExplorer: "https://testnet.suivision.xyz",
         type: "MOVE_VM",
         isActive: true,
@@ -951,20 +949,25 @@ async function main() {
     // Stellar mainnet (pubnet) — keyed by chainSlug (no EIP-155 chainId,
     // same posture as Solana/Sui). `rpcUrl` carries whatever endpoint this
     // API actually calls for this chain — on Stellar rows that's Soroban
-    // RPC, not Horizon (see `Blockchain.type`'s schema comment). Still
-    // Horizon here because there is no mainnet `takumi_pay` deployment yet
-    // and no verified public Soroban mainnet RPC URL has been chosen — swap
-    // this to the real Soroban RPC endpoint when that deployment happens,
-    // same as the testnet row below.
+    // RPC, not Horizon (see `Blockchain.type`'s schema comment). Which
+    // upstream `/stellar/mainnet` actually lands on is rpc-proxy's call now
+    // (it currently fronts Horizon, since no verified public Soroban mainnet
+    // RPC has been chosen and there is no mainnet `takumi_pay` deployment
+    // yet); retargeting it is a change over there, not here.
+    //
+    // `rpcUrl` is in `update` as well as `create` so pre-cutover rows holding
+    // an absolute URL actually converge on the route — the invariant the
+    // schema comment states.
     prisma.blockchain.upsert({
       where: { chainSlug: "stellar-mainnet" },
       update: {
+        rpcUrl: "/stellar/mainnet",
         blockExplorer: "https://stellar.expert/explorer/public",
       },
       create: {
         name: "Stellar",
         chainSlug: "stellar-mainnet",
-        rpcUrl: "https://horizon.stellar.org",
+        rpcUrl: "/stellar/mainnet",
         blockExplorer: "https://stellar.expert/explorer/public",
         type: "STELLAR",
         isActive: true,
@@ -979,13 +982,13 @@ async function main() {
     prisma.blockchain.upsert({
       where: { chainSlug: "stellar-testnet" },
       update: {
-        rpcUrl: "https://soroban-testnet.stellar.org",
+        rpcUrl: "/stellar/testnet",
         blockExplorer: "https://stellar.expert/explorer/testnet",
       },
       create: {
         name: "Stellar Testnet",
         chainSlug: "stellar-testnet",
-        rpcUrl: "https://soroban-testnet.stellar.org",
+        rpcUrl: "/stellar/testnet",
         blockExplorer: "https://stellar.expert/explorer/testnet",
         type: "STELLAR",
         isActive: true,
@@ -996,12 +999,12 @@ async function main() {
     prisma.blockchain.upsert({
       where: { chainId: 8453 },
       update: {
-        rpcUrl: "https://mainnet.base.org",
+        rpcUrl: "/evm/8453",
       },
       create: {
         name: "Base Mainnet",
         chainId: 8453,
-        rpcUrl: "https://mainnet.base.org",
+        rpcUrl: "/evm/8453",
         blockExplorer: "https://basescan.org",
         type: "EVM",
         isActive: true,
