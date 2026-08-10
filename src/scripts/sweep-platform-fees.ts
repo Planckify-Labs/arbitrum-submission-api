@@ -55,7 +55,7 @@ export async function main() {
   //
   // import { createWalletClient, http } from "viem";
   // import { privateKeyToAccount } from "viem/accounts";
-  // import { TakumiWalletMerchantAbi } from "../blockchain-verification/abis/takumi-wallet-merchant.abi";
+  // import { TakumiPayAbi } from "../blockchain-verification/abis/takumi-wallet-merchant.abi";
   //
   // const account = privateKeyToAccount(process.env.ADMIN_WALLET_PRIVATE_KEY as `0x${string}`);
   // const client = createWalletClient({ account, chain, transport: http(rpcUrl) });
@@ -63,7 +63,7 @@ export async function main() {
   // // Pre-flight: check accrued balance
   // const accrued = await readContract(client, {
   //   address: contractAddress,
-  //   abi: TakumiWalletMerchantAbi,
+  //   abi: TakumiPayAbi,
   //   functionName: "platformFeeAccrued",
   //   args: [token],
   // });
@@ -74,14 +74,14 @@ export async function main() {
   //
   // const hash = await client.writeContract({
   //   address: contractAddress,
-  //   abi: TakumiWalletMerchantAbi,
+  //   abi: TakumiPayAbi,
   //   functionName: "sweepPlatformFees",
   //   args: [token, recipient, BigInt(amount)],
   // });
   // console.log("Tx hash:", hash);
 
   console.log(
-    "To execute, implement the viem writeContract call with TakumiWalletMerchantAbi.",
+    "To execute, implement the viem writeContract call with TakumiPayAbi.",
   );
   console.log(
     "This script is a placeholder — wire up the actual contract call before use.",

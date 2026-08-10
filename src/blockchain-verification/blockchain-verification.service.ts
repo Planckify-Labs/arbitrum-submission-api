@@ -13,8 +13,7 @@ import { ConfigService } from "@nestjs/config";
 import { PublicKey } from "@solana/web3.js";
 import { PrismaService } from "../prisma/prisma.service";
 import { addressesEqual } from "../auth/address-compare";
-import { TakumiWalletAbi } from "./abis/takumi-wallet.abi";
-import { TakumiWalletMerchantAbi } from "./abis/takumi-wallet-merchant.abi";
+import { TakumiPayAbi } from "./abis/takumi-pay.abi";
 import {
   TTakumiWalletTransaction,
   TTransactionVerificationResult,
@@ -498,7 +497,7 @@ export class BlockchainVerificationService {
       const client = this.getClient(trxData.chainId);
       const contractTransaction = await readContract(client, {
         address: trxData.contractAddress as `0x${string}`,
-        abi: TakumiWalletAbi,
+        abi: TakumiPayAbi,
         functionName: "getTransactionByRef",
         args: [trxData.refId],
       });
@@ -681,7 +680,7 @@ export class BlockchainVerificationService {
       const client = this.getClient(args.chainId);
       const payment = await readContract(client, {
         address: args.contractAddress as `0x${string}`,
-        abi: TakumiWalletMerchantAbi,
+        abi: TakumiPayAbi,
         functionName: "getMerchantPaymentByRef",
         args: [args.refId],
       });
@@ -851,7 +850,7 @@ export class BlockchainVerificationService {
 
       const contractTx = await readContract(client, {
         address: contractAddress as `0x${string}`,
-        abi: TakumiWalletAbi,
+        abi: TakumiPayAbi,
         functionName: "getPointDepositByRef",
         args: [refId],
       });

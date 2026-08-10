@@ -19,7 +19,7 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import type { Hash } from "viem";
+import { type Hash, type Hex, stringToHex } from "viem";
 import { BlockchainVerificationService } from "../blockchain-verification/blockchain-verification.service";
 import { StellarVerificationService } from "../blockchain-verification/stellar-verification.service";
 import * as nacl from "tweetnacl";
@@ -50,6 +50,8 @@ import type {
   NanopayPayloadResponseDto,
   PaymentIntentResponseDto,
 } from "./dto/payment-intent-response.dto";
+import type { QuoteCommitmentResponseDto } from "./dto/quote-commitment-response.dto";
+import { QuoteSignerService } from "./quote-signer.service";
 
 /**
  * Soft-linked payout provider contract (spec §6.4 "Pluggable payout
@@ -235,6 +237,9 @@ export class IntentsService {
     private readonly circleSettleSvm: ICircleSettleSvmClient | null = null,
     private readonly qrSigning: QrSigningService,
     private readonly transactionsService: TransactionsService,
+    @Optional()
+    @Inject(QuoteSignerService)
+    private readonly quoteSigner: QuoteSignerService | null = null,
   ) {
     const raw = this.config.get<string>("SOLANA_QUOTE_SIGNER_PRIVATE_KEY");
     if (raw) {
@@ -621,6 +626,117 @@ export class IntentsService {
     };
   }
 
+  /**
+   * Builds + signs the EVM `QuoteCommitment` that `processMerchantPayment`
+   * verifies on-chain, returning both the wire shape and the signature.
+   *
+   * Called from BOTH `createOnchainIntent` and `getIntent`, and must stay a
+   * single implementation. The mobile client polls `GET /pay/intents/:id`
+   * every 3s and overwrites its local copy with the response, so a poll that
+   * omitted these fields would erase the create response's quote and make
+   * `pay-merchant.tsx` throw `MISSING_QUOTE` the moment the user confirms —
+   * the exact trap the Stellar block documents. Re-deriving on read is safe
+   * because ECDSA here is RFC-6979 deterministic: identical input yields a
+   * byte-identical signature, so no signature is persisted.
+   *
+   * Returns `null` when the chain isn't EVM, has no `takumi_pay` contract
+   * row, or no signer key is configured — callers then simply omit the
+   * fields rather than emitting a half-built quote.
+   */
+  private async buildEvmMerchantQuote(p: {
+    blockchain: { id: string; type: string; chainId: number | null };
+    token: { contractAddress: string | null; decimals: number };
+    refId: string;
+    merchantId: string;
+    amountMicros: bigint;
+    platformFeeMicros: bigint;
+    fiatAmountMinor: number;
+    fiatCurrency: string;
+    exchangeRateId: number;
+    expiresAtSec: number;
+  }): Promise<
+    | {
+        commitment: QuoteCommitmentResponseDto;
+        signature: string;
+        contractAddress: string;
+      }
+    | null
+  > {
+    if (p.blockchain.type !== "EVM" || p.blockchain.chainId == null) return null;
+    if (!this.quoteSigner) return null;
+
+    const contract = await this.prisma.smartContract.findFirst({
+      where: {
+        blockchainId: p.blockchain.id,
+        name: "takumi_pay",
+        isActive: true,
+      },
+    });
+    if (!contract) {
+      this.logger.warn(
+        `[buildEvmMerchantQuote] EVM chain ${p.blockchain.chainId} has no active "takumi_pay" SmartContract row — quote unsigned`,
+      );
+      return null;
+    }
+
+    // Intent amounts are 6-decimal USDC micros; scale into the token's own
+    // units so the signed, submitted and on-chain amounts all agree. Mirrors
+    // the Stellar block. This is a no-op for 6-decimal USDC (including Arc,
+    // whose ERC-20 view at 0x3600…0000 reports 6) and only bites on a chain
+    // whose settlement token has more precision.
+    const scale = 10n ** BigInt(Math.max(p.token.decimals - 6, 0));
+
+    // address(0) means native. On a native-alias chain like Arc the contract
+    // rejects address(0) outright (`NativeDisabledOnAliasChain`, and it isn't
+    // on the allowlist), so the token row MUST carry the ERC-20 address —
+    // which it does, since the row is keyed by `contractAddress`.
+    const tokenAddress = (p.token.contractAddress ??
+      "0x0000000000000000000000000000000000000000") as `0x${string}`;
+
+    const amount = p.amountMicros * scale;
+    const platformFeeAmount = p.platformFeeMicros * scale;
+    // bytes3, e.g. "IDR" -> 0x494452. `size: 3` right-pads, matching the
+    // contract's bytes3 and mobile's `fiatCurrencyToBytes3`.
+    const fiatCurrencyHex = stringToHex(p.fiatCurrency.slice(0, 3), {
+      size: 3,
+    }) as Hex;
+
+    const signature = await this.quoteSigner.signQuote(
+      {
+        refId: p.refId,
+        merchantId: p.merchantId,
+        tokenAddress,
+        amount,
+        platformFeeAmount,
+        fiatAmountMinor: BigInt(p.fiatAmountMinor),
+        fiatCurrency: fiatCurrencyHex,
+        exchangeRateId: BigInt(p.exchangeRateId),
+        expiresAt: BigInt(p.expiresAtSec),
+      },
+      p.blockchain.chainId,
+      contract.address as `0x${string}`,
+    );
+
+    return {
+      // The wire shape carries the ISO code ("IDR"), not the bytes3 hex —
+      // mobile re-derives the hex via `fiatCurrencyToBytes3` when encoding
+      // calldata. Sending hex here would double-encode it on the client.
+      commitment: {
+        refId: p.refId,
+        merchantId: p.merchantId,
+        tokenAddress,
+        amount: amount.toString(),
+        platformFeeAmount: platformFeeAmount.toString(),
+        fiatAmountMinor: p.fiatAmountMinor,
+        fiatCurrency: p.fiatCurrency,
+        exchangeRateId: p.exchangeRateId,
+        expiresAt: p.expiresAtSec,
+      },
+      signature,
+      contractAddress: contract.address,
+    };
+  }
+
   private buildSvmQuoteMessage(p: {
     refId: string;
     merchantId: string;
@@ -871,6 +987,23 @@ export class IntentsService {
       }
     }
 
+    // EVM `takumi_pay` quote — the counterpart of the SVM and Stellar blocks
+    // above. Without this an EVM intent came back with no `quoteCommitment` /
+    // `quoteSignature`, so `executeOnchainSettlement` on mobile always threw
+    // MISSING_QUOTE and the EVM onchain rail could never complete.
+    const evmQuote = await this.buildEvmMerchantQuote({
+      blockchain: bc,
+      token: tokenRow,
+      refId: created.id,
+      merchantId: merchant.id,
+      amountMicros: BigInt(totalAmount),
+      platformFeeMicros: BigInt(platformFeeAmount),
+      fiatAmountMinor: dto.fiatAmountMinor,
+      fiatCurrency: dto.currency,
+      exchangeRateId: fx.exchangeRateId,
+      expiresAtSec: Math.floor(expiresAt.getTime() / 1000),
+    });
+
     return {
       id: created.id,
       status: DB_TO_MOBILE_STATUS[created.status],
@@ -894,6 +1027,13 @@ export class IntentsService {
       quoteCommitmentSvm,
       quoteSignatureSvm,
       backendSignerPubkey,
+      ...(evmQuote
+        ? {
+            quoteCommitment: evmQuote.commitment,
+            quoteSignature: evmQuote.signature,
+            contractAddress: evmQuote.contractAddress,
+          }
+        : {}),
     };
   }
 
@@ -1079,6 +1219,25 @@ export class IntentsService {
         })
       : null;
 
+    // Re-derive the EVM quote on every poll. See `buildEvmMerchantQuote` —
+    // the client overwrites its local intent with each poll response, so
+    // omitting these here would wipe the quote the create call returned.
+    const evmQuote =
+      blockchain && intent.sourceToken
+        ? await this.buildEvmMerchantQuote({
+            blockchain,
+            token: intent.sourceToken,
+            refId: intent.id,
+            merchantId: intent.merchantId,
+            amountMicros: intent.nanopayUsdcAmountMicros ?? 0n,
+            platformFeeMicros: intent.platformFeeAmountMinor ?? 0n,
+            fiatAmountMinor: intent.fiatAmountMinor,
+            fiatCurrency: intent.fiatCurrency,
+            exchangeRateId: intent.exchangeRateId,
+            expiresAtSec: Math.floor(intent.expiresAt.getTime() / 1000),
+          })
+        : null;
+
     return {
       id: intent.id,
       status: mobileStatus,
@@ -1096,7 +1255,11 @@ export class IntentsService {
       createdAt: intent.createdAt.getTime(),
       payoutReferenceId,
       settledAt,
-      contractAddress: smartContract?.address,
+      // Prefer the contract the quote was actually signed against — the
+      // signature binds `verifyingContract`, so submitting to a different
+      // address (the `findFirst` below is not filtered by name) would fail
+      // signature recovery on-chain.
+      contractAddress: evmQuote?.contractAddress ?? smartContract?.address,
       // `blockchain.takumiPayProgramId` was removed — it duplicated this same
       // `smartContract.address` lookup (name unfiltered here, so this
       // inherits that pre-existing looseness on chains with >1 active
@@ -1118,6 +1281,12 @@ export class IntentsService {
             },
             quoteSignatureSvm: Buffer.from(intent.quoteSignature).toString("base64"),
             backendSignerPubkey: this.svmSignerKeypair?.publicKeyBase58,
+          }
+        : {}),
+      ...(evmQuote
+        ? {
+            quoteCommitment: evmQuote.commitment,
+            quoteSignature: evmQuote.signature,
           }
         : {}),
       // Stellar counterpart of the SVM block above. Unlike SVM, the signed

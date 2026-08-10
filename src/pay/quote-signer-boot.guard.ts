@@ -1,4 +1,10 @@
-import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnModuleInit,
+  Optional,
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { QuoteSignerService } from "./quote-signer.service";
@@ -21,12 +27,31 @@ export class QuoteSignerBootGuard implements OnModuleInit {
   constructor(
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
-    private readonly quoteSigner: QuoteSignerService,
+    // `@Inject` is required, not decorative: the `| null` union makes
+    // `design:paramtypes` emit `Object`, so without an explicit token Nest
+    // cannot resolve this and `@Optional()` silently hands over `undefined`.
+    // The guard then fell through to its "no signer configured" branch even
+    // when a signer existed — it logged that the key was unset while
+    // QuoteSignerService was initialising with that very key, and the
+    // address check below never ran.
+    @Optional()
+    @Inject(QuoteSignerService)
+    private readonly quoteSigner: QuoteSignerService | null = null,
   ) {}
 
   async onModuleInit(): Promise<void> {
     const nodeEnv = this.configService.get<string>("NODE_ENV");
     if (nodeEnv === "test") return;
+
+    // No signer configured — there is nothing to compare, and the app is
+    // still valid (EVM intents just come back unsigned). The mismatch check
+    // below is the point of this guard; skipping it is not a silent pass.
+    if (!this.quoteSigner) {
+      this.logger.warn(
+        "EVM_QUOTE_SIGNER_PRIVATE_KEY not set — EVM merchant quotes will be unsigned and onchain settlement will be unavailable.",
+      );
+      return;
+    }
 
     const chains = await this.prisma.blockchain.findMany({
       where: { isActive: true, type: "EVM", quoteSignerAddress: { not: null } },

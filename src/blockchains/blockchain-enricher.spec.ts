@@ -49,7 +49,23 @@ describe("blockchain-enricher", () => {
       { name: "gateway_wallet", address: arcGatewayWallet, isActive: true },
       { name: "gateway_minter", address: arcGatewayMinter, isActive: true },
     ],
+    // Arc carries TWO USDC rows: the gas coin IS USDC, so a native view (no
+    // address, 18-decimal wei) and the ERC-20 view (0x3600…, 6-decimal
+    // micros) describe one balance. The native row is deliberately FIRST
+    // here — nothing pins token order, and `buildUsdc` used to return null
+    // for the entire chain if it matched this row before the ERC-20 one.
     tokens: [
+      {
+        ...tokenDefaults,
+        id: "tok-usdc-arc-native",
+        name: "USD Coin",
+        symbol: "USDC",
+        decimals: 18,
+        contractAddress: null,
+        isStablecoin: true,
+        isActive: true,
+        isNativeCurrency: true,
+      },
       {
         ...tokenDefaults,
         id: "tok-usdc-arc",
@@ -59,7 +75,7 @@ describe("blockchain-enricher", () => {
         contractAddress: arcUsdcAddress,
         isStablecoin: true,
         isActive: true,
-        isNativeCurrency: true,
+        isNativeCurrency: false,
       },
     ],
   };
@@ -241,18 +257,34 @@ describe("blockchain-enricher", () => {
   });
 
   describe("buildNativeCurrency + buildUsdc", () => {
-    it("returns both native+usdc pointing at USDC on Arc", () => {
+    it("describes each Arc USDC view at its own precision", () => {
+      // Both are USDC and both are the same money — but at different
+      // precisions, because they are different views of it. The native view
+      // is what eth_getBalance returns (18-decimal wei, no address); the
+      // USDC view is the addressable ERC-20 (6-decimal micros).
+      //
+      // This previously asserted native = { decimals: 6, address: 0x3600… },
+      // i.e. the native currency wearing the ERC-20's precision AND address.
+      // That conflation is what made mobile format an 18-decimal balance at
+      // 6dp and overstate it by 1e12.
       expect(buildNativeCurrency(arcRow)).toEqual({
         symbol: "USDC",
-        decimals: 6,
-        address: arcUsdcAddress,
+        decimals: 18,
+        address: null,
       });
       expect(buildUsdc(arcRow)).toEqual({
         address: arcUsdcAddress,
         decimals: 6,
         symbol: "USDC",
-        isNativeCurrency: true,
+        isNativeCurrency: false,
       });
+    });
+
+    it("finds the ERC-20 USDC even when an addressless USDC row precedes it", () => {
+      // Order regression guard: `arcRow` lists the native (addressless) USDC
+      // first. Matching it and then rejecting on the missing address made
+      // the whole chain report no USDC at all.
+      expect(buildUsdc(arcRow)?.address).toBe(arcUsdcAddress);
     });
 
     it("returns null native when no native token row is joined", () => {

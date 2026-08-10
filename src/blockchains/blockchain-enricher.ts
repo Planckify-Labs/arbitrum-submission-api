@@ -233,10 +233,20 @@ export function buildNativeCurrency(
  * status.
  */
 export function buildUsdc(row: TBlockchainRow): UsdcTokenDto | null {
+  // `contractAddress` is part of the predicate, not just a post-check. A
+  // chain can legitimately carry two USDC rows: on a native-alias chain like
+  // Arc the gas coin IS USDC, so a native row (no address, 18 decimals) sits
+  // alongside the ERC-20 row (0x3600…, 6 decimals) — two views of one
+  // balance. This DTO describes the addressable ERC-20 view, so an
+  // addressless row must be skipped over, not matched and then rejected.
+  //
+  // Post-checking made the result depend on row order, which nothing here
+  // pins: if the native row came back first, the chain reported no USDC.
   const usdc = row.tokens?.find(
     (t) =>
       t.isStablecoin &&
       t.isActive &&
+      !!t.contractAddress &&
       typeof t.symbol === "string" &&
       t.symbol.toUpperCase() === "USDC",
   );

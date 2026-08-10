@@ -1,5 +1,5 @@
 import { Module, forwardRef } from "@nestjs/common";
-import { ConfigModule } from "@nestjs/config";
+import { ConfigModule, ConfigService } from "@nestjs/config";
 import { BlockchainVerificationModule } from "../blockchain-verification/blockchain-verification.module";
 import { MerchantsModule } from "../merchants/merchants.module";
 import { PayoutModule } from "../payout/payout.module";
@@ -17,6 +17,8 @@ import {
 } from "./circle-settle-svm.client";
 import { IntentsController } from "./intents.controller";
 import { IntentsService } from "./intents.service";
+import { QuoteSignerBootGuard } from "./quote-signer-boot.guard";
+import { QuoteSignerService } from "./quote-signer.service";
 
 /**
  * Pay module — owns the `POST /v1/pay/intents` endpoint family (task 23),
@@ -68,6 +70,22 @@ import { IntentsService } from "./intents.service";
     // call time — chains without a URL configured get a typed 503.
     CircleSettleSvmClient,
     { provide: CIRCLE_SETTLE_SVM_CLIENT, useClass: CircleSettleSvmClient },
+    // EVM merchant-quote signer. Provided via a factory rather than
+    // `useClass` because the service's constructor throws when
+    // `EVM_QUOTE_SIGNER_PRIVATE_KEY` is unset — as `useClass` that would
+    // make the whole app unbootable on any env without the key (including
+    // the unit-test rig). Resolving to `null` instead lets `IntentsService`
+    // inject it `@Optional()` and degrade to "EVM intent, quote unsigned",
+    // exactly how the SVM and Stellar signers already behave.
+    {
+      provide: QuoteSignerService,
+      useFactory: (config: ConfigService) =>
+        config.get<string>("EVM_QUOTE_SIGNER_PRIVATE_KEY")
+          ? new QuoteSignerService(config)
+          : null,
+      inject: [ConfigService],
+    },
+    QuoteSignerBootGuard,
   ],
   exports: [IntentsService],
 })

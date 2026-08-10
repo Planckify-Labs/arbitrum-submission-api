@@ -1113,6 +1113,32 @@ async function main() {
         isActive: true,
       },
     }),
+    // takumi_pay on Arc Testnet — TakumiPay 2.1.0 behind a UUPS proxy, see
+    // ../contract/evm/deployments/5042002.json. Verified on arcscan and
+    // exercised live end-to-end (createTransaction, depositPoints,
+    // processMerchantPayment, both sweeps) against real testnet USDC.
+    //
+    // Unlike the payment rows above, this one converges `address` on re-seed
+    // rather than using `update: {}`. The deployment record is the source of
+    // truth and the contract is not upgrade-compatible with any earlier proxy,
+    // so an env holding a stale address must be corrected, not preserved.
+    prisma.smartContract.upsert({
+      where: { id: "smart-contract-payment-arc-testnet" },
+      update: {
+        name: "takumi_pay",
+        type: "payment",
+        address: "0x9EEC5aD4FC092fD468A8114007e541238F4Ba5ee",
+        isActive: true,
+      },
+      create: {
+        id: "smart-contract-payment-arc-testnet",
+        name: "takumi_pay",
+        type: "payment",
+        blockchainId: evmChain(5042002).id, // Arc Testnet
+        address: "0x9EEC5aD4FC092fD468A8114007e541238F4Ba5ee",
+        isActive: true,
+      },
+    }),
     // takumi_pay on Solana Devnet — Anchor program deployed via `anchor deploy`.
     // `name` is a stable machine key here, not a display label — every
     // chain's takumi_pay contract/program uses the same "takumi_pay" name so
@@ -2342,12 +2368,32 @@ async function main() {
         peggedCurrency: "USD",
       },
     }),
-    // USDC on Arc Testnet — spec §7, task 26. On Arc USDC is the
-    // native gas token; decimals=18 matches the native-gas view used
-    // by the existing EVM balance/transfer pipeline (no dual-view
-    // handling needed). Both isStablecoin AND isNativeCurrency are
-    // true — Arc is the first chain in this project where that combo
-    // applies.
+    // USDC on Arc Testnet — spec §7, task 26. On Arc the native coin and
+    // this ERC-20 are two views of ONE balance: 18 decimals via
+    // eth_getBalance, 6 decimals via balanceOf. Verified live on the proxy,
+    // which holds 1900000 and 1.9e18 simultaneously — the same $1.90 twice.
+    //
+    // This row is keyed by `contractAddress`, so it describes the ERC-20
+    // view and `decimals` MUST be that contract's own: decimals() at
+    // 0x3600…0000 returns 6. It previously said 18, which is the native
+    // view's scale — reading a balanceOf result at 18dp under-reports by
+    // 1e12. 6 is also the scale everything else already speaks: intent
+    // amounts are USDC micros, `pay-merchant.tsx` hardcodes
+    // USDC_DECIMALS = 6, and the Stellar quote builder scales by
+    // 10^(tokenRow.decimals - 6), so an EVM builder mirroring it would
+    // inflate every Arc amount by 1e12.
+    //
+    // `isNativeCurrency` is FALSE here, and that is the whole trick. Arc's
+    // native view gets its own row below (`contractAddress: null`, 18
+    // decimals), exactly like every other chain models native separately
+    // from its ERC-20s. One row cannot carry both scales, and nothing in the
+    // app needs it to: consumers already pick the row that matches the view
+    // they are in — `buildChainConfigFromBlockchain` takes the native-flagged
+    // row for gas, `getTokenBalance` takes this one for balanceOf.
+    //
+    // This is the row merchant payments must use, hence `isPaymentEnabled`.
+    // The contract rejects address(0) on Arc (`NativeDisabledOnAliasChain`),
+    // so a quote built from the native row would be unpayable.
     prisma.token.upsert({
       where: {
         blockchainId_contractAddress: {
@@ -2358,29 +2404,85 @@ async function main() {
       update: {
         name: "USD Coin",
         symbol: "USDC",
-        decimals: 18,
+        decimals: 6,
         logoUrl:
           "https://pbs.twimg.com/profile_images/1955238194443849732/sHyVRItm_400x400.jpg",
         isStablecoin: true,
-        isNativeCurrency: true,
+        isNativeCurrency: false,
+        isPaymentEnabled: true,
         isActive: true,
         peggedCurrency: "USD",
       },
       create: {
         name: "USD Coin",
         symbol: "USDC",
-        decimals: 18,
+        decimals: 6,
         blockchainId: evmChain(5042002).id, // Arc Testnet
         contractAddress: "0x3600000000000000000000000000000000000000",
         logoUrl:
           "https://pbs.twimg.com/profile_images/1955238194443849732/sHyVRItm_400x400.jpg",
         isStablecoin: true,
-        isNativeCurrency: true,
+        isNativeCurrency: false,
+        isPaymentEnabled: true,
         isActive: true,
         peggedCurrency: "USD",
       },
     }),
   ]);
+
+  // Native USDC on Arc — the second view of the SAME balance the ERC-20 row
+  // above describes. On Arc the gas coin is USDC itself: `eth_getBalance`
+  // returns 18-decimal wei, `balanceOf(0x3600…)` returns 6-decimal micros,
+  // and both name one pot of money (verified live on the proxy: 1.9e18 and
+  // 1900000 held at the same instant).
+  //
+  // Two rows, not one. That is not a workaround — it is the shape every other
+  // chain already uses (a native row plus its ERC-20 rows); Arc is merely the
+  // first where both happen to describe the same asset. It keeps `decimals`
+  // honest per view, so no consumer needs an Arc special case: mobile's
+  // `buildChainConfigFromBlockchain` picks the native-flagged row for gas
+  // precision and gets 18, while `getTokenBalance` uses the ERC-20 row and
+  // gets 6.
+  //
+  // `isPaymentEnabled` is deliberately false: merchant payments must go via
+  // the ERC-20 row, because the contract refuses address(0) on this chain
+  // (`NativeDisabledOnAliasChain`).
+  //
+  // Find-then-write rather than a compound upsert, for the same reason MON
+  // below uses it — Postgres treats each NULL `contractAddress` as distinct,
+  // so the (blockchainId, contractAddress) unique cannot match this row.
+  const existingArcNativeToken = await prisma.token.findFirst({
+    where: {
+      blockchainId: evmChain(5042002).id,
+      isNativeCurrency: true,
+    },
+  });
+  const arcNativeUsdc = {
+    name: "USD Coin",
+    symbol: "USDC",
+    decimals: 18,
+    logoUrl:
+      "https://pbs.twimg.com/profile_images/1955238194443849732/sHyVRItm_400x400.jpg",
+    isStablecoin: true,
+    isNativeCurrency: true,
+    isPaymentEnabled: false,
+    isActive: true,
+    peggedCurrency: "USD",
+  };
+  if (existingArcNativeToken) {
+    await prisma.token.update({
+      where: { id: existingArcNativeToken.id },
+      data: arcNativeUsdc,
+    });
+  } else {
+    await prisma.token.create({
+      data: {
+        ...arcNativeUsdc,
+        blockchainId: evmChain(5042002).id, // Arc Testnet
+        contractAddress: null,
+      },
+    });
+  }
 
   // MON on Monad — native currency, no contract address (mirrors staging).
   // The compound-unique upsert path can't be used here because Postgres
