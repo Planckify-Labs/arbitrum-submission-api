@@ -61,7 +61,7 @@ export function resolveRpcEndpoint(rpcUrl: string): RpcEndpoint {
   if (!origin) {
     throw new Error(
       `Blockchain.rpcUrl is the proxy route "${raw}" but RPC_PROXY_URL is not set. ` +
-        "Point it at the rpc-proxy deployment (e.g. https://rpc.takumipay.com).",
+        "Point it at the rpc-proxy deployment (e.g. https://rpc.takumipay.xyz).",
     );
   }
 

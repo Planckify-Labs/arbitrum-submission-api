@@ -30,11 +30,23 @@ services:
       SIWE_URI: ${SIWE_URI}
       SIWE_STATEMENT: ${SIWE_STATEMENT:-Sign in to TakumiPay}
       # Blockchain
+      # Blockchain.rpcUrl holds a proxy route ("/solana/mainnet"), so without
+      # this origin every verification service throws during onModuleInit and
+      # the container never finishes booting. Must be reachable from inside
+      # this container — rpc-proxy is a separate compose project, so use its
+      # public domain or the host IP:9899, not http://localhost:8787.
+      RPC_PROXY_URL: ${RPC_PROXY_URL}
+      # Optional: rpc-proxy disables auth when its own PROXY_API_KEY is unset.
+      RPC_PROXY_API_KEY: ${RPC_PROXY_API_KEY}
       ADMIN_WALLET_PRIVATE_KEY: ${ADMIN_WALLET_PRIVATE_KEY}
       CHAIN_ID: ${CHAIN_ID:-1}
       MIN_CONFIRMATIONS: ${MIN_CONFIRMATIONS:-12}
       # CORS
-      CORS_ORIGINS: ${CORS_ORIGINS:-https://app.takumipay.com}
+      # Deliberately no `:-` default: a CORS allowlist that falls back to a
+      # hardcoded host silently trusts that host on any deploy that forgets to
+      # set it. Unset here falls through to app.config.ts's localhost default,
+      # which fails closed in prod instead of trusting someone else's domain.
+      CORS_ORIGINS: ${CORS_ORIGINS}
       CORS_CREDENTIALS: ${CORS_CREDENTIALS:-true}
       # Vendor
       VCGAMERS_SECRET: ${VCGAMERS_SECRET}

@@ -75,7 +75,7 @@ export class ChannelResponseDto {
   @ApiProperty({
     description:
       "Public HTTPS URL of the channel's brand icon (e.g. GoPay logo). `null` when no icon is configured — the mobile picker falls back to a kind-based glyph in that case.",
-    example: "https://assets.takumipay.com/channels/gopay.png",
+    example: "https://assets.takumipay.xyz/channels/gopay.png",
     nullable: true,
     required: false,
   })

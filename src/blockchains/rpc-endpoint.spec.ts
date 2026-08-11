@@ -23,35 +23,35 @@ describe("resolveRpcEndpoint", () => {
   }
 
   it("joins a route onto the configured proxy origin", () => {
-    configure("https://rpc.takumipay.com");
+    configure("https://rpc.takumipay.xyz");
     expect(resolveRpcEndpoint("/evm/1").url).toBe(
-      "https://rpc.takumipay.com/evm/1",
+      "https://rpc.takumipay.xyz/evm/1",
     );
     expect(resolveRpcEndpoint("/solana/mainnet").url).toBe(
-      "https://rpc.takumipay.com/solana/mainnet",
+      "https://rpc.takumipay.xyz/solana/mainnet",
     );
   });
 
   it("does not double up slashes when the origin has a trailing one", () => {
-    configure("https://rpc.takumipay.com/");
-    expect(resolveRpcUrl("/evm/137")).toBe("https://rpc.takumipay.com/evm/137");
+    configure("https://rpc.takumipay.xyz/");
+    expect(resolveRpcUrl("/evm/137")).toBe("https://rpc.takumipay.xyz/evm/137");
   });
 
   it("attaches the bearer only when a proxy key is configured", () => {
-    configure("https://rpc.takumipay.com", "secret");
+    configure("https://rpc.takumipay.xyz", "secret");
     expect(resolveRpcEndpoint("/evm/1").headers).toEqual({
       Authorization: "Bearer secret",
     });
 
     // rpc-proxy disables auth when its own PROXY_API_KEY is unset.
-    configure("https://rpc.takumipay.com", "");
+    configure("https://rpc.takumipay.xyz", "");
     expect(resolveRpcEndpoint("/evm/1").headers).toEqual({});
   });
 
   it("passes absolute URLs through untouched and unauthenticated", () => {
     // A row predating the proxy cutover. Sending our proxy bearer to a
     // third-party upstream would leak the token, so headers must stay empty.
-    configure("https://rpc.takumipay.com", "secret");
+    configure("https://rpc.takumipay.xyz", "secret");
     const upstream = "https://eth-mainnet.g.alchemy.com/v2/abc123";
     expect(resolveRpcEndpoint(upstream)).toEqual({
       url: upstream,
@@ -74,14 +74,14 @@ describe("resolveRpcEndpoint", () => {
   });
 
   it("withResolvedRpcUrl rewrites only rpcUrl and does not mutate the row", () => {
-    configure("https://rpc.takumipay.com");
+    configure("https://rpc.takumipay.xyz");
     const row = { id: "01ETH", name: "Ethereum", rpcUrl: "/evm/1" };
     const out = withResolvedRpcUrl(row);
 
     expect(out).toEqual({
       id: "01ETH",
       name: "Ethereum",
-      rpcUrl: "https://rpc.takumipay.com/evm/1",
+      rpcUrl: "https://rpc.takumipay.xyz/evm/1",
     });
     expect(row.rpcUrl).toBe("/evm/1");
   });

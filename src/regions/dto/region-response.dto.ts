@@ -22,7 +22,7 @@ export class RegionResponseDto {
   @ApiProperty({ example: 11 })
   taxRate: number;
 
-  @ApiProperty({ example: "support-id@takumipay.com", required: false })
+  @ApiProperty({ example: "support-id@takumipay.xyz", required: false })
   supportEmail?: string;
 
   @ApiProperty({ example: "+62123456789", required: false })

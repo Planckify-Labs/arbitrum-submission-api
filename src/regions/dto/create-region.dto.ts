@@ -49,7 +49,7 @@ export class CreateRegionDto {
   @Max(100)
   taxRate: number;
 
-  @ApiProperty({ example: "support-id@takumipay.com", required: false })
+  @ApiProperty({ example: "support-id@takumipay.xyz", required: false })
   @IsOptional()
   @IsString()
   supportEmail?: string;

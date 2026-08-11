@@ -53,10 +53,10 @@ export function setupSwagger(app: INestApplication) {
     .setVersion("1.0")
     .setContact(
       "TakumiPay Team",
-      "https://takumipay.com",
-      "support@takumipay.com",
+      "https://takumipay.xyz",
+      "support@takumipay.xyz",
     )
-    .setLicense("Proprietary", "https://takumipay.com/license")
+    .setLicense("Proprietary", "https://takumipay.xyz/license")
     .addBearerAuth({
       type: "http",
       scheme: "bearer",
@@ -93,7 +93,7 @@ export function setupSwagger(app: INestApplication) {
     .addTag("transactions", "Transaction management endpoints")
     .addTag("purchases", "Purchase management endpoints (public access)")
     .addServer("http://localhost:4000", "Local development")
-    .addServer("https://api.takumipay.com", "Production")
+    .addServer("https://api.takumipay.xyz", "Production")
     .build();
 
   const document = SwaggerModule.createDocument(app, options);
