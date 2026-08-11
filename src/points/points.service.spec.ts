@@ -50,7 +50,13 @@ function buildHarness(opts: {
       findUnique: jest.fn(async () => opts.user ?? null),
       findMany: jest.fn(async () => []),
     },
-    token: { findUnique: jest.fn(async () => opts.token ?? null) },
+    // Token rows default to the "cleared for payment" state so each test only
+    // has to spell out the field it is actually exercising.
+    token: {
+      findUnique: jest.fn(async () =>
+        opts.token ? { isPaymentEnabled: true, ...opts.token } : null,
+      ),
+    },
     blockchain: { findUnique: jest.fn(async () => opts.blockchain ?? null) },
     smartContract: { findFirst: jest.fn(async () => opts.contract ?? null) },
     pointPriceConfig: {
@@ -157,6 +163,24 @@ describe("PointsService.getPointPrice", () => {
     });
     await expect(
       svcNonStable.getPointPrice({ tokenId: "tk_x", currency: "IDR" }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("rejects a token ops has not enabled for payments", async () => {
+    // `isPaymentEnabled` is the switch that decides which chains offer
+    // Add Points at all — quoting must not go around the token list.
+    const { svc } = buildHarness({
+      token: {
+        isActive: true,
+        isStablecoin: true,
+        isPaymentEnabled: false,
+        symbol: "IDRX",
+        peggedCurrency: "IDR",
+      },
+      priceConfig: { baseRate: "1" },
+    });
+    await expect(
+      svc.getPointPrice({ tokenId: "tk_idrx", currency: "IDR" }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
@@ -276,6 +300,30 @@ describe("PointsService.createDeposit input validation", () => {
     await expect(svc.createDeposit("u1", dto as never)).rejects.toBeInstanceOf(
       BadRequestException,
     );
+  });
+
+  it("rejects a token ops has not enabled for payments", async () => {
+    // Server-side enforcement of the same gate mobile filters its token list
+    // on — a client that skips that list must not be able to deposit an
+    // unswitched-on token.
+    const { svc, queue } = buildHarness({
+      user: { id: "u1", walletAddress: "0xUSER" },
+      token: {
+        isActive: true,
+        isStablecoin: true,
+        isPaymentEnabled: false,
+        symbol: "IDRX",
+        peggedCurrency: "IDR",
+      },
+      blockchain: { isActive: true },
+      contract: { id: "sc_1", isActive: true },
+      priceConfig: { baseRate: "1" },
+    });
+    await expect(svc.createDeposit("u1", dto as never)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    // Rejected at intake: nothing queued for on-chain verification.
+    expect(queue.add).not.toHaveBeenCalled();
   });
 
   it("rejects bad blockchain", async () => {

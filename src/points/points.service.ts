@@ -49,6 +49,14 @@ export class PointsService {
       if (!token.isStablecoin) {
         throw new BadRequestException(`Token ${token.symbol} is not a stablecoin`);
       }
+      // `isPaymentEnabled` is the ops switch for "cleared for user-facing
+      // payment flows". Mobile already filters its deposit token list on it,
+      // so quoting a token without it means the caller went around that list.
+      if (!token.isPaymentEnabled) {
+        throw new BadRequestException(
+          `Token ${token.symbol} is not enabled for payments`,
+        );
+      }
 
       const priceConfig = await this.pointsCache.getPointConfig(
         query.currency,
@@ -211,6 +219,16 @@ export class PointsService {
     const token = await this.prisma.token.findUnique({ where: { id: dto.tokenId } });
     if (!token || !token.isActive || !token.isStablecoin) {
       throw new BadRequestException("Invalid or inactive stablecoin token");
+    }
+    // Ops gate, enforced server-side so it can't be bypassed by a client that
+    // skips the token list (mobile filters on the same flag). Intake only —
+    // `point-deposit.processor.ts` deliberately does NOT re-check it, so a
+    // deposit already sent on-chain still credits if ops flips the flag while
+    // it is in flight.
+    if (!token.isPaymentEnabled) {
+      throw new BadRequestException(
+        `Token ${token.symbol} is not enabled for payments`,
+      );
     }
 
     // 4. Validate blockchain
