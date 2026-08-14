@@ -32,6 +32,17 @@ function proxyOrigin(): string | undefined {
   return process.env.RPC_PROXY_URL?.trim().replace(/\/+$/, "") || undefined;
 }
 
+/**
+ * The server tier's credential on rpc-proxy.
+ *
+ * This is a genuine secret now. It used to be shared with the mobile app
+ * through `EXPO_PUBLIC_RPC_PROXY_API_KEY`, which Expo inlines into the shipped
+ * bundle — so payment verification was authenticating with a string anyone
+ * could pull out of an APK, and the key could never be rotated without
+ * breaking installed builds. Untrusted clients mint their own per-device token
+ * now (`rpc-proxy/src/auth/deviceToken.ts`) and this key is held server-side
+ * only. Do not reintroduce it into any client build.
+ */
 function proxyHeaders(): Record<string, string> {
   const key = process.env.RPC_PROXY_API_KEY?.trim();
   // rpc-proxy disables auth entirely when its PROXY_API_KEY is unset (see
