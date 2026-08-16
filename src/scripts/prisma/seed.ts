@@ -733,9 +733,14 @@ async function main() {
       where: { chainId: 84532 },
       update: {
         rpcUrl: "/evm/84532",
+        // Was "Base", which shadowed mainnet 8453 in every by-name lookup:
+        // DeFiLlama's "Base" matched THIS testnet row, so every Base DeFi pool
+        // silently degraded to Manual. Set in `update` as well as `create` so
+        // re-running the seed repairs an already-seeded database.
+        name: "Base Sepolia",
       },
       create: {
-        name: "Base",
+        name: "Base Sepolia",
         chainId: 84532,
         rpcUrl: "/evm/84532",
         blockExplorer: "https://sepolia.basescan.org",
@@ -862,7 +867,8 @@ async function main() {
         metadata: {
           x402DomainName: "GatewayWalletBatched",
           x402DomainVersion: "1",
-          x402FacilitatorUrl: "https://gateway-api-testnet.circle.com/gateway/v1/x402/settle",
+          x402FacilitatorUrl:
+            "https://gateway-api-testnet.circle.com/gateway/v1/x402/settle",
         },
         // Bundler URL is server-only; Arc doesn't need one (USDC=gas → no
         // UserOps, no bundler). Explicit `null` converges drift on re-seed
@@ -884,7 +890,8 @@ async function main() {
         metadata: {
           x402DomainName: "GatewayWalletBatched",
           x402DomainVersion: "1",
-          x402FacilitatorUrl: "https://gateway-api-testnet.circle.com/gateway/v1/x402/settle",
+          x402FacilitatorUrl:
+            "https://gateway-api-testnet.circle.com/gateway/v1/x402/settle",
         },
         bundlerUrl: null, // Arc has no bundler; see task 37 + §7.1.
       },
@@ -995,14 +1002,18 @@ async function main() {
         isTestnet: true,
       },
     }),
-    // Base Mainnet — keyed by chainId 8453 (evmChain()).
+    // Base — keyed by chainId 8453 (evmChain()).
     prisma.blockchain.upsert({
       where: { chainId: 8453 },
       update: {
         rpcUrl: "/evm/8453",
+        // "Base", not "Base Mainnet": external catalogs (DeFiLlama) and the
+        // other mainnet rows here (Ethereum, Arbitrum, Polygon) all use the
+        // bare name, and the by-name index is how a pool finds its chain.
+        name: "Base",
       },
       create: {
-        name: "Base Mainnet",
+        name: "Base",
         chainId: 8453,
         rpcUrl: "/evm/8453",
         blockExplorer: "https://basescan.org",

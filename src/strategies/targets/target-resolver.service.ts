@@ -14,29 +14,116 @@
  * so per-pool scoring jobs don't each hit the protocol API.
  */
 
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, type OnModuleInit } from "@nestjs/common";
+import { PrismaService } from "../../prisma/prisma.service";
 import { ValkeyService } from "../../valkey/valkey.service";
 import type { DeFiLlamaYieldPool } from "../external/defillama.client";
 import { bootTargetResolvers } from "./bootstrap";
+import {
+  chainDirectoryDiagnostics,
+  type ChainDirectoryRow,
+  loadChainDirectory,
+} from "./chain-directory";
 import { resolveTarget } from "./registry";
-import type { DepositTarget, ResolverContext } from "./types";
+import { getPublicClientForChain, resetRpcClients } from "./rpc";
+import type { DepositTarget, EvmReadClient, ResolverContext } from "./types";
 import { validateTarget } from "./validation";
 
 const FETCH_TIMEOUT_MS = 20_000;
+/**
+ * How long a chain-directory snapshot is trusted. Chain rows change on the
+ * order of "ops onboards a chain", so this only needs to be short enough that a
+ * new chain starts resolving without a restart.
+ */
+const CHAIN_DIRECTORY_TTL_MS = 10 * 60 * 1000;
 
 @Injectable()
-export class TargetResolverService {
+export class TargetResolverService implements OnModuleInit {
   private readonly logger = new Logger(TargetResolverService.name);
   private readonly inflight = new Map<string, Promise<unknown>>();
   private readonly ctx: ResolverContext;
+  private chainDirectoryLoadedAt = 0;
+  private chainDirectoryLoad: Promise<void> | null = null;
 
-  constructor(private readonly valkey: ValkeyService) {
+  constructor(
+    private readonly valkey: ValkeyService,
+    private readonly prisma: PrismaService,
+  ) {
     bootTargetResolvers();
     this.ctx = {
       fetchJsonCached: (cacheKey, url, ttlSec, init) =>
         this.fetchJsonCached(cacheKey, url, ttlSec, init),
       validate: (target, pool) => validateTarget(target, pool),
+      // Resolve-time on-chain reads (Curve arity, Solidly `stable`, Balancer
+      // poolId). Chain state, not a third-party API — see the ResolverContext
+      // doc comment.
+      publicClient: (chainId) =>
+        getPublicClientForChain(chainId) as EvmReadClient | null,
     };
+  }
+
+  async onModuleInit(): Promise<void> {
+    // Load once at boot so the very first scoring pass can resolve targets.
+    // Non-fatal: an empty directory means every pool degrades to Manual, which
+    // is the correct-by-default behaviour, not an outage.
+    await this.refreshChainDirectory().catch(() => undefined);
+  }
+
+  /**
+   * Pull the supported-chain set from the `Blockchain` table into the
+   * directory. Chains are data, not constants (see chain-directory.ts) — this
+   * is the only place the DB is read for that, and everything downstream
+   * (`resolveEvmChainId`, the RPC clients, the score worker's namespace
+   * mapping) reads the loaded snapshot synchronously.
+   */
+  private async refreshChainDirectory(force = false): Promise<void> {
+    const fresh =
+      Date.now() - this.chainDirectoryLoadedAt < CHAIN_DIRECTORY_TTL_MS;
+    if (!force && fresh) return;
+    if (this.chainDirectoryLoad) return this.chainDirectoryLoad;
+
+    this.chainDirectoryLoad = (async () => {
+      try {
+        const rows = await this.prisma.blockchain.findMany({
+          where: { isActive: true },
+          select: {
+            chainId: true,
+            name: true,
+            chainSlug: true,
+            rpcUrl: true,
+            type: true,
+            isTestnet: true,
+          },
+          // Mainnet first so a similarly-named testnet row can never shadow it
+          // in the by-name index (chain-directory keeps the first writer).
+          orderBy: [{ isTestnet: "asc" }, { name: "asc" }],
+        });
+        loadChainDirectory(
+          rows.map(
+            (r): ChainDirectoryRow => ({
+              chainId: r.chainId,
+              name: r.name,
+              chainSlug: r.chainSlug,
+              rpcUrl: r.rpcUrl,
+              family: r.type,
+              isTestnet: r.isTestnet,
+            }),
+          ),
+        );
+        resetRpcClients();
+        this.chainDirectoryLoadedAt = Date.now();
+        this.logger.log(
+          `[chain-directory] loaded ${JSON.stringify(chainDirectoryDiagnostics())}`,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `[chain-directory] load failed: ${(err as Error)?.message ?? err} — pools degrade to manual until the next refresh`,
+        );
+      } finally {
+        this.chainDirectoryLoad = null;
+      }
+    })();
+    return this.chainDirectoryLoad;
   }
 
   /**
@@ -44,6 +131,7 @@ export class TargetResolverService {
    * throws — a resolver blowup degrades the pool to manual, correct-by-default.
    */
   async resolve(pool: DeFiLlamaYieldPool): Promise<DepositTarget | null> {
+    await this.refreshChainDirectory();
     try {
       return await resolveTarget(pool, this.ctx);
     } catch (err) {
@@ -54,6 +142,11 @@ export class TargetResolverService {
       );
       return null;
     }
+  }
+
+  /** Ensure the chain directory is loaded — for callers outside `resolve`. */
+  async ensureChainDirectory(): Promise<void> {
+    await this.refreshChainDirectory();
   }
 
   /** Valkey-cached + inflight-deduped JSON GET/POST. Returns null on failure. */

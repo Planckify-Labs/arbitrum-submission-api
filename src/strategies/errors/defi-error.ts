@@ -53,6 +53,27 @@ export const DEFI_ERROR_CODES = [
   "rate_limited",
   "user_cancelled",
   "unauthorized",
+  // ── EVM protocol expansion (docs/defi-evm-protocol-expansion-spec.md §11.2)
+  // Mirrors `DefiErrorCode` in mobile-app/services/defi/errors/defiErrors.ts:
+  // the filter emits `defi_<code>` and the mobile classifier passes it through,
+  // so a code missing on either side degrades silently to "unknown".
+  "target_not_a_contract",
+  "target_not_allowlisted",
+  "market_id_mismatch",
+  "oracle_not_allowlisted",
+  "deposit_cap_exceeded",
+  "slippage_too_high",
+  "quote_expired",
+  "protocol_paused",
+  "decoded_intent_mismatch",
+  "exposure_cap_exceeded",
+  "family_disabled",
+  "decimals_mismatch",
+  "counterparty_blocked",
+  "awaiting_finality",
+  "duplicate_submission",
+  "velocity_exceeded",
+  "pool_anomaly_flagged",
   "unknown",
 ] as const;
 
@@ -69,10 +90,7 @@ export class DefiError extends HttpException {
   public readonly detail?: string;
 
   constructor(code: DefiErrorCode, detail?: string, status?: HttpStatus) {
-    super(
-      { error: `defi_${code}` },
-      status ?? mapCodeToStatus(code),
-    );
+    super({ error: `defi_${code}` }, status ?? mapCodeToStatus(code));
     this.code = code;
     this.detail = detail;
   }
@@ -139,7 +157,9 @@ export class DefiErrorFilter implements ExceptionFilter {
 
     // Unknown thrown — log raw but never echo to the client.
     const detail =
-      exception instanceof Error ? exception.stack ?? exception.message : String(exception);
+      exception instanceof Error
+        ? (exception.stack ?? exception.message)
+        : String(exception);
     this.logger.error(
       `[${request?.url ?? "unknown"}] uncaught error: ${detail}`,
     );

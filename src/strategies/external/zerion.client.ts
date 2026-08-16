@@ -136,4 +136,129 @@ export class ZerionClient {
       totalValue: 0,
     };
   }
+
+  /**
+   * DeFi position discovery — verified 2026-08-16 against the live
+   * `GET /v1/wallets/{addr}/positions/` endpoint (real key, real wallets).
+   * Ground truth from that run:
+   *   - `attributes.position_type` is `"wallet"` | `"deposit"` | `"staked"` |
+   *     `"reward"` | `"locked"` | `"investment"`. Only `"deposit"`/`"staked"`
+   *     are principal positions in a protocol; `"wallet"` is a plain token
+   *     holding (Zerion does NOT reliably classify every protocol receipt
+   *     token as a position — e.g. a Compound III `cUSDTv3` balance came
+   *     back as plain `"wallet"` type with `value: null`, not `"deposit"`).
+   *     Callers needing full coverage for protocols we have our own
+   *     address-book for (Comet, …) must supplement this with a direct
+   *     on-chain scan — see `StrategiesService`'s reconciliation.
+   *   - `relationships.dapp.data.id` is a kebab-case protocol slug
+   *     ("aave-v2", "yearn-v3", "uniswap-v3", "balancer", …) — a loose,
+   *     not exact, match for our own `protocolSlug` convention.
+   *   - `attributes.pool_address` (when present) is the on-chain
+   *     market/vault/pool contract.
+   *   - `attributes.fungible_info.implementations[]` carries the
+   *     underlying asset's contract per chain (`null` for a native coin).
+   * Never throws — a failed/unconfigured request degrades to `[]`, same
+   * fail-open posture as `getPortfolio`.
+   */
+  async getPositions(walletAddress: string): Promise<ZerionPosition[]> {
+    const started = Date.now();
+    if (!this.apiKey) {
+      this.logger.warn(
+        "[getPositions] ZERION_API_KEY not configured — returning no discovered positions",
+      );
+      return [];
+    }
+
+    const hasBudget = await this.checkAndIncrementBudget();
+    if (!hasBudget) {
+      this.logger.warn(
+        "[getPositions] Zerion daily budget exhausted — skipping discovery this call",
+      );
+      return [];
+    }
+
+    try {
+      const authHeader = `Basic ${Buffer.from(`${this.apiKey}:`).toString("base64")}`;
+      const params = new URLSearchParams({
+        currency: "usd",
+        "filter[positions]": "no_filter",
+        "filter[trash]": "only_non_trash",
+      });
+      const response = await fetch(
+        `${this.baseUrl}/wallets/${walletAddress}/positions/?${params.toString()}`,
+        {
+          headers: { Authorization: authHeader, Accept: "application/json" },
+        },
+      );
+      if (!response.ok) {
+        throw new Error(`Zerion API error: ${response.statusText}`);
+      }
+      const body = (await response.json()) as { data?: ZerionPositionRow[] };
+      const positions = (body.data ?? [])
+        .map(normalizeZerionPosition)
+        .filter((p): p is ZerionPosition => p !== null);
+      this.logger.log(
+        `[getPositions] <- Zerion ok in ${Date.now() - started}ms (${positions.length} DeFi positions)`,
+      );
+      return positions;
+    } catch (error: unknown) {
+      this.logger.error(
+        `[getPositions] Zerion request failed (wallet=${walletAddress}): ${describeFetchError(error)}`,
+      );
+      return [];
+    }
+  }
+}
+
+/** Raw shape of one `data[]` row from `GET /wallets/{addr}/positions/`. */
+interface ZerionPositionRow {
+  attributes: {
+    protocol: string | null;
+    position_type: string;
+    pool_address?: string | null;
+    quantity: { int: string; decimals: number; float: number };
+    value: number | null;
+    fungible_info: {
+      symbol: string;
+      implementations: { chain_id: string; address: string | null }[];
+    };
+  };
+  relationships?: {
+    chain?: { data?: { id?: string } };
+    dapp?: { data?: { id?: string } };
+  };
+}
+
+/** Normalized DeFi position — what `StrategiesService` reconciles against. */
+export interface ZerionPosition {
+  dappId: string | null;
+  protocolName: string | null;
+  poolAddress: string | null;
+  zerionChainId: string;
+  assetSymbol: string;
+  assetContract: string | null;
+  quantityRaw: string;
+  decimals: number;
+  valueUsd: number | null;
+}
+
+function normalizeZerionPosition(row: ZerionPositionRow): ZerionPosition | null {
+  const a = row.attributes;
+  if (a.position_type !== "deposit" && a.position_type !== "staked") return null;
+  const chainId = row.relationships?.chain?.data?.id;
+  if (!chainId) return null;
+  const implementation = a.fungible_info.implementations.find(
+    (impl) => impl.chain_id === chainId,
+  );
+  return {
+    dappId: row.relationships?.dapp?.data?.id ?? null,
+    protocolName: a.protocol,
+    poolAddress: a.pool_address ?? null,
+    zerionChainId: chainId,
+    assetSymbol: a.fungible_info.symbol,
+    assetContract: implementation?.address?.toLowerCase() ?? null,
+    quantityRaw: a.quantity.int,
+    decimals: a.quantity.decimals,
+    valueUsd: a.value,
+  };
 }

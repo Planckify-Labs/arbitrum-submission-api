@@ -39,21 +39,74 @@ function labelMatches(
   });
 }
 
+/**
+ * Pick the one vault a pool names, or nothing.
+ *
+ * Two label sources, because DeFiLlama is inconsistent about where the vault
+ * identity lives: for some protocols it is `poolMeta` ("Steakhouse USDC"), and
+ * for Morpho it is `symbol` ("STEAKUSDC") with `poolMeta` null. Reading only
+ * `poolMeta` meant every Morpho pool on Base fell into the ambiguous branch —
+ * dozens of MetaMorpho vaults share USDC as their asset — and refused.
+ *
+ * The rules that keep this from becoming a guess:
+ *   - a label must select EXACTLY ONE candidate; several hits is ambiguity, and
+ *     ambiguity is a refusal, never "take the first one",
+ *   - an explicit `poolMeta` that matches nothing is a mismatch signal, so we
+ *     refuse rather than falling back to a lone candidate,
+ *   - whatever is picked still has to pass `validateErc4626` on-chain, so a
+ *     wrong label match cannot survive: the vault would report a different
+ *     `asset()` and be rejected.
+ */
+function pickLabelledCandidate<T>(
+  candidates: readonly T[],
+  labels: readonly (string | null | undefined)[],
+  labelsOf: (candidate: T) => (string | null | undefined)[],
+): T | null {
+  const [primary, ...rest] = labels;
+
+  if (primary) {
+    const hits = candidates.filter((c) =>
+      labelMatches(primary, ...labelsOf(c)),
+    );
+    // An explicit primary label is a claim about identity: honour it or refuse.
+    return hits.length === 1 ? hits[0] : null;
+  }
+
+  for (const label of rest) {
+    if (!label) continue;
+    const hits = candidates.filter((c) => labelMatches(label, ...labelsOf(c)));
+    if (hits.length === 1) return hits[0];
+  }
+
+  // Nothing to disambiguate with, but only one thing it could be.
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
 // ── Morpho MetaMorpho (api.morpho.org/graphql) ──────────────────────────────
 
 interface MorphoVault {
   address: string;
   name: string | null;
   symbol: string | null;
-  whitelisted?: boolean;
+  listed?: boolean;
   asset: { address: string } | null;
 }
 
+/**
+ * Morpho renamed `whitelisted` → `listed` on `Vault` (and the same rename plus
+ * `uniqueKey` → `marketId` on `Market`). A rejected GraphQL query is HTTP 200
+ * with `errors` and no `data`, so the old field name did not throw — it
+ * returned zero vaults, and every MetaMorpho pool degraded to Manual with no
+ * error anywhere. `external-api-drift.spec.ts` now fails on the next rename.
+ */
 const MORPHO_QUERY = `query Vaults($chainId: Int!) {
   vaults(first: 1000, where: { chainId_in: [$chainId] }) {
-    items { address name symbol whitelisted asset { address } }
+    items { address name symbol listed asset { address } }
   }
 }`;
+
+/** Exported so the drift spec asserts the EXACT query this resolver sends. */
+export const MORPHO_VAULTS_QUERY = MORPHO_QUERY;
 
 async function fetchMorphoVaults(
   chainId: number,
@@ -61,8 +114,11 @@ async function fetchMorphoVaults(
 ): Promise<MorphoVault[]> {
   const res = await ctx.fetchJsonCached<{
     data?: { vaults?: { items?: MorphoVault[] } };
+    errors?: Array<{ message?: string }>;
   }>(
-    `defillama:targets:morpho:vaults:${chainId}:v1`,
+    // v2: a cached v1 body was fetched with the old field names, so reusing the
+    // key would keep serving an empty vault list for the whole TTL.
+    `defillama:targets:morpho:vaults:${chainId}:v2`,
     "https://api.morpho.org/graphql",
     VAULT_LIST_TTL_SEC,
     {
@@ -71,6 +127,14 @@ async function fetchMorphoVaults(
       body: JSON.stringify({ query: MORPHO_QUERY, variables: { chainId } }),
     },
   );
+  if (res?.errors?.length) {
+    console.warn(
+      `[morpho] vaults query rejected by api.morpho.org (schema drift?): ${res.errors
+        .map((e) => e.message ?? "unknown")
+        .join("; ")}`,
+    );
+    return [];
+  }
   return res?.data?.vaults?.items ?? [];
 }
 
@@ -95,19 +159,17 @@ export const MorphoResolver: PoolTargetResolver = {
         v.address &&
         v.asset?.address &&
         eqAddr(v.asset.address, underlying) &&
-        v.whitelisted !== false,
+        v.listed !== false,
     );
     if (candidates.length === 0) return null;
 
-    let match: MorphoVault | undefined;
-    if (pool.poolMeta) {
-      match = candidates.find((v) =>
-        labelMatches(pool.poolMeta!, v.name, v.symbol),
-      );
-    }
-    // No poolMeta (or no name hit): only accept a single unambiguous vault.
-    if (!match && !pool.poolMeta && candidates.length === 1)
-      match = candidates[0];
+    // Morpho pools carry the vault identity in `symbol` (STEAKUSDC) with
+    // `poolMeta` null, so `symbol` is the fallback label here.
+    const match = pickLabelledCandidate(
+      candidates,
+      [pool.poolMeta, pool.symbol],
+      (v) => [v.name, v.symbol],
+    );
     if (!match) return null;
 
     const target: DepositTarget = {
@@ -159,14 +221,11 @@ export const YearnResolver: PoolTargetResolver = {
     );
     if (candidates.length === 0) return null;
 
-    let match: YearnVault | undefined;
-    if (pool.poolMeta) {
-      match = candidates.find((v) =>
-        labelMatches(pool.poolMeta!, v.name, v.symbol),
-      );
-    }
-    if (!match && !pool.poolMeta && candidates.length === 1)
-      match = candidates[0];
+    const match = pickLabelledCandidate(
+      candidates,
+      [pool.poolMeta, pool.symbol],
+      (v) => [v.name, v.symbol],
+    );
     if (!match) return null;
 
     const target: DepositTarget = {

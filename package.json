@@ -28,7 +28,8 @@
     "db:setup": "./scripts/setup-db.sh",
     "db:setup:prod": "./scripts/setup-db-prod.sh",
     "pushNotif:test": "ts-node --transpile-only scripts/push-notif-test.ts",
-    "backfill:canonical-address": "ts-node --transpile-only -r tsconfig-paths/register src/scripts/backfill-canonical-wallet-address.ts"
+    "backfill:canonical-address": "ts-node --transpile-only -r tsconfig-paths/register src/scripts/backfill-canonical-wallet-address.ts",
+    "defi:dry-run": "node --env-file-if-exists=.env -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/resolve-targets-dry-run.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",

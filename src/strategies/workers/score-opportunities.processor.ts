@@ -10,40 +10,28 @@ import {
 } from "../external/defillama.client";
 import { ScoringService } from "../scoring/scoring.service";
 import { oppRowCacheKey } from "../targets/cache-keys";
+import { resolveChainIdentity } from "../targets/chain-directory";
 import { TargetResolverService } from "../targets/target-resolver.service";
 
 interface ScorePoolJobData {
   pool: DeFiLlamaYieldPool;
 }
 
-// DeFiLlama chain name -> (namespace, chainId).
-// chainId is 0 for non-EVM (carry namespace as the discriminator, matching the
-// OpportunityCache schema comment).
-const CHAIN_NAME_MAP: Record<
-  string,
-  { namespace: "eip155" | "solana" | "sui"; chainId: number }
-> = {
-  ethereum: { namespace: "eip155", chainId: 1 },
-  optimism: { namespace: "eip155", chainId: 10 },
-  bsc: { namespace: "eip155", chainId: 56 },
-  polygon: { namespace: "eip155", chainId: 137 },
-  base: { namespace: "eip155", chainId: 8453 },
-  arbitrum: { namespace: "eip155", chainId: 42161 },
-  avalanche: { namespace: "eip155", chainId: 43114 },
-  solana: { namespace: "solana", chainId: 0 },
-  sui: { namespace: "sui", chainId: 0 },
-};
-
+/**
+ * DeFiLlama chain name → (namespace, chainId), sourced from the `Blockchain`
+ * table through the chain directory — chains are **data, never a literal map**,
+ * so onboarding a chain for DeFi is a seeded row, not an edit here.
+ * `chainId` is 0 for non-EVM families (namespace is the discriminator there,
+ * matching the OpportunityCache schema comment).
+ *
+ * An unknown chain keeps the previous default (`eip155`, chainId 0), which the
+ * target resolver already reads as "no EVM deployment" → Manual path.
+ */
 function resolveChain(chainName: string): {
-  namespace: "eip155" | "solana" | "sui";
+  namespace: string;
   chainId: number;
 } {
-  return (
-    CHAIN_NAME_MAP[chainName?.toLowerCase?.() ?? ""] ?? {
-      namespace: "eip155",
-      chainId: 0,
-    }
-  );
+  return resolveChainIdentity(chainName) ?? { namespace: "eip155", chainId: 0 };
 }
 
 // Concurrency 8: a poll enqueues ~250 pools, each doing a (sometimes flaky/slow)
@@ -82,6 +70,9 @@ export class ScoreOpportunitiesProcessor extends WorkerHost {
       );
       const { score, tier } = this.scoringService.calculateScore(dimensions);
 
+      // The chain directory is DB-backed, so make sure it is loaded before the
+      // (synchronous) name → namespace/chainId lookup below.
+      await this.targetResolver.ensureChainDirectory();
       const { namespace, chainId } = resolveChain(pool.chain);
 
       // Pool-level deposits (spec §3, §4.2, §6): resolve the on-chain deposit

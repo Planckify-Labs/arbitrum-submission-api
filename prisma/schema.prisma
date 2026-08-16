@@ -1300,10 +1300,35 @@ model StrategyPosition {
   goal       String?
   targetDate DateTime?
 
+  // ── ERC-7540 asynchronous vaults (docs/defi-evm-protocol-expansion-spec.md §7)
+  // Async vaults (tokenised treasuries, private credit, withdrawal-queue pools)
+  // cannot settle in one transaction: deposit and redeem become
+  // request -> (off-chain fulfil) -> claim. That breaks the one-shot
+  // `UnsignedCall` model, so the request has to be DURABLE — a position whose
+  // request nobody remembers is a user's funds sitting in a state the app
+  // cannot see. The claim-watcher worker polls readiness and notifies.
+  //
+  // `asyncPhase` is the position's place in that state machine:
+  //   null                  — synchronous position (every family but 7540)
+  //   "deposit_requested"   — requestDeposit mined, not yet claimable
+  //   "deposit_claimable"   — claimableDepositRequest > 0, user can claim
+  //   "redeem_requested"    — requestRedeem mined, not yet claimable
+  //   "redeem_claimable"    — claimableRedeemRequest > 0, user can claim
+  asyncPhase        String?
+  // ERC-7540 request id (uint256 as a decimal string; 0 is valid).
+  asyncRequestId    String?
+  // Raw amount the request was made for, echoed back for the claim.
+  asyncRequestedRaw String?
+  asyncRequestedAt  DateTime?
+  // Last time the claim-watcher read the vault's claimable* view.
+  asyncCheckedAt    DateTime?
+  asyncTxHash       String?
+
   userStrategy UserStrategy @relation(fields: [userStrategyId], references: [id])
 
   @@index([walletAddress, status])
   @@index([targetDate]) // goal-deadline-watcher scans by date
+  @@index([asyncPhase]) // claim-watcher scans by pending phase
 }
 
 model OpportunityCache {

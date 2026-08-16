@@ -1,11 +1,48 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { erc20Abi, parseAbi } from "viem";
 import { PrismaService } from "../prisma/prisma.service";
 import { ValkeyService } from "../valkey/valkey.service";
 import { CreateStrategyDto } from "./dto/create-strategy.dto";
 import { UpdateStrategyDto } from "./dto/update-strategy.dto";
 import { DefiError } from "./errors/defi-error";
+import {
+  AlchemyPricesClient,
+  alchemyNetworkForChainId,
+} from "./external/alchemy-prices.client";
 import { LifiClient, LifiQuote } from "./external/lifi.client";
+import { type ZerionPosition, ZerionClient } from "./external/zerion.client";
+import { cometMarkets, COMET_MARKETS } from "./targets/address-book";
 import { OPP_ROW_CACHE_TTL_SEC, oppRowCacheKey } from "./targets/cache-keys";
+import { findChainById } from "./targets/chain-directory";
+import { getPublicClientForChain } from "./targets/rpc";
+
+/** Minimal Comet reads needed for discovery — balance + underlying identity. */
+const COMET_DISCOVERY_ABI = parseAbi([
+  "function balanceOf(address account) view returns (uint256)",
+  "function baseToken() view returns (address)",
+]);
+
+/** Zerion's chain-id vocabulary -> our numeric EVM chainId. Third-party
+ *  naming, same "address-book posture" as Alchemy's network-slug map. */
+const CHAIN_ID_BY_ZERION_ID: Record<string, number> = {
+  ethereum: 1,
+  base: 8453,
+  arbitrum: 42161,
+  optimism: 10,
+  polygon: 137,
+  "binance-smart-chain": 56,
+};
+
+export interface AssetPriceQuery {
+  chainId: number;
+  assetSymbol: string;
+  /** Omit for the chain's native coin — priced by symbol instead. */
+  assetContract?: string;
+}
+
+export interface AssetPriceResult extends AssetPriceQuery {
+  usd: number | null;
+}
 
 interface OpportunityFilter {
   tier?: string;
@@ -27,7 +64,50 @@ export class StrategiesService {
     private readonly prisma: PrismaService,
     private readonly lifiClient: LifiClient,
     private readonly valkey: ValkeyService,
+    private readonly alchemyPrices: AlchemyPricesClient,
+    private readonly zerionClient: ZerionClient,
   ) {}
+
+  /**
+   * Batch USD spot price lookup for DeFi position valuation. Routes each
+   * query to Alchemy's by-address endpoint (has a contract) or by-symbol
+   * (native coin, no contract) — the only place either Alchemy Prices
+   * endpoint is called from; the mobile client never talks to Alchemy
+   * directly (same posture as the RPC provider key in `rpc-endpoint.ts`).
+   * A chain with no Alchemy network mapping, or an asset Alchemy can't
+   * price, resolves to `usd: null` — never thrown, so a partial-price batch
+   * doesn't fail the whole request.
+   */
+  async getAssetPrices(
+    queries: AssetPriceQuery[],
+  ): Promise<AssetPriceResult[]> {
+    const byAddress: { network: string; address: string }[] = [];
+    const bySymbol = new Set<string>();
+    for (const q of queries) {
+      if (q.assetContract && alchemyNetworkForChainId(q.chainId)) {
+        byAddress.push({
+          network: alchemyNetworkForChainId(q.chainId) as string,
+          address: q.assetContract,
+        });
+      } else {
+        bySymbol.add(q.assetSymbol);
+      }
+    }
+
+    const [addressPrices, symbolPrices] = await Promise.all([
+      this.alchemyPrices.getPricesByAddress(byAddress),
+      this.alchemyPrices.getPricesBySymbol([...bySymbol]),
+    ]);
+
+    return queries.map((q) => {
+      const network = alchemyNetworkForChainId(q.chainId);
+      const usd =
+        q.assetContract && network
+          ? (addressPrices.get(`${network}:${q.assetContract.toLowerCase()}`) ?? null)
+          : (symbolPrices.get(q.assetSymbol.toUpperCase()) ?? null);
+      return { ...q, usd };
+    });
+  }
 
   quoteCrossChain(
     walletAddress: string,
@@ -340,8 +420,8 @@ export class StrategiesService {
     return Array.from(seen.values());
   }
 
-  async getPositions(walletAddress: string) {
-    return await this.prisma.strategyPosition.findMany({
+  async getPositions(userId: string, walletAddress: string) {
+    const positions = await this.prisma.strategyPosition.findMany({
       where: {
         walletAddress: walletAddress.toLowerCase(),
       },
@@ -349,6 +429,296 @@ export class StrategiesService {
         openedAt: "desc",
       },
     });
+    const reconciled = await this.reconcilePositions(
+      userId,
+      walletAddress,
+      positions,
+    ).catch((err) => {
+      this.logger.error(
+        `[getPositions] reconciliation failed (best-effort, showing DB rows only) for wallet=${walletAddress}: ${(err as Error).message}`,
+      );
+      return positions;
+    });
+    return this.attachCurrentApy(reconciled);
+  }
+
+  /**
+   * Discovers DeFi positions the wallet actually holds on-chain but that
+   * have no `StrategyPosition` row — e.g. a signed, successful deposit
+   * whose `createPosition` call failed (the `strategy_not_configured` bug
+   * `ensureUserStrategy` now fixes going forward), or a position opened
+   * outside this app entirely. Two sources, run best-effort in sequence so
+   * the second sees rows the first just backfilled and never double-writes:
+   *
+   *   1. Our own address-book (`COMET_MARKETS`) — a direct on-chain
+   *      `balanceOf` scan. Reliable for Compound III specifically because
+   *      the receipt token *is* the market contract, and we already have
+   *      every known Comet pinned for validation. Verified against a live
+   *      wallet 2026-08-16 — Zerion classified that wallet's `cUSDTv3`
+   *      balance as a plain `"wallet"`-type token, NOT a `"deposit"`
+   *      position (no protocol tag, no value), so it would NOT have been
+   *      caught by source 2 alone.
+   *   2. Zerion's wallet-positions API — broader coverage (any protocol
+   *      Zerion itself classifies as `"deposit"`/`"staked"`) but, per the
+   *      above, demonstrably incomplete for at least this one real case.
+   *      Best-effort discovery layer per the original spec (§9.2), not an
+   *      authoritative source — never used for the trade-decision path.
+   *
+   * A discovered row is persisted with today's on-chain balance/value as
+   * its `amountAtDeposit(Usd)` baseline (we cannot know the real historical
+   * deposit — PnL starts at 0% rather than showing a fabricated gain/loss)
+   * and `openedAt` = discovery time, not the real deposit time.
+   */
+  private async reconcilePositions(
+    userId: string,
+    walletAddress: string,
+    positions: Awaited<ReturnType<StrategiesService["getPositionsRaw"]>>,
+  ) {
+    let all = positions;
+    const cometBackfilled = await this.discoverCometPositions(
+      userId,
+      walletAddress,
+      all,
+    );
+    if (cometBackfilled.length > 0) all = [...cometBackfilled, ...all];
+
+    const zerionBackfilled = await this.discoverZerionPositions(
+      userId,
+      walletAddress,
+      all,
+    );
+    if (zerionBackfilled.length > 0) all = [...zerionBackfilled, ...all];
+
+    return all;
+  }
+
+  /** Typed only so `reconcilePositions` can reference `getPositions`'s row shape. */
+  private getPositionsRaw() {
+    return this.prisma.strategyPosition.findMany();
+  }
+
+  private async discoverCometPositions(
+    userId: string,
+    walletAddress: string,
+    existing: { protocolSlug: string; chainId: number; assetContract: string | null; status: string }[],
+  ) {
+    const known = new Set(
+      existing
+        .filter((p) => p.protocolSlug === "compound-v3" && p.status === "active")
+        .map((p) => `${p.chainId}:${(p.assetContract ?? "").toLowerCase()}`),
+    );
+    const created: NonNullable<Awaited<ReturnType<StrategiesService["createPosition"]>>>[] = [];
+
+    for (const chainIdStr of Object.keys(COMET_MARKETS)) {
+      const chainId = Number(chainIdStr);
+      const client = getPublicClientForChain(chainId);
+      if (!client) continue;
+
+      for (const comet of cometMarkets(chainId)) {
+        try {
+          const balance = await client.readContract({
+            address: comet,
+            abi: COMET_DISCOVERY_ABI,
+            functionName: "balanceOf",
+            args: [walletAddress as `0x${string}`],
+          });
+          if (balance <= 0n) continue;
+
+          const baseToken = await client.readContract({
+            address: comet,
+            abi: COMET_DISCOVERY_ABI,
+            functionName: "baseToken",
+          });
+          const key = `${chainId}:${baseToken.toLowerCase()}`;
+          if (known.has(key)) continue;
+          known.add(key); // dedupe within this scan too
+
+          const opp = await this.prisma.opportunityCache
+            .findFirst({
+              where: {
+                protocolSlug: "compound-v3",
+                chainId,
+                depositTarget: { path: ["comet"], equals: comet },
+              },
+              select: { poolId: true, assetSymbol: true, chainName: true, tier: true },
+            })
+            .catch(() => null);
+
+          let assetSymbol = opp?.assetSymbol;
+          if (!assetSymbol) {
+            assetSymbol = await client
+              .readContract({ address: baseToken, abi: erc20Abi, functionName: "symbol" })
+              .catch(() => "");
+          }
+          const decimals = await client
+            .readContract({ address: baseToken, abi: erc20Abi, functionName: "decimals" })
+            .catch(() => 18);
+
+          const position = await this.createDiscoveredPosition(userId, walletAddress, {
+            protocolSlug: "compound-v3",
+            chainId,
+            namespace: "eip155",
+            assetSymbol,
+            assetContract: baseToken,
+            poolId: opp?.poolId,
+            amountRaw: balance.toString(),
+            decimals,
+            tier: opp?.tier,
+            chainName: opp?.chainName ?? findChainById(chainId)?.name ?? "",
+          });
+          if (position) created.push(position);
+        } catch (err) {
+          this.logger.warn(
+            `[discoverCometPositions] scan failed for comet=${comet} chain=${chainId}: ${(err as Error).message}`,
+          );
+        }
+      }
+    }
+    return created;
+  }
+
+  private async discoverZerionPositions(
+    userId: string,
+    walletAddress: string,
+    existing: { protocolSlug: string; chainId: number; assetContract: string | null; status: string }[],
+  ) {
+    const known = new Set(
+      existing
+        .filter((p) => p.status === "active")
+        .map((p) => `${p.chainId}:${(p.assetContract ?? "").toLowerCase()}`),
+    );
+
+    let zerionPositions: ZerionPosition[] = [];
+    try {
+      zerionPositions = await this.zerionClient.getPositions(walletAddress);
+    } catch (err) {
+      this.logger.warn(
+        `[discoverZerionPositions] Zerion lookup failed (best-effort): ${(err as Error).message}`,
+      );
+      return [];
+    }
+
+    const created: NonNullable<Awaited<ReturnType<StrategiesService["createPosition"]>>>[] = [];
+    for (const zp of zerionPositions) {
+      // A dust-value or unpriced row isn't worth adopting as a tracked
+      // position — Zerion's own numbers are display-only anyway.
+      if (zp.valueUsd === null || zp.valueUsd < 1) continue;
+      const chainId = CHAIN_ID_BY_ZERION_ID[zp.zerionChainId];
+      if (!chainId) continue; // chain we don't support for DeFi yet
+
+      const key = `${chainId}:${(zp.assetContract ?? "").toLowerCase()}`;
+      if (known.has(key)) continue;
+      known.add(key);
+
+      // Best-effort protocolSlug: prefer an OpportunityCache row whose
+      // family loosely matches Zerion's dapp id, so a real APY join is
+      // possible later. Fall back to a clearly Zerion-sourced pseudo-slug
+      // (never something that would resolve through our own adapter
+      // registry for execution) when no confident match exists.
+      const opp = zp.dappId
+        ? await this.prisma.opportunityCache
+            .findFirst({
+              where: {
+                chainId,
+                assetSymbol: zp.assetSymbol,
+                protocolSlug: { contains: zp.dappId.split("-")[0] },
+              },
+              select: { poolId: true, protocolSlug: true, chainName: true, tier: true },
+            })
+            .catch(() => null)
+        : null;
+
+      const position = await this.createDiscoveredPosition(userId, walletAddress, {
+        protocolSlug: opp?.protocolSlug ?? `zerion:${zp.dappId ?? "unknown"}`,
+        chainId,
+        namespace: "eip155",
+        assetSymbol: zp.assetSymbol,
+        assetContract: zp.assetContract ?? undefined,
+        poolId: opp?.poolId,
+        amountRaw: zp.quantityRaw,
+        decimals: zp.decimals,
+        tier: opp?.tier,
+        chainName: opp?.chainName ?? findChainById(chainId)?.name ?? "",
+        // Zerion already computed USD — cheaper and no less accurate than
+        // a second price lookup for a row we're only backfilling once.
+        amountUsdOverride: zp.valueUsd,
+      });
+      if (position) created.push(position);
+    }
+    return created;
+  }
+
+  private async createDiscoveredPosition(
+    userId: string,
+    walletAddress: string,
+    input: {
+      protocolSlug: string;
+      chainId: number;
+      namespace: string;
+      assetSymbol: string;
+      assetContract?: string;
+      poolId?: string | null;
+      amountRaw: string;
+      decimals: number;
+      tier?: string | null;
+      chainName: string;
+      amountUsdOverride?: number | null;
+    },
+  ) {
+    try {
+      const amountAtDepositUsd =
+        input.amountUsdOverride ??
+        (
+          await this.getAssetPrices([
+            {
+              chainId: input.chainId,
+              assetSymbol: input.assetSymbol,
+              assetContract: input.assetContract,
+            },
+          ])
+        )[0]?.usd;
+      const humanAmount = Number(input.amountRaw) / 10 ** input.decimals;
+      const usd =
+        amountAtDepositUsd != null && Number.isFinite(amountAtDepositUsd)
+          ? humanAmount * amountAtDepositUsd
+          : 0;
+
+      const strategy = await this.ensureUserStrategy(
+        userId,
+        walletAddress,
+        input.namespace,
+        input.tier ?? "conservative",
+      );
+
+      this.logger.log(
+        `[createDiscoveredPosition] backfilling ${input.protocolSlug} chain=${input.chainId} asset=${input.assetSymbol} wallet=${walletAddress} (found on-chain, no prior StrategyPosition row)`,
+      );
+
+      return await this.prisma.strategyPosition.create({
+        data: {
+          userStrategy: { connect: { id: strategy.id } },
+          walletAddress: walletAddress.toLowerCase(),
+          protocolSlug: input.protocolSlug,
+          chainId: input.chainId,
+          namespace: input.namespace,
+          chainName: input.chainName,
+          assetSymbol: input.assetSymbol,
+          assetContract: input.assetContract,
+          poolId: input.poolId ?? undefined,
+          amountAtDeposit: input.amountRaw,
+          amountAtDepositUsd: usd,
+          currentAmountRaw: input.amountRaw,
+          currentAmountUsd: usd,
+          status: "active",
+          openedAt: new Date(),
+        },
+      });
+    } catch (err) {
+      this.logger.error(
+        `[createDiscoveredPosition] failed to persist discovered position (${input.protocolSlug}, wallet=${walletAddress}): ${(err as Error).message}`,
+      );
+      return null;
+    }
   }
 
   async getPosition(id: string, walletAddress: string) {
@@ -363,10 +733,136 @@ export class StrategiesService {
       throw new DefiError("position_not_found", id);
     }
 
-    return position;
+    const [enriched] = await this.attachCurrentApy([position]);
+    return enriched;
+  }
+
+  /**
+   * Join each position to its live `OpportunityCache` row to surface an
+   * ongoing `currentApy` — computed at read time, never persisted (APY
+   * drifts continuously, so there is nothing to snapshot). No screen
+   * showed an earning rate on an *open* position before this; APY only
+   * ever appeared pre-deposit on the Opportunities list.
+   *
+   * Prefers the exact pool via `poolId` (unique on `OpportunityCache`,
+   * spec §4.2 — pins the exact sibling pool). Legacy positions opened
+   * before pool-level routing have no `poolId`, so those fall back to
+   * `(protocolSlug, chainId, namespace)` best-effort, same lookup
+   * `createPosition` already does for `chainName` above.
+   */
+  private async attachCurrentApy<
+    T extends {
+      poolId: string | null;
+      protocolSlug: string;
+      chainId: number;
+      namespace: string;
+    },
+  >(positions: T[]): Promise<(T & { currentApy: number | null })[]> {
+    if (positions.length === 0) return [];
+
+    const poolIds = [
+      ...new Set(positions.map((p) => p.poolId).filter((id): id is string => !!id)),
+    ];
+    const byPoolId =
+      poolIds.length > 0
+        ? await this.prisma.opportunityCache.findMany({
+            where: { poolId: { in: poolIds } },
+            select: { poolId: true, apy: true },
+          })
+        : [];
+    const apyByPoolId = new Map(byPoolId.map((o) => [o.poolId, Number(o.apy)]));
+
+    const legacy = positions.filter((p) => !p.poolId);
+    const apyByLegacyKey = new Map<string, number>();
+    if (legacy.length > 0) {
+      const rows = await this.prisma.opportunityCache.findMany({
+        where: {
+          OR: legacy.map((p) => ({
+            protocolSlug: p.protocolSlug,
+            chainId: p.chainId,
+            namespace: p.namespace,
+          })),
+        },
+        select: { protocolSlug: true, chainId: true, namespace: true, apy: true },
+      });
+      for (const row of rows) {
+        const key = `${row.protocolSlug}:${row.chainId}:${row.namespace}`;
+        if (!apyByLegacyKey.has(key)) apyByLegacyKey.set(key, Number(row.apy));
+      }
+    }
+
+    return positions.map((p) => ({
+      ...p,
+      currentApy: p.poolId
+        ? (apyByPoolId.get(p.poolId) ?? null)
+        : (apyByLegacyKey.get(`${p.protocolSlug}:${p.chainId}:${p.namespace}`) ?? null),
+    }));
+  }
+
+  /**
+   * Find the wallet's `UserStrategy`, or create a minimal default one.
+   *
+   * `StrategyPosition.userStrategyId` is a required FK, so recording a
+   * position has always needed a `UserStrategy` row to exist first —
+   * previously enforced by throwing `strategy_not_configured` and dropping
+   * the position write entirely. That silently lost every position for a
+   * wallet that deposited via the agent without ever visiting the
+   * `/strategies` onboarding screen (confirmed empty `StrategyPosition` +
+   * `UserStrategy` tables in production despite real, signed on-chain
+   * deposits — the write was failing on every single call).
+   *
+   * The auto-created default matches `fallbackTier` (the tier of the pool
+   * actually being recorded) rather than an arbitrary tier — it describes
+   * what the user already did, and grants no additional risk versus the
+   * fully-open tier/whitelist bypass that ran when `strategy` was null
+   * (see the deposit guard in `services/agent-executors/defi/writes.ts`).
+   * `allowAllInTier: true` avoids immediately blocking a second deposit
+   * into a protocol the user already used, in that same tier, via the
+   * curated-whitelist default.
+   */
+  private async ensureUserStrategy(
+    userId: string,
+    walletAddress: string,
+    namespace: string,
+    fallbackTier: string,
+  ) {
+    const existing = await this.prisma.userStrategy.findFirst({
+      where: { walletAddress: walletAddress.toLowerCase() },
+    });
+    if (existing) return existing;
+
+    const tier = ["conservative", "balanced", "aggressive"].includes(
+      fallbackTier,
+    )
+      ? fallbackTier
+      : "conservative";
+
+    this.logger.warn(
+      `[ensureUserStrategy] auto-creating default UserStrategy (tier=${tier}) for wallet=${walletAddress} — deposited without prior /strategies onboarding`,
+    );
+
+    return this.prisma.userStrategy.create({
+      data: {
+        userId,
+        walletAddress: walletAddress.toLowerCase(),
+        namespace,
+        tier,
+        assetPreferences: ["stable"],
+        liquidityPref: "instant",
+        chainPref: ["any"],
+        allocationPct: 25,
+        rebalanceTrigger: { kind: "interval", value: "monthly" },
+        protocolWhitelist: [],
+        allowAllInTier: true,
+        autoCompound: false,
+        notificationLevel: "alerts",
+        activatedAt: new Date(),
+      },
+    });
   }
 
   async createPosition(
+    userId: string,
     walletAddress: string,
     dto: {
       protocolSlug: string;
@@ -382,33 +878,31 @@ export class StrategiesService {
       targetDate?: Date;
     },
   ) {
-    const strategy = await this.prisma.userStrategy.findFirst({
-      where: { walletAddress: walletAddress.toLowerCase() },
-    });
-
-    if (!strategy) {
-      throw new DefiError(
-        "strategy_not_configured",
-        `No strategy found for wallet ${walletAddress}. Create a strategy first.`,
-      );
-    }
-
-    const amountUsd =
-      Number.isFinite(dto.amountAtDepositUsd) && dto.amountAtDepositUsd != null
-        ? dto.amountAtDepositUsd
-        : 0;
-
-    // Inherit chainName from the source OpportunityCache row (DefiLlama-
-    // provided label). Works uniformly for EVM (chainId match) and non-EVM
-    // (chainId=0 with namespace discriminator).
+    // Inherit chainName + tier from the source OpportunityCache row
+    // (DefiLlama-provided label + our own scoring). Works uniformly for
+    // EVM (chainId match) and non-EVM (chainId=0 with namespace
+    // discriminator). Looked up before `ensureUserStrategy` so an
+    // auto-created default strategy can match the deposited pool's tier.
     const sourceOpp = await this.prisma.opportunityCache.findFirst({
       where: {
         protocolSlug: dto.protocolSlug,
         chainId: dto.chainId,
         namespace: dto.namespace,
       },
-      select: { chainName: true },
+      select: { chainName: true, tier: true },
     });
+
+    const strategy = await this.ensureUserStrategy(
+      userId,
+      walletAddress,
+      dto.namespace,
+      sourceOpp?.tier ?? "conservative",
+    );
+
+    const amountUsd =
+      Number.isFinite(dto.amountAtDepositUsd) && dto.amountAtDepositUsd != null
+        ? dto.amountAtDepositUsd
+        : 0;
 
     try {
       return await this.prisma.strategyPosition.create({
@@ -439,13 +933,50 @@ export class StrategiesService {
     }
   }
 
-  async refreshPosition(id: string, walletAddress: string) {
+  /**
+   * Persist a freshly-observed on-chain value. On-chain reads live in
+   * mobile (per-protocol viem adapters, `services/defi/positions/reader.ts`
+   * — duplicating that per-`DepositTarget`-kind logic server-side isn't
+   * worth it), so the mobile client is the trust anchor here: it computes
+   * `current_amount_raw`/`current_amount_usd` live (on-chain read + Alchemy
+   * spot price via `computePnl`) and PATCHes the result back so consumers
+   * that don't do a live read themselves — `auto-compound-watcher`,
+   * `goal-deadline-watcher`, push notifications — see a reasonably fresh
+   * number instead of the permanently-null value this endpoint used to
+   * leave behind (it was a no-op stub before this).
+   *
+   * Best-effort by design: called from the same try/catch-wrapped call site
+   * as `createPosition` (`services/agent-executors/defi/*.ts`), so a failure
+   * here never blocks the read the user is looking at.
+   */
+  async refreshPosition(
+    id: string,
+    walletAddress: string,
+    observed?: { currentAmountRaw?: string; currentAmountUsd?: number },
+  ) {
     const position = await this.getPosition(id, walletAddress);
 
-    return {
-      ...position,
-      refreshedAt: new Date(),
-      status: "refreshed_stub",
-    };
+    if (
+      observed?.currentAmountRaw === undefined &&
+      observed?.currentAmountUsd === undefined
+    ) {
+      return { ...position, refreshedAt: new Date() };
+    }
+
+    const updated = await this.prisma.strategyPosition.update({
+      where: { id: position.id },
+      data: {
+        ...(observed.currentAmountRaw !== undefined
+          ? { currentAmountRaw: observed.currentAmountRaw }
+          : {}),
+        ...(observed.currentAmountUsd !== undefined &&
+        Number.isFinite(observed.currentAmountUsd)
+          ? { currentAmountUsd: observed.currentAmountUsd }
+          : {}),
+      },
+    });
+
+    const [enriched] = await this.attachCurrentApy([updated]);
+    return { ...enriched, refreshedAt: new Date() };
   }
 }

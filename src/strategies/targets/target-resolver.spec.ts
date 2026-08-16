@@ -1,6 +1,7 @@
 import type { DeFiLlamaYieldPool } from "../external/defillama.client";
 import { AaveResolver } from "./aave.resolver";
 import { bootTargetResolvers } from "./bootstrap";
+import { loadChainDirectory } from "./chain-directory";
 import { getResolverForProject, resolveTarget } from "./registry";
 import type { ResolverContext } from "./types";
 
@@ -14,7 +15,9 @@ import type { ResolverContext } from "./types";
 const UNDERLYING = "0x1111111111111111111111111111111111111111";
 const VAULT = "0x2222222222222222222222222222222222222222";
 
-function morphoPool(overrides: Partial<DeFiLlamaYieldPool> = {}): DeFiLlamaYieldPool {
+function morphoPool(
+  overrides: Partial<DeFiLlamaYieldPool> = {},
+): DeFiLlamaYieldPool {
   return {
     pool: "some-defillama-uuid",
     chain: "Ethereum",
@@ -48,6 +51,29 @@ function ctxWith(
 }
 
 beforeAll(() => {
+  // Chain support is data-driven (chain-directory.ts): `resolveEvmChainId`
+  // reads the loaded `Blockchain` snapshot, so a spec has to seed it just as
+  // `TargetResolverService` does at boot. An unloaded directory resolves every
+  // chain to 0, which is the correct fail-closed default but not what these
+  // cases are about.
+  loadChainDirectory([
+    {
+      chainId: 1,
+      name: "Ethereum",
+      chainSlug: "ethereum",
+      rpcUrl: "https://rpc.example/eth",
+      family: "EVM",
+      isTestnet: false,
+    },
+    {
+      chainId: 8453,
+      name: "Base",
+      chainSlug: "base",
+      rpcUrl: "https://rpc.example/base",
+      family: "EVM",
+      isTestnet: false,
+    },
+  ]);
   bootTargetResolvers();
 });
 
@@ -67,7 +93,11 @@ describe("getResolverForProject", () => {
 describe("MorphoResolver via resolveTarget", () => {
   it("matches a whitelisted vault by underlying + poolMeta → erc4626 target", async () => {
     const ctx = ctxWith(true, [
-      { address: VAULT, name: "Steakhouse USDC", asset: { address: UNDERLYING } },
+      {
+        address: VAULT,
+        name: "Steakhouse USDC",
+        asset: { address: UNDERLYING },
+      },
     ]);
     const target = await resolveTarget(morphoPool(), ctx);
     expect(target).toEqual({
@@ -79,7 +109,11 @@ describe("MorphoResolver via resolveTarget", () => {
 
   it("fails closed to null when on-chain validation rejects", async () => {
     const ctx = ctxWith(false, [
-      { address: VAULT, name: "Steakhouse USDC", asset: { address: UNDERLYING } },
+      {
+        address: VAULT,
+        name: "Steakhouse USDC",
+        asset: { address: UNDERLYING },
+      },
     ]);
     expect(await resolveTarget(morphoPool(), ctx)).toBeNull();
   });
@@ -95,7 +129,11 @@ describe("MorphoResolver via resolveTarget", () => {
 
   it("fails closed when the pool has no underlying token address", async () => {
     const ctx = ctxWith(true, [
-      { address: VAULT, name: "Steakhouse USDC", asset: { address: UNDERLYING } },
+      {
+        address: VAULT,
+        name: "Steakhouse USDC",
+        asset: { address: UNDERLYING },
+      },
     ]);
     expect(
       await resolveTarget(morphoPool({ underlyingTokens: [] }), ctx),

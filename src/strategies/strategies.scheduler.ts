@@ -30,6 +30,8 @@ export class StrategiesScheduler implements OnApplicationBootstrap {
     @InjectQueue("defillama-poll") private readonly pollQueue: Queue,
     @InjectQueue("auto-compound-watcher")
     private readonly autoCompoundQueue: Queue,
+    @InjectQueue("async-claim-watcher")
+    private readonly asyncClaimQueue: Queue,
     private readonly configService: ConfigService,
   ) {
     this.enabled =
@@ -93,7 +95,9 @@ export class StrategiesScheduler implements OnApplicationBootstrap {
    * sure each user only sees one nudge per configured window
    * (default 7 days) even though the cron fires daily.
    */
-  @Cron(CronExpression.EVERY_DAY_AT_10AM, { name: "auto-compound-watcher-cron" })
+  @Cron(CronExpression.EVERY_DAY_AT_10AM, {
+    name: "auto-compound-watcher-cron",
+  })
   async tickAutoCompound(): Promise<void> {
     if (!this.enabled) return;
     try {
@@ -110,6 +114,37 @@ export class StrategiesScheduler implements OnApplicationBootstrap {
     } catch (err) {
       this.logger.error(
         `auto-compound-watcher cron enqueue failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
+  /**
+   * ERC-7540 pending-claims tracker (expansion spec §7).
+   *
+   * Runs every 15 minutes rather than daily: an async request becomes
+   * claimable when an off-chain fulfilment lands, and the gap between "the
+   * money is claimable" and "the user is told" is the whole point of the
+   * tracker. The scan is a no-op while no async position exists, which is the
+   * steady state until a `async-vault` resolver is registered.
+   */
+  @Cron(CronExpression.EVERY_10_MINUTES, { name: "async-claim-watcher-cron" })
+  async tickAsyncClaims(): Promise<void> {
+    if (!this.enabled) return;
+    try {
+      await this.asyncClaimQueue.add(
+        "scan",
+        { reason: "cron" },
+        {
+          jobId: `async-claim-cron-${Date.now()}`,
+          removeOnComplete: true,
+          removeOnFail: 100,
+        },
+      );
+    } catch (err) {
+      this.logger.error(
+        `async-claim-watcher cron enqueue failed: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );

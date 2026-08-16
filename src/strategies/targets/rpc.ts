@@ -1,53 +1,82 @@
 /**
  * Read-only EVM RPC clients for pool-target validation (spec §3.2).
  *
- * Validation runs at poll/score time (backend, off the request path), so a
- * public RPC is sufficient. Precedence per chain:
- *   1. `STRATEGIES_RPC_URL_<chainId>` env override (ops can point at Alchemy…)
- *   2. viem's bundled chain default RPC.
+ * Chains are **data-driven**: the client is synthesised from the `Blockchain`
+ * row in `chain-directory.ts`, so validating on a newly-onboarded EVM chain
+ * needs a seeded row and an rpc-proxy route — no bundled per-chain constant and
+ * no code change here.
  *
- * Clients are memoised per chainId. All reads are best-effort; callers
- * fail closed (treat an unreadable target as unresolved → manual).
+ * Endpoint precedence per chain:
+ *   1. `STRATEGIES_RPC_URL_<chainId>` env override (ops escape hatch).
+ *   2. The row's `rpcUrl`, resolved through `resolveRpcEndpoint` — normally an
+ *      rpc-proxy route, which is also spec §11 Layer-6 "route reads through the
+ *      trusted rpc-proxy" rather than a public endpoint we don't control.
+ *
+ * Clients are memoised per chainId and invalidated when the directory reloads.
+ * All reads are best-effort; callers fail closed (an unreadable target is an
+ * unresolved target → Manual).
  */
 
 import { http, type Chain, type PublicClient, createPublicClient } from "viem";
-import {
-  arbitrum,
-  avalanche,
-  base,
-  bsc,
-  mainnet,
-  optimism,
-  polygon,
-} from "viem/chains";
+import { resolveRpcEndpoint } from "../../blockchains/rpc-endpoint";
+import { findChainById, viemChainFromRow } from "./chain-directory";
 
-const CHAINS: Record<number, Chain> = {
-  1: mainnet,
-  10: optimism,
-  56: bsc,
-  137: polygon,
-  8453: base,
-  42161: arbitrum,
-  43114: avalanche,
-};
+interface CachedClient {
+  client: PublicClient;
+  /** The row identity the client was built from; a reload invalidates it. */
+  rpcUrl: string;
+}
 
-const clients = new Map<number, PublicClient>();
+const clients = new Map<number, CachedClient>();
 
 export function getEvmChain(chainId: number): Chain | null {
-  return CHAINS[chainId] ?? null;
+  const row = findChainById(chainId);
+  if (!row || row.family !== "EVM" || typeof row.chainId !== "number")
+    return null;
+  const endpoint = resolveEndpoint(row.rpcUrl, chainId);
+  if (!endpoint) return null;
+  return viemChainFromRow(row, endpoint.url);
+}
+
+function resolveEndpoint(
+  rpcUrl: string,
+  chainId: number,
+): { url: string; headers: Record<string, string> } | null {
+  const override = process.env[`STRATEGIES_RPC_URL_${chainId}`]?.trim();
+  if (override) return { url: override, headers: {} };
+  try {
+    return resolveRpcEndpoint(rpcUrl);
+  } catch {
+    // Proxy route stored but RPC_PROXY_URL unset — fail closed rather than
+    // calling a nonsense URL.
+    return null;
+  }
 }
 
 export function getPublicClientForChain(chainId: number): PublicClient | null {
+  const row = findChainById(chainId);
+  if (!row || row.family !== "EVM" || typeof row.chainId !== "number")
+    return null;
+
   const cached = clients.get(chainId);
-  if (cached) return cached;
-  const chain = CHAINS[chainId];
-  if (!chain) return null;
-  const override = process.env[`STRATEGIES_RPC_URL_${chainId}`];
-  const url = override?.trim() || chain.rpcUrls.default.http[0] || undefined;
+  if (cached && cached.rpcUrl === row.rpcUrl) return cached.client;
+
+  const endpoint = resolveEndpoint(row.rpcUrl, chainId);
+  if (!endpoint) return null;
+
   const client = createPublicClient({
-    chain,
-    transport: http(url),
+    chain: viemChainFromRow(row, endpoint.url),
+    transport: http(endpoint.url, {
+      fetchOptions: Object.keys(endpoint.headers).length
+        ? { headers: endpoint.headers }
+        : undefined,
+    }),
   }) as PublicClient;
-  clients.set(chainId, client);
+  clients.set(chainId, { client, rpcUrl: row.rpcUrl });
   return client;
+}
+
+/** Drop memoised clients — called when the chain directory is reloaded. */
+export function resetRpcClients(): void {
+  clients.clear();
 }

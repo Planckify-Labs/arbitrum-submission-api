@@ -15,10 +15,12 @@ import {
 } from "@nestjs/common";
 import { ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { AssetPricesRequestDto } from "./dto/asset-prices.dto";
 import { CreateStrategyDto } from "./dto/create-strategy.dto";
 import { CrossChainQuoteDto } from "./dto/cross-chain-quote.dto";
 import { UpdateStrategyDto } from "./dto/update-strategy.dto";
 import { DefiError, DefiErrorFilter } from "./errors/defi-error";
+import { RouterQuoteError, RouterQuoteService } from "./router-quote.service";
 import { StrategiesService } from "./strategies.service";
 
 interface AuthedRequest {
@@ -33,7 +35,10 @@ interface AuthedRequest {
 @UseGuards(JwtAuthGuard)
 @UseFilters(DefiErrorFilter)
 export class StrategiesController {
-  constructor(private readonly strategiesService: StrategiesService) {}
+  constructor(
+    private readonly strategiesService: StrategiesService,
+    private readonly routerQuoteService: RouterQuoteService,
+  ) {}
 
   private getWalletAddress(req: AuthedRequest): string {
     const walletAddress = req.user?.walletAddress;
@@ -138,10 +143,38 @@ export class StrategiesController {
     return this.strategiesService.getProtocols(tier);
   }
 
+  @Post("asset-prices")
+  @ApiOperation({
+    summary:
+      "Batch USD spot price lookup (Alchemy Prices API proxy) — used to value DeFi positions and to snapshot amountAtDepositUsd. The only place Alchemy's key is used; the mobile client never calls Alchemy directly.",
+  })
+  getAssetPrices(@Body() dto: AssetPricesRequestDto) {
+    return this.strategiesService
+      .getAssetPrices(
+        dto.queries.map((q) => ({
+          chainId: q.chain_id,
+          assetSymbol: q.asset_symbol,
+          assetContract: q.asset_contract,
+        })),
+      )
+      .then((results) =>
+        results.map((r) => ({
+          chain_id: r.chainId,
+          asset_symbol: r.assetSymbol,
+          asset_contract: r.assetContract ?? null,
+          usd: r.usd,
+        })),
+      );
+  }
+
   @Get("positions")
   @ApiOperation({ summary: "Get user's strategy positions" })
   getPositions(@Request() req: AuthedRequest) {
-    return this.strategiesService.getPositions(this.getWalletAddress(req));
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new DefiError("unauthorized", "User ID missing from JWT");
+    }
+    return this.strategiesService.getPositions(userId, this.getWalletAddress(req));
   }
 
   @Post("positions")
@@ -163,7 +196,11 @@ export class StrategiesController {
       targetDate?: string;
     },
   ) {
-    return this.strategiesService.createPosition(this.getWalletAddress(req), {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new DefiError("unauthorized", "User ID missing from JWT");
+    }
+    return this.strategiesService.createPosition(userId, this.getWalletAddress(req), {
       ...dto,
       targetDate: dto.targetDate ? new Date(dto.targetDate) : undefined,
     });
@@ -176,11 +213,25 @@ export class StrategiesController {
   }
 
   @Post("positions/:id/refresh")
-  @ApiOperation({ summary: "Trigger a refresh for a specific position" })
-  refreshPosition(@Request() req: AuthedRequest, @Param("id") id: string) {
+  @ApiOperation({
+    summary:
+      "Persist a freshly-observed on-chain amount/USD value for a position (mobile does the live on-chain read + price lookup and reports it here)",
+  })
+  refreshPosition(
+    @Request() req: AuthedRequest,
+    @Param("id") id: string,
+    @Body()
+    dto?: { current_amount_raw?: string; current_amount_usd?: number },
+  ) {
     return this.strategiesService.refreshPosition(
       id,
       this.getWalletAddress(req),
+      dto
+        ? {
+            currentAmountRaw: dto.current_amount_raw,
+            currentAmountUsd: dto.current_amount_usd,
+          }
+        : undefined,
     );
   }
 
@@ -198,6 +249,43 @@ export class StrategiesController {
       this.getWalletAddress(req),
       dto,
     );
+  }
+
+  @Post("router-quote")
+  @ApiOperation({
+    summary:
+      "Proxy a router-calldata quote (Pendle) — the device never calls the protocol's API directly (expansion spec §6)",
+  })
+  @ApiResponse({ status: 200, description: "Verified quote returned" })
+  async routerQuote(
+    @Request() req: AuthedRequest,
+    @Body()
+    dto: {
+      poolId: string;
+      amountRaw: string;
+      slippageBps: number;
+      action?: "deposit" | "withdraw";
+    },
+  ) {
+    // The quote's receiver is ALWAYS the caller's own wallet, taken from the
+    // JWT rather than the body: a router quote made out to a third party is
+    // precisely the thing the allowlist and decode assertions exist to stop.
+    const receiver = this.getWalletAddress(req);
+    try {
+      return await this.routerQuoteService.quote({
+        poolId: dto.poolId,
+        receiver,
+        amountRaw: dto.amountRaw,
+        slippageBps: dto.slippageBps,
+        action: dto.action ?? "deposit",
+      });
+    } catch (err) {
+      // Curated code only — an upstream body never reaches the client.
+      throw new DefiError(
+        err instanceof RouterQuoteError ? err.code : "unknown",
+        "router quote rejected",
+      );
+    }
   }
 
   @Get("cross-chain/status")
