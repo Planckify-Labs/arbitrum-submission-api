@@ -191,6 +191,16 @@ registerProtocol({
 });
 
 /**
+ * Lista's API keys chains by name. Only chains Lista actually deploys `moolah`
+ * on are listed; an absent chain declines rather than asking about a
+ * deployment we could not execute against.
+ */
+const LISTA_CHAINS: Readonly<Record<number, string>> = {
+  1: "ethereum",
+  56: "bsc",
+};
+
+/**
  * Curve's API keys chains by its own slug rather than by chainId. Only chains
  * we can execute on are listed; an absent chain declines.
  */
@@ -380,6 +390,172 @@ registerProtocol({
       });
     },
   },
+});
+
+/**
+ * Lista Lending (BNB Chain) — Morpho-style curated vaults on Lista's `moolah`
+ * markets. Each vault is a genuine ERC-4626 over its loan asset: verified on
+ * chain 2026-08-21 for both DeFiLlama USDT rows, `0x6d6783c1…`
+ * ("Gauntlet USDT Vault") and `0xeb4f6ffb…` ("Pangolins USDT Vault") — same
+ * implementation behind both proxies (0x713a7e23…), plain 4626 with no
+ * request, queue or cooldown selectors in its bytecode.
+ *
+ * Endpoint from `yield-server/src/adaptors/lista-lending/index.js`. It carries
+ * `address` AND `asset`, which is the `protocol-api` common case; `name` is the
+ * curator-facing vault name DeFiLlama does NOT reuse as `poolMeta` (the rows
+ * carry no `poolMeta` at all), so matching falls back to `(asset, chain)` — and
+ * BNB Chain has several USDT vaults, which `matchVault` will refuse as
+ * ambiguous. That refusal is correct: two curated vaults for one asset differ
+ * in collateral and risk, and picking one is a decision nobody made.
+ *
+ * `pageSize` is capped by the API; 100 covers the current 20 BNB vaults with
+ * room to spare. Pendle's `limit=500` shipping as a silent HTTP 400 is the
+ * reason this is stated rather than assumed — verify with the discovery-health
+ * line, not by reading this comment.
+ */
+registerProtocol({
+  slug: "lista-lending",
+  // NOT `"lista"`. A bare brand alias is a substring vector: with it, both
+  // `lista-cdp` and `lista-liquid-staking` reached this resolver on the very
+  // first dry run after the entry landed. Nothing in the feed uses a plain
+  // `lista` slug, so the alias bought nothing and cost two look-alikes.
+  aliases: ["lista-lending", "lista-dao", "moolah"],
+  tier: "tier1",
+  execution: { kind: "erc4626" },
+  minTvlUsd: 250_000,
+  discovery: {
+    via: "protocol-api",
+    url(chainId) {
+      const chain = LISTA_CHAINS[chainId];
+      return chain
+        ? `https://api.lista.org/api/moolah/vault/list?page=1&pageSize=100&chain=${chain}`
+        : null;
+    },
+    rows(payload) {
+      return asArray(rec(rec(rec(payload).data).list)).flatMap((raw) => {
+        const v = rec(raw);
+        const address = addr(v.address);
+        const asset = addr(v.asset);
+        if (!address || !asset) return [];
+        return [
+          { address, asset, symbol: str(v.assetSymbol), name: str(v.name) },
+        ];
+      });
+    },
+  },
+});
+
+/**
+ * Auto Finance (Tokemak autopools) — was withheld as "endpoint not yet
+ * reviewed". Reviewed now.
+ *
+ * `https://autopools-api.tokemaklabs.com/api/{chainId}/gen3` returns
+ * `autopools[]` with `id` (the autopool contract) and `baseAssetId` (its
+ * asset). The `gen3` system name is not a guess: `v2-config.tokemaklabs.com`
+ * lists the published systems and every mainnet chain uses `gen3` (checked
+ * 2026-08-21). Hardcoding it costs one call instead of two, and a rename shows
+ * up as the source going DARK rather than as a wrong address.
+ *
+ * Verified on chain 2026-08-21: `0x9c686410…` ("Tokemak baseUSD", the pool
+ * DeFiLlama publishes for Base) is 4626 over Base USDC, and its implementation
+ * (0x375c795a…) is plain 4626 plus `paused()` — no request, queue or cooldown
+ * selectors, so `instant` is honest.
+ *
+ * **`migTest_*` autopools are dropped.** They are migration fixtures with dust
+ * TVL, and three of the four Base rows are WETH — leaving them in would make
+ * every WETH pool ambiguous and resolve FEWER pools, not more. Same reasoning
+ * as Concrete's test/pre-deposit filter.
+ */
+registerProtocol({
+  slug: "autofinance",
+  aliases: ["autofinance", "auto-finance", "tokemak-autopools"],
+  tier: "tier1",
+  execution: { kind: "erc4626" },
+  minTvlUsd: 250_000,
+  discovery: {
+    via: "protocol-api",
+    url: (chainId) =>
+      `https://autopools-api.tokemaklabs.com/api/${chainId}/gen3`,
+    rows(payload) {
+      return asArray(rec(payload).autopools).flatMap((raw) => {
+        const v = rec(raw);
+        const name = str(v.name) ?? "";
+        const symbol = str(v.symbol) ?? "";
+        if (/migtest|^test/i.test(name) || /migtest/i.test(symbol)) return [];
+        const address = addr(v.id);
+        const asset = addr(v.baseAssetId);
+        if (!address || !asset) return [];
+        return [{ address, asset, symbol, name }];
+      });
+    },
+  },
+});
+
+// ── Pinned-vault protocols: one vault per asset, so nothing to discover ────
+
+/**
+ * Avant Protocol — `savBTC` / `savUSD` / `savETH`. Pinned, correct, and STILL
+ * withheld. The reason is worth reading before anyone tries again.
+ *
+ * The old reason ("no public vault-list endpoint found") was wrong twice over:
+ * there is nothing to enumerate — one staked vault per asset, named as a
+ * constant in Avant's own adaptors — and the addresses verify cleanly on chain.
+ * They are pinned in `address-book/vaults.ts` and they stay pinned, the same
+ * way ORIGIN_VAULTS keeps correct contracts that have no usable pool.
+ *
+ * **What actually blocks it is the exit, and only a fork run found it.** savETH
+ * follows Ethena's `StakedUSDeV2` pattern: while `cooldownDuration != 0` (it is
+ * 86400), `withdraw`/`redeem` REVERT with `OperationNotAllowed()`
+ * (0xf50a3b52), and the only exit is `cooldownShares()` -> wait -> `unstake()`.
+ * Proven on a mainnet fork at block 25,803,000 — the deposit succeeded and the
+ * MAX withdraw reverted (`__fork__/onboarding.fork.test.ts`).
+ *
+ * Every earlier check said yes: `asset()`, `totalAssets()`, `convertToShares()`
+ * and `maxDeposit()` all answer, and because `cooldownDuration()` is READABLE
+ * the exit-terms probe reports an honest `delayed`. An honest label on a button
+ * that always reverts is still a broken button, which is why §11.2 asks for a
+ * round trip rather than a deposit.
+ *
+ * Unlocking it needs a cooldown-aware exit, not a discovery or address fix.
+ * `services/defi/adapters/ethena.ts` is the shape — the same two-step already
+ * exists there for sUSDe.
+ */
+registerProtocol({
+  slug: "avant",
+  aliases: ["avant", "avant-avbtc", "avant-avusd", "avant-aveth"],
+  tier: "tier1",
+  execution: { kind: "erc4626-pinned", book: "avant" },
+  withheld:
+    "savBTC/savUSD/savETH are real ERC-4626 and deposit fine, but redeem() " +
+    "reverts with OperationNotAllowed() (0xf50a3b52) while cooldownDuration " +
+    "is 86400 — the Ethena cooldown pattern. Proven on a mainnet fork " +
+    "2026-08-21; needs a cooldown-aware exit (see adapters/ethena.ts)",
+});
+
+/**
+ * 40 Acres — pinned USDC vaults on Base and Optimism. See
+ * `address-book/vaults.ts` for why Avalanche is deliberately absent (two USDC
+ * vaults on one chain is an ambiguity, and ambiguity is a refusal).
+ */
+registerProtocol({
+  slug: "forty-acres",
+  aliases: ["40-acres", "forty-acres", "40acres"],
+  tier: "tier1",
+  execution: { kind: "erc4626-pinned", book: "forty-acres" },
+});
+
+/**
+ * Avantis — the single `avUSDC` liquidity vault on Base.
+ *
+ * Pinned rather than discovered because there is one vault, and DeFiLlama's own
+ * adaptor treats its address as a constant. Note this is a perps-counterparty
+ * vault: the ABI is ordinary 4626, the risk is not (see the address book).
+ */
+registerProtocol({
+  slug: "avantis",
+  aliases: ["avantis", "avantis-finance"],
+  tier: "tier1",
+  execution: { kind: "erc4626-pinned", book: "avantis" },
 });
 
 // ── Discovery only: identity is bespoke, resolver lives elsewhere ──────────
@@ -581,6 +757,58 @@ for (const [slug, aliases, reason] of [
     "Flux is a separate deployment answered by both `venus` and `venus-4626`. " +
       "Unreviewed: it may well be a supportable fork, but nobody has checked.",
   ],
+  [
+    "aerodrome-slipstream",
+    ["aerodrome-slipstream"],
+    // This one was WORSE than a substring match: `aerodrome-slipstream` was an
+    // explicit alias of the Solidly-fork `aerodrome` family, i.e. the family
+    // claimed to handle it. Slipstream is Aerodrome's CONCENTRATED-liquidity
+    // product; a position in it needs a tick range, which is the same reason
+    // Uniswap v3/v4 stay Manual (§11.3), and the Router `addLiquidity` the
+    // Solidly adapter builds addresses a different pool entirely. 11 pools,
+    // ~$139M, all correctly Manual today only because a CL pool has no
+    // `stable()` for `readPoolIdentity` to read. `velodrome-v3` was already
+    // reserved for exactly this; the slipstream slugs were missed.
+    "Slipstream is Aerodrome's concentrated-liquidity generation, not the " +
+      "Solidly v2 pair the `aerodrome` family builds `addLiquidity` for. It " +
+      "was an ALIAS of that family, so the mis-claim was explicit rather than " +
+      "accidental; only the missing `stable()` getter kept it from resolving.",
+  ],
+  [
+    "velodrome-slipstream",
+    ["velodrome-slipstream"],
+    "The Optimism twin of `aerodrome-slipstream`, and an alias of the " +
+      "`velodrome` Solidly family for the same wrong reason. Reserved " +
+      "alongside the already-reserved `velodrome-v3`.",
+  ],
+  [
+    "lista-cdp",
+    ["lista-cdp"],
+    // Reported by the dry run's substring check the first time `lista-lending`
+    // ran — exactly the signal that check exists for, and it fired on a hole
+    // this session opened rather than an inherited one.
+    "Lista's CDP mints lisUSD against collateral. It is a debt position, not " +
+      "the curated ERC-4626 supply vault `lista-lending` resolves, and " +
+      "leveraged positions are out of scope by design (§1 non-goals).",
+  ],
+  [
+    "lista-liquid-staking",
+    ["lista-liquid-staking", "lista-lido"],
+    "slisBNB liquid staking on BNB Chain — an `lst-stake` venue if anything, " +
+      "not a 4626 vault. Reserved until someone reviews its stake shape and " +
+      "exit; until then the `lista-lending` family must not answer for it.",
+  ],
+  [
+    "centrifuge",
+    ["centrifuge-protocol", "centrifuge"],
+    // ~$1.19B across three chains, and the largest thing in the queue that is
+    // NOT an AMM. It is withheld by the spec, not by a missing address.
+    "Centrifuge's tokenised funds are ERC-7540 ASYNCHRONOUS vaults " +
+      "(request -> fulfil -> claim). §7 forbids a resolver for `async-vault` " +
+      "until the two-phase flow ships: badging one 'Deposit in-app' produces a " +
+      "deposit that requests and then appears stuck. Reserved so no 4626 " +
+      "family answers for it in the meantime.",
+  ],
 ] as const) {
   registerProtocol({
     slug,
@@ -615,19 +843,64 @@ for (const [slug, aliases, why] of [
     "liquidETH is a BoringVault, not ERC-4626 — `asset()` reverts on chain (verified 2026-08-19)",
   ],
   [
-    "avant",
-    ["avant-avbtc", "avant-avusd", "avant"],
-    "no public vault-list endpoint found",
+    "gains-network",
+    ["gains-network", "gains-trade", "gtrade"],
+    // gUSDC on Arbitrum (0xd3443ee1…) IS a conforming ERC-4626 over USDC —
+    // asset/totalAssets/convertToShares/maxDeposit all answer. It is withheld
+    // for the EXIT, which is the case §11.3b calls "the one soft spot" and
+    // this is it in the wild: `withdrawEpochsTimelock()` returns 3 and
+    // `currentEpoch()` returns 313 (read on chain 2026-08-21), so a redeem
+    // needs a withdraw request and a three-epoch wait. Neither exit probe sees
+    // that — there is no ERC-7540 interface and no `cooldownDuration()` — so
+    // the provider would report `instant` and the card would promise an exit
+    // the contract refuses.
+    "gUSDC is real ERC-4626 but its redeem is epoch-gated (withdrawEpochsTimelock == 3, verified on chain 2026-08-21) and NEITHER exit probe detects it, so the card would falsely promise an instant exit",
   ],
   [
-    "forty-acres",
-    ["40-acres", "forty-acres"],
-    "no public vault-list endpoint found",
+    "pareto-credit",
+    ["pareto-credit", "pareto", "idle-credit"],
+    // The address is not the problem: DeFiLlama's deep link names the vault
+    // exactly (app.pareto.credit/vault#0xC26A6Fa2…). That contract answers
+    // `symbol()` = "AA_FalconXUSDC" and REVERTS on `asset()`, `totalAssets()`,
+    // `convertToShares()` and `maxDeposit()` — it is an Idle-lineage tranche
+    // token, deposited through a CDO contract, not a 4626 vault.
+    "AA/BB tranche tokens, not ERC-4626: asset()/totalAssets()/convertToShares() all revert on 0xC26A6Fa2 (verified on chain 2026-08-21); needs a tranche execution kind",
   ],
   [
-    "autofinance",
-    ["autofinance", "auto-finance"],
-    "vaults come from tokemaklabs' autopools API; endpoint not yet reviewed",
+    "zerobase-cedefi",
+    ["zerobase-cedefi", "zerobase"],
+    // Its vault takes deposits and mints a separate `zkUSDT`/`zkUSDC` receipt;
+    // the vault contract itself answers nothing 4626-shaped.
+    "the vault (0xCc5Df5C6 on BNB Chain) reverts on symbol/asset/totalAssets/maxDeposit — it mints separate zkUSDT/zkUSDC receipts rather than 4626 shares (verified on chain 2026-08-21)",
+  ],
+  [
+    "bitway-earn",
+    ["bitway-earn", "bitway"],
+    // One vault serves several assets, each with its own LP token, so there is
+    // no (vault, asset) 4626 pairing to validate at all.
+    "the Core Alpha vault (0xb82E3206 on BNB Chain) reverts on every 4626 selector and issues a per-asset LP token instead of shares (verified on chain 2026-08-21)",
+  ],
+  [
+    "native-credit-pool",
+    ["native-credit-pool", "native-lend"],
+    "exposes `totalUnderlying()` rather than the 4626 accounting surface (per DeFiLlama's own adaptor); not an ERC-4626 vault",
+  ],
+  [
+    "cian-yield-layer",
+    ["cian-yield-layer", "cian"],
+    // Unlike every other entry here, the blocker really is discovery: CIAN's
+    // per-vault APY endpoints return `underlyingTokens` and no vault address,
+    // and its DeFiLlama link is the bare dapp.cian.app.
+    "CIAN's own APY endpoints publish no vault address (checked data.cian.app 2026-08-21) and its DeFiLlama link carries none either, so there is nothing to validate",
+  ],
+  [
+    "usd-ai",
+    ["usd-ai", "usdai"],
+    // DeFiLlama labels the pool "30d unlock" — a lockup the 4626 exit probes
+    // cannot see, which is the gains-network failure mode again. Address
+    // source unresolved too: no yield-server adaptor and a bare app.usd.ai
+    // link.
+    "the pool is labelled '30d unlock', a lockup neither the ERC-7540 probe nor cooldownDuration() can read, so an erc4626 target would promise an instant exit; no address source published either",
   ],
 ] as const) {
   registerProtocol({

@@ -127,14 +127,27 @@ function solidlyResolver(config: {
   };
 }
 
+/**
+ * The `*-slipstream` slugs are deliberately NOT aliases here, and used to be.
+ *
+ * Slipstream is Aerodrome/Velodrome's concentrated-liquidity generation. A
+ * position in it is defined by a tick range, which is a different product
+ * decision from "supply this asset" — the same reason Uniswap v3/v4 stay
+ * Manual (§11.3) — and the Router `addLiquidity` this resolver builds targets
+ * the v2 pair for the pair, not the CL pool. Claiming the slug asserted the
+ * opposite. Nothing routed wrongly only because a CL pool has no `stable()`
+ * for `readPoolIdentity` to read, i.e. the guard that saved it was incidental.
+ * Both slugs are now `reserved` in protocols.ts, which is the same fix
+ * `velodrome-v3` already had.
+ */
 export const AerodromeResolver = solidlyResolver({
   family: "aerodrome",
-  aliases: ["aerodrome-v1", "aerodrome", "aerodrome-slipstream"],
+  aliases: ["aerodrome-v1", "aerodrome"],
 });
 
 export const VelodromeResolver = solidlyResolver({
   family: "velodrome",
-  aliases: ["velodrome-v2", "velodrome", "velodrome-slipstream"],
+  aliases: ["velodrome-v2", "velodrome"],
 });
 
 export const TIER3_SOLIDLY_RESOLVERS: readonly PoolTargetResolver[] = [

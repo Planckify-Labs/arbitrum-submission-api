@@ -33,6 +33,9 @@ import {
   ZEROLEND_POOLS,
 } from "./lending";
 import {
+  AVANTIS_VAULTS,
+  AVANT_VAULTS,
+  FORTY_ACRES_VAULTS,
   ORIGIN_VAULTS,
   type PinnedVaultBook,
   SKY_SAVINGS_VAULTS,
@@ -64,6 +67,9 @@ export const PINNED_VAULT_BOOKS: Readonly<Record<string, PinnedVaultBook>> = {
   sky: SKY_SAVINGS_VAULTS,
   spark: SPARK_SAVINGS_VAULTS,
   origin: ORIGIN_VAULTS,
+  avant: AVANT_VAULTS,
+  "forty-acres": FORTY_ACRES_VAULTS,
+  avantis: AVANTIS_VAULTS,
 };
 
 export function aaveForkPool(family: string, chainId: number): Address | null {

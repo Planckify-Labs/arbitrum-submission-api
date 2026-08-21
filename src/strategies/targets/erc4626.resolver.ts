@@ -100,17 +100,59 @@ function pickLabelledCandidate<T>(
  * An address that the registry does not list is discarded, so a bad candidate
  * degrades to Manual instead of steering the match.
  */
-async function pickByCandidateAddress<T>(
+/**
+ * What the protocol's own deep link says this pool is, as a THREE-state answer.
+ *
+ * `"unvouched"` is the state that matters and the one a plain `T | null` cannot
+ * express. Returning null for "an address was named, but it is not in our
+ * candidate set" let the caller fall through to label matching — and label
+ * matching then produced a confident, wrong answer.
+ *
+ * Measured 2026-08-21: **25 of 69 resolving Morpho pools, ~$478M, deposited
+ * into a different vault than their row describes.** Ethereum `STEAKUSDC` is
+ * the clean example — the row is $92.0M, DeFiLlama's link names a vault holding
+ * $93.9M ("Steakhouse Prime USDC"), and the label matcher instead picked a
+ * $75.0M vault called "Steakhouse USDC". Same brand, same asset, same symbol,
+ * different product and different APY.
+ *
+ * Nothing downstream objected: `validateErc4626` checks `asset()` (both USDC)
+ * and a TVL band wide enough to swallow an 18% gap. This is the
+ * `spark-savings -> SparkLend` failure one level down.
+ *
+ * So an address, when the protocol supplies one, is treated the same way §4's
+ * comment already treats an explicit `poolMeta`: **a claim about identity —
+ * honour it or refuse.** It is the strongest signal available and it must not
+ * be overridden by a fuzzy symbol match. The direction stays fail-closed: the
+ * link may only SELECT from vaults the protocol's own registry already lists
+ * (§11.5b), never introduce one, so the worst case is Manual.
+ */
+type AddressClaim<T> =
+  /** The link named an address, and the registry lists it. */
+  | { kind: "match"; candidate: T }
+  /**
+   * The link named an address the registry does NOT list — commonly a Morpho
+   * Vault V2, which lives behind a different GraphQL type (§11.6b). We cannot
+   * vouch for it, and the pool is definitively not about any candidate we do
+   * have, so labels must not get a second opinion.
+   */
+  | { kind: "unvouched" }
+  /** No address available. Labels are the only signal left. */
+  | { kind: "none" };
+
+async function claimByCandidateAddress<T>(
   candidates: readonly T[],
   pool: DeFiLlamaYieldPool,
   ctx: ResolverContext,
   addressOf: (candidate: T) => string | null | undefined,
-): Promise<T | null> {
-  if (candidates.length === 0) return null;
+): Promise<AddressClaim<T>> {
+  if (candidates.length === 0) return { kind: "none" };
   const address = await candidateAddressForPool(pool, ctx);
-  if (!address) return null;
+  if (!address) return { kind: "none" };
   const hits = candidates.filter((c) => eqAddr(addressOf(c), address));
-  return hits.length === 1 ? hits[0] : null;
+  // Several candidates on one address should be impossible; if a registry ever
+  // does that, it is ambiguity, and ambiguity is a refusal.
+  if (hits.length === 1) return { kind: "match", candidate: hits[0] };
+  return { kind: "unvouched" };
 }
 
 /**
@@ -226,12 +268,22 @@ export const MorphoResolver: PoolTargetResolver = {
 
     // Morpho pools carry the vault identity in `symbol` (STEAKUSDC) with
     // `poolMeta` null, so `symbol` is the fallback label here.
+    const claim = await claimByCandidateAddress(
+      candidates,
+      pool,
+      ctx,
+      (v) => v.address,
+    );
+    // Morpho's link names the vault outright. When it does, it decides.
+    if (claim.kind === "unvouched") return null;
     const match =
-      pickLabelledCandidate(candidates, [pool.poolMeta, pool.symbol], (v) => [
-        v.name,
-        v.symbol,
-      ]) ??
-      (await pickByCandidateAddress(candidates, pool, ctx, (v) => v.address));
+      claim.kind === "match"
+        ? claim.candidate
+        : pickLabelledCandidate(
+            candidates,
+            [pool.poolMeta, pool.symbol],
+            (v) => [v.name, v.symbol],
+          );
     if (!match) return null;
 
     const target: DepositTarget = {
@@ -286,12 +338,30 @@ export const YearnResolver: PoolTargetResolver = {
     );
     if (candidates.length === 0) return null;
 
+    // Yearn gets the same treatment as Morpho, and needs it more: its rows
+    // carry `poolMeta: null` and `symbol` = the ASSET ("USDC"), while mainnet
+    // has four distinct USDC vaults. The label is nearly worthless here, so
+    // letting it override the address the protocol itself names would be the
+    // Morpho mis-route with a weaker signal doing the overriding.
+    //
+    // Not separately measured — DeFiLlama was rate-limiting when this shipped.
+    // Applying it is still the safe direction: an exclusive address claim can
+    // only move a pool to Manual, never onto a different vault.
+    const claim = await claimByCandidateAddress(
+      candidates,
+      pool,
+      ctx,
+      (v) => v.address,
+    );
+    if (claim.kind === "unvouched") return null;
     const match =
-      pickLabelledCandidate(candidates, [pool.poolMeta, pool.symbol], (v) => [
-        v.name,
-        v.symbol,
-      ]) ??
-      (await pickByCandidateAddress(candidates, pool, ctx, (v) => v.address));
+      claim.kind === "match"
+        ? claim.candidate
+        : pickLabelledCandidate(
+            candidates,
+            [pool.poolMeta, pool.symbol],
+            (v) => [v.name, v.symbol],
+          );
     if (!match) return null;
 
     const target: DepositTarget = {

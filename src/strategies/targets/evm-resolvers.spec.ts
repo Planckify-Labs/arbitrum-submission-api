@@ -29,6 +29,7 @@ import {
   SkySavingsResolver,
   SparkSavingsResolver,
 } from "./erc4626-family.resolver";
+import { MorphoResolver } from "./erc4626.resolver";
 import { LstStakeResolver } from "./lst.resolver";
 import { MorphoBlueResolver } from "./morpho-blue.resolver";
 import type { EvmReadClient, ResolverContext } from "./types";
@@ -713,5 +714,119 @@ describe("registry ordered fallback (§12 Q3)", () => {
       ctxWith({ validate: true }),
     );
     expect(target).toMatchObject({ kind: "erc4626" });
+  });
+});
+
+/**
+ * The deep-link address is an EXCLUSIVE claim (§11.6b).
+ *
+ * This is a regression suite for a mis-route that was live and silent: 25 of 69
+ * resolving Morpho pools, ~$478M, deposited into a different vault than their
+ * row described, because `pickByCandidateAddress` ran only as a FALLBACK. When
+ * the named address was not in the candidate set it returned null, and the
+ * fuzzy label matcher then produced a confident wrong answer — a same-symbol,
+ * same-asset, different-product vault that `validateErc4626` happily accepted.
+ *
+ * The three cases below are the whole contract.
+ */
+describe("deep-link address outranks the label (§11.6b)", () => {
+  const MORPHO_API = "https://api.morpho.org/graphql";
+  const LINKED = "0xaaaa000000000000000000000000000000000001";
+  const LOOKALIKE = "0xbbbb000000000000000000000000000000000002";
+
+  /** Two vaults, same symbol, same asset — the shape that caused the bug. */
+  const VAULTS = {
+    data: {
+      vaults: {
+        items: [
+          {
+            address: LINKED,
+            name: "Steakhouse Prime USDC",
+            symbol: "steakUSDC",
+            listed: true,
+            asset: { address: UNDERLYING },
+          },
+          {
+            address: LOOKALIKE,
+            name: "Steakhouse USDC",
+            symbol: "steakUSDC",
+            listed: true,
+            asset: { address: UNDERLYING },
+          },
+        ],
+      },
+    },
+  };
+
+  /** A source that names `address` for every pool, or none at all. */
+  function linkSource(address: string | null) {
+    registerCandidateSource({
+      id: "test-deep-link",
+      projects: ["morpho-blue"],
+      candidate: async () => address as never,
+    });
+  }
+
+  function morphoCtx(): ResolverContext {
+    return {
+      fetchJsonCached: async <T>(_key: string, url: string) =>
+        (url === MORPHO_API ? VAULTS : null) as T,
+      validate: async () => true,
+      publicClient: () => null,
+    };
+  }
+
+  const morphoPool = () =>
+    pool({
+      project: "morpho-blue",
+      symbol: "steakUSDC",
+      underlyingTokens: [UNDERLYING],
+    });
+
+  beforeEach(() => {
+    resetCandidateSources();
+  });
+
+  it("uses the linked vault even when the label is ambiguous", async () => {
+    // Two vaults share the symbol, so the label alone is a refusal. The link
+    // decides, and it must decide in favour of the address it names.
+    linkSource(LINKED);
+    const target = await MorphoResolver.resolve(morphoPool(), morphoCtx());
+    expect(target).toEqual({
+      kind: "erc4626",
+      vault: LINKED,
+      asset: UNDERLYING.toLowerCase(),
+    });
+  });
+
+  it("REFUSES when the link names a vault the registry does not list", async () => {
+    // The exact mis-route. The link names a Morpho Vault V2 (invisible to the
+    // V1 `vaults` query), so no candidate matches. Falling back to the label
+    // here is what deposited users into a look-alike; the honest answer is
+    // Manual.
+    linkSource("0xcccc000000000000000000000000000000000003");
+    const target = await MorphoResolver.resolve(morphoPool(), morphoCtx());
+    // A non-null here means the resolver fell back to a label match after the
+    // protocol named a vault we cannot vouch for — the $478M mis-route.
+    expect(target).toBeNull();
+  });
+
+  it("still falls back to the label when there is no link at all", async () => {
+    // No address available is different from a contradicted one: labels are
+    // then the only signal, and a UNIQUE label match is still trustworthy.
+    linkSource(null);
+    const unique = await MorphoResolver.resolve(
+      pool({
+        project: "morpho-blue",
+        symbol: "Steakhouse Prime USDC",
+        underlyingTokens: [UNDERLYING],
+      }),
+      morphoCtx(),
+    );
+    expect(unique).toEqual({
+      kind: "erc4626",
+      vault: LINKED,
+      asset: UNDERLYING.toLowerCase(),
+    });
   });
 });

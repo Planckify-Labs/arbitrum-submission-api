@@ -148,3 +148,121 @@ export const ORIGIN_VAULTS: PinnedVaultBook = {
     },
   ],
 };
+
+/**
+ * Avant Protocol — `savBTC` / `savUSD` / `savETH`, the staked (yield-bearing)
+ * wrappers over Avant's own `avBTC` / `avUSD` / `avETH`.
+ *
+ * Was declared `withheld` with "no public vault-list endpoint found". There is
+ * no endpoint because there is nothing to enumerate: Avant ships ONE staked
+ * vault per asset, DeFiLlama publishes one row per vault (`avant-avbtc`,
+ * `avant-avusd`, `avant-aveth` are three separate project slugs), and its own
+ * adaptors name the vault as a constant. That is the textbook case for pinning
+ * rather than discovering.
+ *
+ * Addresses transcribed from `yield-server/src/adaptors/avant-{avbtc,avusd,aveth}`
+ * (read as documentation; the repo ships no LICENSE) and then VERIFIED ON CHAIN
+ * 2026-08-21: each answers `symbol()` = savBTC / savUSD / savETH, `asset()` is
+ * the matching av-token, and `totalAssets()` / `convertToShares()` /
+ * `maxDeposit()` all respond with `maxDeposit` unbounded.
+ *
+ * **These pins are correct and the protocol is still WITHHELD** (see
+ * protocols.ts). The cooldown is readable — `cooldownDuration()` returns 86400
+ * and the contracts carry the Ethena `cooldownAssets` / `cooldownShares` /
+ * `unstake` convention, so `readExitTerms` reports an honest `delayed` — but
+ * readable is not the same as executable: while the cooldown is non-zero,
+ * `withdraw`/`redeem` REVERT with `OperationNotAllowed()` (0xf50a3b52), which
+ * a mainnet fork run found after every structural check had passed.
+ *
+ * They stay pinned anyway, for the same reason ORIGIN_VAULTS does: the
+ * addresses are right, and deleting them would mean re-deriving them the day a
+ * cooldown-aware exit lands.
+ */
+export const AVANT_VAULTS: PinnedVaultBook = {
+  1: [
+    {
+      vault: "0xDA06eE2dACF9245Aa80072a4407deBDea0D7e341",
+      asset: "0x9469470C9878bf3d6d0604831d9A3A366156f7EE", // avETH
+      label: "savETH",
+    },
+  ],
+  43114: [
+    {
+      vault: "0x649342c6bff544d82DF1B2bA3C93e0C22cDeBa84",
+      asset: "0xfd2c2A98009d0cBed715882036e43d26C4289053", // avBTC
+      label: "savBTC",
+    },
+    {
+      vault: "0x06d47F3fb376649c3A9Dafe069B3D6E35572219E",
+      asset: "0x24dE8771bC5DdB3362Db529Fc3358F2df3A0E346", // avUSD
+      label: "savUSD",
+    },
+  ],
+};
+
+/**
+ * 40 Acres — a small fixed set of ERC-4626 USDC vaults.
+ *
+ * Also previously `withheld` for a missing endpoint. DeFiLlama's own adaptor
+ * calls `utils.getERC4626Info(address, ...)` on four hardcoded addresses, i.e.
+ * the aggregator itself treats these as pinned 4626 vaults. Verified on chain
+ * 2026-08-21: the Base vault is 4626 over USDC with `maxDeposit` unbounded, and
+ * a bytecode scan finds `deposit`/`redeem`/`withdraw`/`maxRedeem` with **no**
+ * request/queue/cooldown selectors, so `instant` is an honest exit verdict.
+ *
+ * **Avalanche is deliberately absent even though two vaults exist there.**
+ * `0x124D00b1…` and `0xC0485C4b…` are BOTH USDC vaults on the same chain, and
+ * `pinnedVaultResolver` requires exactly one match per (chain, asset) — two is
+ * an ambiguity, and ambiguity is a refusal (§8.2). Listing them would resolve
+ * nothing while looking like coverage. Splitting them needs an exact key
+ * (DeFiLlama labels them `40avax-USDC-Vault` and `40avax-blackhole-USDC-Vault`,
+ * but `poolMeta` is not what the pinned resolver matches on), so they stay
+ * Manual until the resolver can disambiguate by label.
+ *
+ * Note the Base and Optimism addresses are different contracts: `0x08dCDBf7…`
+ * ALSO exists on Base, as an empty vault (`totalAssets() == 0`) that DeFiLlama
+ * publishes no row for. Pinning per chain keeps them apart — pin the Base
+ * address on Base only, and the Optimism one on Optimism only.
+ */
+export const FORTY_ACRES_VAULTS: PinnedVaultBook = {
+  10: [
+    {
+      vault: "0x08dCDBf7baDe91Ccd42CB2a4EA8e5D199d285957",
+      asset: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85", // USDC (native)
+      label: "40op-USDC-Vault",
+    },
+  ],
+  8453: [
+    {
+      vault: "0xB99B6dF96d4d5448cC0a5B3e0ef7896df9507Cf5",
+      asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", // USDC
+      label: "40base-USDC-Vault",
+    },
+  ],
+};
+
+/**
+ * Avantis — the `avUSDC` liquidity vault on Base. One vault, one asset, so it
+ * pins rather than discovers.
+ *
+ * Address from `yield-server/src/adaptors/avantis` (`ADDRESSES.base.AvantisVault`)
+ * and verified on chain 2026-08-21: `symbol()` = avUSDC, `asset()` = Base USDC,
+ * `maxDeposit` unbounded. It is an EIP-1967 proxy, so the shape check was run
+ * against the implementation (0xbd1a1896…) too — plain 4626, no request,
+ * queue or cooldown selectors.
+ *
+ * **What this vault IS matters more than its ABI.** It is the counterparty
+ * side of a perps venue: depositors underwrite trader PnL, so the share price
+ * can fall on trading losses in a way a lending vault's cannot. The 4626
+ * machinery executes it correctly either way; whether it belongs in a
+ * conservative tier is a scoring decision, not a resolver one.
+ */
+export const AVANTIS_VAULTS: PinnedVaultBook = {
+  8453: [
+    {
+      vault: "0x944766f715b51967E56aFdE5f0Aa76cEaCc9E7f9",
+      asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", // USDC
+      label: "avUSDC",
+    },
+  ],
+};

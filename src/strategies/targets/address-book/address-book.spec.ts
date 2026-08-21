@@ -121,8 +121,16 @@ function collectPins(): Pin[] {
         // Both halves are pinned: the vault is the `tx.to`, and the asset is
         // what the resolver matches DeFiLlama's underlying against.
         pins.push(pin(v.vault, Number(chainId), `vault:${owner}`, v.label));
+        // The UNDERLYING gets a shared owner, for the same reason the
+        // Chainlink feeds above do: a token is shared infrastructure, and two
+        // protocols running a vault over Base USDC is the normal case, not the
+        // copy-paste this check hunts for. Owning it per-family made the very
+        // first pair of same-asset books (40 Acres + Avantis, both USDC on
+        // Base) look like a collision. The label still names the family, so a
+        // genuine surprise is readable, and a VAULT that collides with another
+        // protocol's vault or with any underlying is still caught.
         pins.push(
-          pin(v.asset, Number(chainId), `asset:${owner}`, `${v.label} asset`),
+          pin(v.asset, Number(chainId), "underlying", `${owner}/${v.label}`),
         );
       }
     }
@@ -259,6 +267,25 @@ describe("address book — structural invariants", () => {
       v.externalSlugs.map((s) => `${v.chainId}:${s.toLowerCase()}`),
     );
     expect(new Set(slugs).size).toBe(slugs.length);
+  });
+
+  it("pairs a min-out stake shape with a preview view", () => {
+    // A `payable-stake-minout` venue derives its floor from the protocol's own
+    // quote. Without one there is nothing to derive from, and the only build
+    // that could ship is a ZERO minimum — which §12 Q4 forbids outright
+    // because it is an open invitation to sandwich the deposit.
+    const bad = LST_VENUES.filter(
+      (v) => v.shape === "payable-stake-minout" && !v.previewView,
+    ).map((v) => v.key);
+    expect(bad).toEqual([]);
+  });
+
+  it("never declares a preview view on a shape that cannot use one", () => {
+    // The reverse, so the field cannot rot into decoration nobody reads.
+    const bad = LST_VENUES.filter(
+      (v) => v.previewView && v.shape !== "payable-stake-minout",
+    ).map((v) => v.key);
+    expect(bad).toEqual([]);
   });
 
   it("gives every LST venue a real chain", () => {

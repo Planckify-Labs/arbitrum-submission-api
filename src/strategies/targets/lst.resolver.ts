@@ -31,11 +31,15 @@ import { eqAddr, resolveEvmChainId } from "./types";
 export const LstStakeResolver: PoolTargetResolver = {
   family: "lst-stake",
   aliases: [
+    "lido",
+    "lido-eth",
     "rocket-pool",
     "ether.fi-stake",
     "etherfi",
     "stader",
     "binance-staked-eth",
+    "meth-protocol",
+    "mantle-staked-eth",
     "benqi-staked-avax",
     "benqi-liquid-staking",
   ],
