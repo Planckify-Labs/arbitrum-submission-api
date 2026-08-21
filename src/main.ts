@@ -1,47 +1,17 @@
-import { setDefaultResultOrder } from "node:dns";
-import { setDefaultAutoSelectFamily } from "node:net";
-// Prefer IPv4 records on DNS lookup. Some hosts (Cloudflare-fronted APIs like
-// DeFiLlama / api.llama.fi) advertise AAAA records that the deploy host may
-// not be able to reach if its egress lacks IPv6 routing — Node's default
-// (`verbatim`, since v17) then surfaces the IPv6 address first and `fetch`
-// fails with the generic `TypeError: fetch failed` (cause: ENETUNREACH).
-// Setting this before any module-level DNS lookup keeps outbound HTTP working
-// on IPv4-only egress without disabling IPv6 entirely (Node still falls back
-// to AAAA when no A record exists). Equivalent to running with
-// NODE_OPTIONS=--dns-result-order=ipv4first.
-setDefaultResultOrder("ipv4first");
+// Outbound-network defaults (IPv4-first + happy-eyeballs off). MUST stay
+// above every other import: it is side-effecting and has to run before any
+// module-level DNS lookup. The full rationale and the measurements live in
+// the module itself.
+import "./config/egress-network";
 
-// …and turn OFF happy-eyeballs, because `ipv4first` alone does NOT fix this on
-// Node 20+.
-//
-// `setDefaultResultOrder` only changes the ORDER lookups come back in. Node 20
-// made `autoSelectFamily` default-true, so `fetch` still RACES an IPv4 and an
-// IPv6 connect regardless of that order. When the host's IPv6 egress is
-// blackholed — packets are dropped rather than refused — the IPv6 attempt hangs
-// instead of erroring, and the race can lose the whole request even though IPv4
-// was reachable the entire time. The result is an intermittent
-// `ETIMEDOUT` / `TypeError: fetch failed`, which is far worse than a consistent
-// one because it looks like the remote API being flaky.
-//
-// Measured on this stack, 2026-08-21, against api.llama.fi (Cloudflare, real
-// AAAA records):
-//   node                                     → ETIMEDOUT after 578ms
-//   node --no-network-family-autoselection   → HTTP 200 after 1370ms
-// Same for yields.llama.fi, api.morpho.org and ydaemon.yearn.fi — i.e. every
-// DeFi discovery endpoint. Each failure is swallowed as "no candidate", so the
-// pool degrades to Manual and nothing anywhere says why: the scoring worker
-// resolved 48 EVM deposit targets while the dry run, run with this flag,
-// resolved 217 against identical chain state.
-setDefaultAutoSelectFamily(false);
-
-import { NestFactory } from "@nestjs/core";
-import { AppModule } from "./app.module";
-import { setupSwagger } from "./config/swagger.config";
 import { ValidationPipe } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import helmet from "helmet";
+import { NestFactory } from "@nestjs/core";
 import * as compression from "compression";
+import helmet from "helmet";
+import { AppModule } from "./app.module";
 import { getAppConfig } from "./config/app.config";
+import { setupSwagger } from "./config/swagger.config";
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);

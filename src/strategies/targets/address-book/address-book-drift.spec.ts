@@ -27,6 +27,10 @@
  *   ADDRESS_BOOK_DRIFT=1 \
  *   STRATEGIES_RPC_URL_1=https://... \
  *   STRATEGIES_RPC_URL_8453=https://... \
+ *
+ * With no overrides set it uses Alchemy (ALCHEMY_API_KEY, falling back to
+ * ALCHEMY_PRICES_API_KEY) from .env, so the usual case needs no extra
+ * configuration at all.
  *   npx jest src/strategies/targets/address-book/address-book-drift
  *
  * Endpoints come from the same `STRATEGIES_RPC_URL_<chainId>` overrides
@@ -102,9 +106,55 @@ type Client = ReturnType<typeof createPublicClient>;
 
 const clients = new Map<number, Client | null>();
 
+/**
+ * Alchemy network slug per pinned chain. Every chainId the address book pins
+ * appears here, INCLUDING chains that have no `Blockchain` row yet (56, 43114,
+ * …) — a pin has to be verifiable before the chain is seeded, otherwise the
+ * addresses go live unchecked on the day someone adds the row.
+ *
+ * Verified against `eth_chainId` on 2026-08-21: all ten answer.
+ */
+const ALCHEMY_NETWORKS: Readonly<Record<number, string>> = {
+  1: "eth-mainnet",
+  10: "opt-mainnet",
+  56: "bnb-mainnet",
+  100: "gnosis-mainnet",
+  137: "polygon-mainnet",
+  8453: "base-mainnet",
+  42161: "arb-mainnet",
+  43114: "avax-mainnet",
+  59144: "linea-mainnet",
+  534352: "scroll-mainnet",
+};
+
+/**
+ * Where this chain's RPC comes from.
+ *
+ * `STRATEGIES_RPC_URL_<chainId>` stays the ops escape hatch, but it cannot be
+ * the only mechanism: this repo's own `rpc-proxy` authenticates with a Bearer
+ * header, which a bare URL override cannot carry, so an engineer following the
+ * runbook had to go and find public endpoints before this suite would probe
+ * anything. That is a large part of why it has never been scheduled (§12.4)
+ * and why its first-ever run was during the security sign-off.
+ *
+ * Alchemy is the default instead: one key already in `.env`, every pinned
+ * chain, and no dependence on which chains happen to be seeded.
+ */
+function endpointFor(chainId: number): string | null {
+  const override = process.env[`STRATEGIES_RPC_URL_${chainId}`]?.trim();
+  if (override) return override;
+
+  const key =
+    process.env.ALCHEMY_API_KEY?.trim() ||
+    process.env.ALCHEMY_PRICES_API_KEY?.trim();
+  const network = ALCHEMY_NETWORKS[chainId];
+  if (!key || !network) return null;
+  return `https://${network}.g.alchemy.com/v2/${key}`;
+}
+
 function clientFor(chainId: number): Client | null {
   if (clients.has(chainId)) return clients.get(chainId) ?? null;
-  const url = process.env[`STRATEGIES_RPC_URL_${chainId}`]?.trim();
+  const url = endpointFor(chainId);
   const client = url
     ? createPublicClient({ transport: http(url, { timeout: 20_000 }) })
     : null;

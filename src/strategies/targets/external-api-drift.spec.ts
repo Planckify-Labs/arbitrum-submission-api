@@ -29,7 +29,6 @@ const ENABLED = process.env.DRIFT_CHECKS?.trim() === "1";
 const TIMEOUT_MS = 60_000;
 
 const MORPHO_GRAPHQL = "https://api.morpho.org/graphql";
-const POOLS_OLD_URL = "https://yields.llama.fi/poolsOld";
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -147,7 +146,24 @@ maybeDescribe("external API contract drift", () => {
     });
   });
 
-  describe("DeFiLlama /poolsOld", () => {
+  /**
+   * `/poolsOld` went behind the paid plan on 2026-08-19 and answers **HTTP 402**
+   * on the free tier. The candidate registry reflects that: the source is not
+   * registered at all unless `DEFILLAMA_PRO_API_KEY` is set (runbook §11.5b).
+   *
+   * So these checks are gated on the same key. Asserting free-tier
+   * reachability unconditionally made this suite permanently red about a
+   * source we deliberately do not use — which is precisely the "gating on
+   * third-party uptime trains people to ignore red" failure the runbook warns
+   * about, and it would have buried a real drift in a family we DO use.
+   *
+   * With the key set they run for real, because that is the only configuration
+   * in which the source's drift can affect anything.
+   */
+  const POOLS_OLD_KEY = process.env.DEFILLAMA_PRO_API_KEY?.trim();
+  const describePoolsOld = POOLS_OLD_KEY ? describe : describe.skip;
+
+  describePoolsOld("DeFiLlama /poolsOld (needs DEFILLAMA_PRO_API_KEY)", () => {
     interface PoolsOld {
       status?: string;
       data?: Array<{ pool?: string; pool_old?: string }>;
@@ -156,18 +172,17 @@ maybeDescribe("external API contract drift", () => {
     let status = 0;
 
     beforeAll(async () => {
-      const key = process.env.DEFILLAMA_PRO_API_KEY?.trim();
-      const url = key
-        ? `https://pro-api.llama.fi/${key}/yields/poolsOld`
-        : POOLS_OLD_URL;
-      const res = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+      const res = await fetch(
+        `https://pro-api.llama.fi/${POOLS_OLD_KEY}/yields/poolsOld`,
+        { signal: AbortSignal.timeout(60_000) },
+      );
       status = res.status;
       if (res.ok) body = (await res.json()) as PoolsOld;
     }, TIMEOUT_MS);
 
-    it("is still reachable without a paid plan", () => {
-      // 402 means DeFiLlama paywalled it. Asserted separately from the shape
-      // check so the failure names the cause instead of surfacing as "0 rows".
+    it("answers the paid endpoint", () => {
+      // Named separately from the shape check so a billing lapse reads as
+      // "paywalled" rather than surfacing as "0 rows".
       expect({ status, hint: status === 402 ? "paywalled" : "ok" }).toEqual({
         status: 200,
         hint: "ok",

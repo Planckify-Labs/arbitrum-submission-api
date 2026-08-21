@@ -37,6 +37,12 @@
  *   1 — could not run at all (no DB, no chains, no pools)
  */
 
+// Outbound-network defaults. MUST be the first import: the discovery
+// endpoints are dual-stack, and without this a perfectly healthy protocol
+// reports zero pools and reads as "not ours". This script does NOT boot
+// through `src/main.ts`, so it has to import the preamble itself.
+import "../src/config/egress-network";
+
 // `@generated/prisma`, not `@prisma/client` — the schema generates the client
 // into src/generated/prisma (see prisma/schema.prisma). Prisma 7 requires the
 // driver adapter to be passed explicitly, the same way PrismaService does.
