@@ -45,12 +45,24 @@ export function pinnedVaultResolver(config: {
   aliases: readonly string[];
   /** Address-book key; defaults to `family`. */
   book?: string;
+  /**
+   * "This row is not a deposit at all" — the same escape hatch
+   * `discoveredVaultResolver` has, and needed for the same reason.
+   *
+   * Without it a pinned family refuses a non-deposit row only as a SIDE EFFECT
+   * of the book happening not to pin a vault for that row's asset. That holds
+   * until someone pins one, and then a borrow-side or collateral row resolves
+   * into a supply vault. It is the `aave-v4` reasoning one level down: relying
+   * on "the candidate we happen to get is wrong" rather than on a rule.
+   */
+  skipPool?(pool: DeFiLlamaYieldPool): boolean;
 }): PoolTargetResolver {
   const bookKey = config.book ?? config.family;
   return {
     family: config.family,
     aliases: config.aliases,
     async resolve(pool, ctx): Promise<DepositTarget | null> {
+      if (config.skipPool?.(pool)) return null;
       const chainId = resolveEvmChainId(pool.chain);
       if (!chainId) return null;
       const underlying = underlyingOf(pool);
@@ -133,6 +145,33 @@ export function discoveredVaultResolver(config: {
 // ── Pinned single-vault savings protocols ──────────────────────────────────
 
 /**
+ * Maker/Sky publish a DeFiLlama row per **ilk** — a CDP collateral type, named
+ * by the `<SYMBOL>-<LETTER>` convention (`ETH-A`, `WSTETH-B`, `WBTC-C`).
+ *
+ * Those rows are not deposits. Their `underlyingTokens` is the collateral a
+ * user LOCKS in order to borrow USDS, so supplying into a savings vault for
+ * that same token is a different action entirely, and leveraged/borrow
+ * positions are out of scope by design (§1 non-goals). Measured 2026-08-21:
+ * seven such rows, ~$1.7B.
+ *
+ * They refuse today anyway, because the `sky` book pins no WETH/WBTC/wstETH
+ * vault for a candidate to match. That is luck, not a rule — the day one is
+ * pinned, a CDP row would resolve into a supply vault and validate cleanly,
+ * because the asset genuinely matches. Refusing by NAME, before a candidate is
+ * requested, is what §11.5c asks for.
+ *
+ * "SKY Staking Engine" is excluded on the same ground: a staking product, not a
+ * savings vault.
+ */
+const MAKER_ILK_META = /^[A-Z0-9]+-[A-Z]$/;
+
+export function isSkyNonDepositRow(pool: DeFiLlamaYieldPool): boolean {
+  const meta = pool.poolMeta?.trim();
+  if (!meta) return false;
+  return MAKER_ILK_META.test(meta) || /staking engine/i.test(meta);
+}
+
+/**
  * Sky Savings — `sUSDS` is the Sky Savings Rate token. Stablecoin-native, so it
  * lines up with the product's payments thesis rather than being yet another
  * yield venue.
@@ -141,6 +180,7 @@ export const SkySavingsResolver = pinnedVaultResolver({
   family: "sky",
   aliases: ["sky-lending", "sky", "makerdao", "maker-dsr", "sky-savings"],
   book: "sky",
+  skipPool: isSkyNonDepositRow,
 });
 
 /**

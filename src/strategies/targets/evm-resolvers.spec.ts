@@ -830,3 +830,69 @@ describe("deep-link address outranks the label (§11.6b)", () => {
     });
   });
 });
+
+describe("Sky non-deposit rows are refused by rule, not by luck (§11.5c)", () => {
+  // Sky publishes a row per Maker ILK — a CDP collateral type — alongside its
+  // savings vaults. Those rows describe collateral you LOCK to borrow, not
+  // something you supply, and leveraged positions are a §1 non-goal.
+  //
+  // They already refused before `skipPool` existed, but only because the `sky`
+  // book pins no WETH/WBTC vault for the candidate step to match. That is the
+  // `aave-v4` reasoning: fine until someone pins one, at which point a
+  // borrow-side row resolves into a supply vault AND VALIDATES, because the
+  // asset genuinely matches. These assert the refusal happens by name, up
+  // front, so it cannot be undone by a later book edit.
+  const WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+
+  it.each(["ETH-A", "ETH-B", "ETH-C", "WSTETH-A", "WBTC-C"])(
+    "refuses the %s ilk row without consulting the book",
+    async (meta) => {
+      // `validate: true` is deliberate: even a validator that would say yes to
+      // anything must not rescue these, which is what proves the refusal is
+      // structural rather than incidental.
+      const target = await SkySavingsResolver.resolve(
+        pool({
+          project: "sky-lending",
+          symbol: "WETH",
+          poolMeta: meta,
+          underlyingTokens: [WETH],
+        }),
+        ctxWith({ validate: true }),
+      );
+      expect(target).toBeNull();
+    },
+  );
+
+  it("refuses the SKY Staking Engine row", async () => {
+    expect(
+      await SkySavingsResolver.resolve(
+        pool({
+          project: "sky-lending",
+          symbol: "SKY",
+          poolMeta: "SKY Staking Engine",
+          underlyingTokens: ["0x56072C95FAA701256059aa122697B133aDEd9279"],
+        }),
+        ctxWith({ validate: true }),
+      ),
+    ).toBeNull();
+  });
+
+  it("does NOT refuse a real savings row", async () => {
+    // The guard must not become a blanket refusal for the family. sUSDS and
+    // sDAI carry `poolMeta: null` and are the rows that should resolve — if
+    // this ever fails, the ilk regex has widened onto real deposits.
+    const { isSkyNonDepositRow } = await import("./erc4626-family.resolver");
+    expect(
+      isSkyNonDepositRow(pool({ project: "sky-lending", poolMeta: undefined })),
+    ).toBe(false);
+    // Two-letter suffixes and lowercase are not the ilk convention.
+    expect(
+      isSkyNonDepositRow(pool({ project: "sky-lending", poolMeta: "Core" })),
+    ).toBe(false);
+    expect(
+      isSkyNonDepositRow(
+        pool({ project: "sky-lending", poolMeta: "Expert Mode" }),
+      ),
+    ).toBe(false);
+  });
+});
