@@ -1,6 +1,11 @@
 /**
  * DeFiLlama pool UUID → on-chain address (spec §4, runbook §2).
  *
+ * TWO sources live here, both keyed off a `/pools` UUID and both fail-closed:
+ * `/poolsOld` (paywalled since 2026-08, kept for the pro-key path) and
+ * `/poolsEnriched?pool=<uuid>` (free, reads the address out of the pool's own
+ * deep link). See each export for its guards.
+ *
  * A `/pools` `pool` id is an opaque UUID, which is why resolving a target
  * normally means fetching the protocol's OWN vault registry and matching on
  * `(underlying, poolMeta)`. That works, but it needs a bespoke API client per
@@ -151,3 +156,96 @@ export function resetPoolAddressIndex(): void {
   index = null;
   indexBuiltFrom = null;
 }
+
+// ── The replacement: /poolsEnriched?pool=<uuid> → the `url` field ────────────
+
+/**
+ * `/poolsEnriched` is the free endpoint that survived, and it carries a field
+ * `/pools` does not: `url`, the protocol's own deep link for that pool. For a
+ * large slice of the catalog that link *contains the contract address*, which
+ * is exactly the mapping `/poolsOld` used to provide.
+ *
+ *   yearn-finance   https://yearn.fi/v3/1/0xBe53A109…          → the vault
+ *   euler-v2        https://app.euler.finance/earn/0x2C803c8C… → the EVault
+ *   morpho-blue     https://app.morpho.org/base/vault/0xbeef0e… → the MetaMorpho vault
+ *
+ * Same trust level as `/poolsOld` and the same rules apply: it is a CANDIDATE,
+ * never an authority, it may never become a `tx.to` for a singleton kind
+ * (§12 Q7), and Layer-1 validation is what actually admits it.
+ *
+ * ## Two ways this could hand back a wrong address, and the guards
+ *
+ * 1. **A bytes32 that looks like an address.** Morpho's *market* links carry a
+ *    32-byte market id, and a naive `0x[0-9a-fA-F]{40}` matches its first 40
+ *    hex characters happily — producing a well-formed address that is not one.
+ *    `ADDRESS_IN_URL` therefore requires hex boundaries on BOTH sides, so a
+ *    64-hex id matches nothing at all rather than matching its own prefix.
+ *    (Verified against a live market link, 2026-08-21.)
+ * 2. **A link naming several contracts.** Which one is the vault is then a
+ *    guess, so more than one distinct address is a refusal, not a first-wins.
+ *
+ * Links with no address (Spark, Concrete, Fluid, Venus, Vesper, Origin) simply
+ * decline. That is the honest answer: those protocols need their own source.
+ */
+const POOLS_ENRICHED_URL = "https://yields.llama.fi/poolsEnriched";
+const POOL_URL_TTL_SEC = 6 * 60 * 60; // a deep link changes far more slowly than an APY
+
+/**
+ * Hex boundaries on both sides. Without the lookahead a 32-byte id yields its
+ * own first 40 hex characters as a plausible address — see guard 1 above.
+ */
+const ADDRESS_IN_URL = /(?<![0-9a-fA-F])(0x[0-9a-fA-F]{40})(?![0-9a-fA-F])/g;
+
+interface PoolsEnrichedResponse {
+  status?: string;
+  data?: Array<{
+    pool?: string;
+    project?: string;
+    chain?: string;
+    url?: string;
+  }>;
+}
+
+export async function poolUrlCandidate(
+  pool: DeFiLlamaYieldPool,
+  ctx: ResolverContext,
+): Promise<Address | null> {
+  if (!pool.pool) return null;
+  const res = await ctx.fetchJsonCached<PoolsEnrichedResponse>(
+    `defillama:targets:poolUrl:${pool.pool}:v1`,
+    `${POOLS_ENRICHED_URL}?pool=${encodeURIComponent(pool.pool)}`,
+    POOL_URL_TTL_SEC,
+  );
+  const row = res?.data?.[0];
+  if (!row?.url) return null;
+
+  // The response must be about the pool we asked for. Cheap, and it means a
+  // mismatched or shifted response can never contribute an address.
+  if (row.pool !== pool.pool) return null;
+  if (row.project && pool.project && row.project !== pool.project) return null;
+  if (row.chain && pool.chain && row.chain !== pool.chain) return null;
+
+  const found = [
+    ...new Set(
+      [...row.url.matchAll(ADDRESS_IN_URL)].map((m) => m[1].toLowerCase()),
+    ),
+  ];
+  // Zero → this protocol's link has no address. Several → which one is the
+  // vault is a guess. Both are refusals (§8.2 "never guess").
+  if (found.length !== 1) return null;
+
+  const address = found[0] as Address;
+  const underlying = pool.underlyingTokens?.[0]?.toLowerCase();
+  if (underlying && underlying === address) return null;
+  return address;
+}
+
+/**
+ * Registered as a `"*"` fallback, after every protocol-specific source. It is
+ * the generic path `/poolsOld` used to be, minus the paywall.
+ */
+export const PoolUrlCandidateSource: CandidateSource = {
+  id: "defillama-pool-url",
+  projects: "*",
+  candidate: (pool, ctx) => poolUrlCandidate(pool, ctx),
+};

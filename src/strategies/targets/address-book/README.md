@@ -44,3 +44,28 @@ Nothing here is trusted on its own: every entry still has to pass its Layer-1
 validator (`validation.ts`) at resolve time. A wrong constant fails closed to
 Manual rather than routing funds — that is by design, not a reason to be
 careless.
+
+## `oracles.ts` is a book of *inputs*, not destinations
+
+Everything else here answers "where may funds go?". `oracles.ts` answers a
+different question — "whose price are we lending behind?" — and it is pinned
+under the same rule for the same reason: a supplier to a Morpho Blue market
+carries that market's bad-debt risk, so its oracle decides whether we route
+funds there at all (§12 Q6).
+
+Two entries per chain, and they only work as a pair:
+
+- `MORPHO_CHAINLINK_ORACLE_FACTORIES` proves an oracle's **code** is Morpho's
+  audited implementation.
+- `CHAINLINK_FEEDS` proves that code's **inputs** are feeds we reviewed.
+
+Neither is sufficient alone. `createMorphoChainlinkOracleV2` is permissionless,
+so anyone can mint a genuine factory oracle wired to a price contract they
+control; conversely a reviewed feed proves nothing about a contract that merely
+claims to read it. Both are re-read from the chain at resolve time — the point
+of the check is the wiring, so taking the wiring from an API would be no check
+at all.
+
+Adding a feed admits **every** market that reads it, on every chain in that
+entry. That is the leverage that makes this list maintainable, and the reason a
+line here needs the same sign-off as a `tx.to`.

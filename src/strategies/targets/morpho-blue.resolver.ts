@@ -15,7 +15,7 @@
  */
 
 import { morphoSingleton } from "./address-book";
-import { isMorphoRiskAllowlisted } from "./morpho-allowlist";
+import { verifyMorphoOracle } from "./morpho-allowlist";
 import type {
   Address,
   DepositTarget,
@@ -190,9 +190,27 @@ export const MorphoBlueResolver: PoolTargetResolver = {
     const params = toParams(match);
     if (!params) return null;
 
-    // §12 Q6 — a bad oracle is a lender's bad-debt risk, so an unreviewed
-    // oracle/IRM pairing never resolves.
-    if (!isMorphoRiskAllowlisted(chainId, params.oracle, params.irm)) {
+    // §12 Q6 — a bad oracle is a lender's bad-debt risk, so an oracle whose
+    // provenance we cannot prove never resolves. This is deliberately read from
+    // the CHAIN rather than from `match.oracle`: the API told us which oracle
+    // the market claims, and this asks the oracle itself what it reads.
+    // No client ⇒ we cannot check ⇒ Manual, same as a failed check.
+    const client = ctx.publicClient?.(chainId);
+    if (!client) return null;
+    const verdict = await verifyMorphoOracle(
+      client,
+      chainId,
+      params.oracle,
+      params.irm,
+    );
+    if (!verdict.ok) {
+      // Say why. The previous gate rejected every market in silence, which is
+      // how the family stayed dark without anyone noticing (§11.6's lesson).
+      console.debug(
+        `[morpho-blue] market ${match.marketId} refused: ${verdict.reason}${
+          verdict.detail ? ` (${verdict.detail})` : ""
+        }`,
+      );
       return null;
     }
 

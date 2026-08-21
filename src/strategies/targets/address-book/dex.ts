@@ -90,7 +90,37 @@ export const BALANCER_V3_VAULTS: Readonly<Record<number, Address>> = {
 /**
  * Chains where the Balancer v2 Vault singleton is deployed. Pinned as a set
  * rather than assumed-everywhere so a chain we have not reviewed fails closed.
+ *
+ * Sonic (146) was previously listed here but is DROPPED: it has no entry in
+ * the official `balancer/balancer-deployments` addresses table (verified
+ * 2026-08-19), so there is no reviewed second source proving the v2 Vault is
+ * deployed there at all, let alone at this constant. Re-add only after that
+ * source confirms it (§12 Q7 — never trust a singleton address without one).
  */
 export const BALANCER_V2_CHAINS: readonly number[] = [
-  1, 10, 137, 8453, 42161, 43114, 100, 146,
+  1, 10, 137, 8453, 42161, 43114, 100,
 ];
+
+/**
+ * `BalancerQueries` (v2) — the off-chain-simulation singleton whose
+ * `queryJoin`/`queryExit` price a join/exit before it is built, so the
+ * adapter never has to guess `minimumBPT`/`minAmountOut` (§12 Q4: a zero
+ * minimum is a silent sandwich, not a revert). NOT the same address on every
+ * chain — unlike the v2 Vault, this one is deployed independently per network
+ * — so it is pinned as a per-chain map, never a single constant. Verified
+ * against `balancer/balancer-deployments` (task `20220721-balancer-queries`,
+ * 2026-08-19); each entry additionally round-trips through
+ * `address-book-drift.spec.ts` (`BalancerQueries.vault() === BALANCER_V2_VAULT`).
+ *
+ * Every key here MUST also be in `BALANCER_V2_CHAINS` — a queries address with
+ * no corresponding reviewed Vault chain is meaningless.
+ */
+export const BALANCER_QUERIES: Readonly<Record<number, Address>> = {
+  1: "0xE39B5e3B6D74016b2F6A9673D7d7493B6DF549d5", // Ethereum
+  10: "0xE39B5e3B6D74016b2F6A9673D7d7493B6DF549d5", // Optimism
+  137: "0xE39B5e3B6D74016b2F6A9673D7d7493B6DF549d5", // Polygon
+  8453: "0x300Ab2038EAc391f26D9F895dc61F8F66a548833", // Base
+  42161: "0xE39B5e3B6D74016b2F6A9673D7d7493B6DF549d5", // Arbitrum
+  43114: "0xC128468b7Ce63eA702C1f104D55A2566b13D3ABD", // Avalanche
+  100: "0x0F3e0c4218b7b0108a3643cFe9D3ec0d4F57c54e", // Gnosis
+};

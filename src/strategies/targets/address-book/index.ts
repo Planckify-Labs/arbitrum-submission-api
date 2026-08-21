@@ -12,6 +12,7 @@
 import type { Address, DepositTarget } from "../types";
 import { eqAddr } from "../types";
 import {
+  BALANCER_QUERIES,
   BALANCER_V2_CHAINS,
   BALANCER_V2_VAULT,
   BALANCER_V3_VAULTS,
@@ -27,19 +28,21 @@ import {
   MORPHO_BLUE_SINGLETONS,
   RADIANT_POOLS,
   SEAMLESS_POOLS,
-  type SingletonBook,
   SPARKLEND_POOLS,
+  type SingletonBook,
   ZEROLEND_POOLS,
 } from "./lending";
 import {
   ORIGIN_VAULTS,
   type PinnedVaultBook,
   SKY_SAVINGS_VAULTS,
+  SPARK_SAVINGS_VAULTS,
 } from "./vaults";
 
 export * from "./dex";
 export * from "./lending";
 export * from "./lst";
+export * from "./oracles";
 export * from "./registries";
 export * from "./vaults";
 
@@ -59,7 +62,7 @@ export const AAVE_FORK_POOL_BOOKS: Readonly<Record<string, SingletonBook>> = {
 /** Pinned single-vault ERC-4626 books, keyed by resolver family (§4). */
 export const PINNED_VAULT_BOOKS: Readonly<Record<string, PinnedVaultBook>> = {
   sky: SKY_SAVINGS_VAULTS,
-  spark: SKY_SAVINGS_VAULTS,
+  spark: SPARK_SAVINGS_VAULTS,
   origin: ORIGIN_VAULTS,
 };
 
@@ -85,6 +88,15 @@ export function balancerVault(
 ): Address | null {
   if (version === "v3") return BALANCER_V3_VAULTS[chainId] ?? null;
   return BALANCER_V2_CHAINS.includes(chainId) ? BALANCER_V2_VAULT : null;
+}
+
+/**
+ * The v2 `BalancerQueries` singleton for a chain, or `null` when we have no
+ * reviewed deployment there. A join/exit build MUST fail closed rather than
+ * price itself with a zero minimum when this is `null` (§12 Q4).
+ */
+export function balancerQueries(chainId: number): Address | null {
+  return BALANCER_QUERIES[chainId] ?? null;
 }
 
 export function pinnedVaults(family: string, chainId: number) {

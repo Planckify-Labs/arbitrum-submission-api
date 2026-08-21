@@ -17,21 +17,26 @@
  * a half-wired family never badges "Deposit in-app".
  */
 
-import { AaveResolver } from "./aave.resolver";
 import { TIER1_AAVE_FORK_RESOLVERS } from "./aave-fork.resolver";
+import { AaveResolver } from "./aave.resolver";
 import { TIER3_BALANCER_RESOLVERS } from "./balancer.resolver";
 import { ONCHAIN_CANDIDATE_SOURCES } from "./candidates/onchain.source";
 import { registerCandidateSource } from "./candidates/registry";
-import { PoolsOldCandidateSource } from "./defillama-pool-address";
 import { TIER2_COMPOUND_RESOLVERS } from "./compound.resolver";
 import { CurveResolver } from "./curve.resolver";
+import {
+  PoolUrlCandidateSource,
+  PoolsOldCandidateSource,
+} from "./defillama-pool-address";
 import { EmberResolver } from "./ember.resolver";
-import { MorphoResolver, YearnResolver } from "./erc4626.resolver";
 import { TIER1_ERC4626_RESOLVERS } from "./erc4626-family.resolver";
+import { MorphoResolver, YearnResolver } from "./erc4626.resolver";
 import { familyEnabled, isFamilyKilled } from "./feature-flags";
 import { LstStakeResolver } from "./lst.resolver";
 import { MorphoBlueResolver } from "./morpho-blue.resolver";
 import { NaviResolver } from "./navi.resolver";
+import { bootProtocolManifests } from "./protocol-manifest";
+import "./protocols";
 import { registerResolver } from "./registry";
 import { TIER3_ROUTER_CALL_RESOLVERS } from "./router-call.resolver";
 import { ScallopResolver } from "./scallop.resolver";
@@ -62,7 +67,16 @@ function bootCandidateSources(): void {
   for (const source of ONCHAIN_CANDIDATE_SOURCES) {
     registerCandidateSource(source);
   }
-  registerCandidateSource(PoolsOldCandidateSource);
+  // `/poolsOld` is registered ONLY with a pro key. Without one it is HTTP 402
+  // (verified 2026-08-19), and a source we know answers nothing does not belong
+  // in the fallback chain: it would sit there looking like coverage, which is
+  // precisely the failure mode the discovery-health check exists to catch.
+  if (process.env.DEFILLAMA_PRO_API_KEY?.trim()) {
+    registerCandidateSource(PoolsOldCandidateSource);
+  }
+  // The free replacement. Last, so a protocol's own registry always wins over
+  // an aggregator's deep link.
+  registerCandidateSource(PoolUrlCandidateSource);
 }
 
 /**
@@ -131,13 +145,29 @@ export function bootTargetResolvers(): void {
   );
   registerGated("tier3", TIER3_SOLIDLY_RESOLVERS);
   registerGated("tier3", [LstStakeResolver]);
-  // Balancer / Beets are NOT registered. The mobile adapter cannot price
-  // `minimumBPT` without a reviewed `BalancerQueries` deployment, and §12 Q4
-  // forbids a zero minimum — which, unlike a wrong ABI, fails silently as a
-  // sandwich rather than loudly as a revert. The resolver, validator and
-  // adapter are all written and fork-testable; pin the queries contract, then
-  // register here and in the mobile bootstrap together.
-  void TIER3_BALANCER_RESOLVERS;
+  // Balancer v2 / Beets — `BalancerQueries` is now pinned per chain
+  // (address-book/dex.ts, verified against `balancer/balancer-deployments`,
+  // 2026-08-19), so both sides can price `minimumBPT`/`minAmountsOut` instead
+  // of guessing (§12 Q4 forbids a zero minimum). Each resolver still carries
+  // its own `FEATURE_DEFI_EVM_FAMILY_BALANCER` / `_BEETS` sub-flag via
+  // `registerGated`. This resolver accepts v2- AND v3-vault pools by identity
+  // (a real v3 pool has no `getPoolId()` and never reaches here — see the
+  // resolver's own comment); the mobile `BalancerLpAdapter` additionally
+  // refuses to BUILD for anything but the pinned v2 Vault, so a v3 target
+  // (if one ever slipped through) fails closed on-device rather than badging
+  // "Deposit in-app" for a call nothing can make. v3 Router-based join/exit is
+  // separate, larger work — not attempted here.
+  registerGated("tier3", TIER3_BALANCER_RESOLVERS);
+
+  // ── The protocol catalogue (protocols.ts) ────────────────────────────────
+  // One entry per protocol, gating derived from the entry. Registered last so
+  // a manifest never shadows a bespoke resolver that claims the same slug —
+  // the registry tries claimants in order, and the hand-written one wins.
+  //
+  // A manifest's own API source registers here too, which is why it lands
+  // AFTER the on-chain sources (chain state outranks an endpoint) and BEFORE
+  // `/poolsOld` in practice: sources are consulted in registration order.
+  bootProtocolManifests();
 
   // ── Tier 4 — ERC-7540 async vaults. Deliberately NO resolver. ────────────
   // §7 is explicit: do not register an `async-vault` resolver until the

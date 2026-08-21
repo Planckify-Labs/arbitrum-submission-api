@@ -21,8 +21,8 @@ import { EmberResolver } from "./ember.resolver";
 import { NaviResolver } from "./navi.resolver";
 import { ScallopResolver } from "./scallop.resolver";
 import { getSuiObjectFields } from "./sui-rpc";
-import { SuiLstResolver } from "./suilst.resolver";
 import { SuilendResolver } from "./suilend.resolver";
+import { SuiLstResolver } from "./suilst.resolver";
 import type { ResolverContext } from "./types";
 
 const mockGetSuiObjectFields = getSuiObjectFields as jest.MockedFunction<

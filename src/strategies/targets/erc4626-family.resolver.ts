@@ -40,7 +40,7 @@ import { eqAddr, resolveEvmChainId, underlyingOf } from "./types";
  * `(chain, underlyingTokens[0])` against the book — a pool for a token the
  * protocol has no reviewed vault for resolves to nothing.
  */
-function pinnedVaultResolver(config: {
+export function pinnedVaultResolver(config: {
   family: string;
   aliases: readonly string[];
   /** Address-book key; defaults to `family`. */
@@ -80,10 +80,24 @@ function pinnedVaultResolver(config: {
  * `minTvlUsd` is a cheap pre-filter, not a safety control — the real gate is
  * `ctx.validate`. It keeps dust pools out of the RPC budget.
  */
-function discoveredVaultResolver(config: {
+export function discoveredVaultResolver(config: {
   family: string;
   aliases: readonly string[];
   minTvlUsd?: number;
+  /**
+   * "This row is not a deposit at all." Some protocols publish one DeFiLlama
+   * row per SIDE of a market, and the borrow side is not something a user can
+   * supply into — Curve LlamaLend emits a second row per vault whose
+   * `underlyingTokens` is the COLLATERAL.
+   *
+   * That has to be refused before a candidate is even requested, because the
+   * collateral of one market is very often the borrowed asset of another: a
+   * borrow row could find a real, validating 4626 vault belonging to a
+   * DIFFERENT market and the user would deposit into it. Relying on "the
+   * candidate we happen to get back is not 4626" is the same reasoning that
+   * let `aave-v4` route onto the v3 Pool.
+   */
+  skipPool?(pool: DeFiLlamaYieldPool): boolean;
 }): PoolTargetResolver {
   const minTvl = config.minTvlUsd ?? 0;
   return {
@@ -93,6 +107,7 @@ function discoveredVaultResolver(config: {
       pool: DeFiLlamaYieldPool,
       ctx: ResolverContext,
     ): Promise<DepositTarget | null> {
+      if (config.skipPool?.(pool)) return null;
       const chainId = resolveEvmChainId(pool.chain);
       if (!chainId) return null;
       const underlying = underlyingOf(pool);
@@ -209,6 +224,13 @@ export const CurveLlamaLendResolver = discoveredVaultResolver({
   family: "curve-llamalend",
   aliases: ["curve-llamalend", "llamalend"],
   minTvlUsd: 250_000,
+  // DeFiLlama publishes TWO rows per LlamaLend vault: the lend side, whose
+  // `poolMeta` is "<collateral> collateral", and the borrow side, whose
+  // `poolMeta` is "<borrowed> borrow" and whose `underlyingTokens` is the
+  // collateral. Only the lend side is a deposit. The suffix is DeFiLlama's own
+  // construction, not ours — `yield-server/src/adaptors/curve-llamalend/index.js`
+  // builds it as `borrowed.symbol + ' borrow'` (read 2026-08-21).
+  skipPool: (pool) => /\bborrow$/i.test(pool.poolMeta ?? ""),
 });
 
 /** Every Tier-1 Family-A resolver, in registration order. */

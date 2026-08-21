@@ -11,15 +11,15 @@
  */
 
 import type { DeFiLlamaYieldPool } from "../external/defillama.client";
-import { aaveForkResolver, SparkLendResolver } from "./aave-fork.resolver";
-import { loadChainDirectory } from "./chain-directory";
-import { CompoundV3Resolver, VenusResolver } from "./compound.resolver";
-import { CurveResolver } from "./curve.resolver";
+import { SparkLendResolver, aaveForkResolver } from "./aave-fork.resolver";
 import { resetCandidateVaultCache } from "./candidates/onchain.source";
 import {
   registerCandidateSource,
   resetCandidateSources,
 } from "./candidates/registry";
+import { loadChainDirectory } from "./chain-directory";
+import { CompoundV3Resolver, VenusResolver } from "./compound.resolver";
+import { CurveResolver } from "./curve.resolver";
 import {
   PoolsOldCandidateSource,
   resetPoolAddressIndex,
@@ -31,8 +31,8 @@ import {
 } from "./erc4626-family.resolver";
 import { LstStakeResolver } from "./lst.resolver";
 import { MorphoBlueResolver } from "./morpho-blue.resolver";
-import { deriveMorphoMarketId } from "./validation";
 import type { EvmReadClient, ResolverContext } from "./types";
+import { deriveMorphoMarketId } from "./validation";
 
 const UNDERLYING = "0x1111111111111111111111111111111111111111";
 const CANDIDATE = "0x2222222222222222222222222222222222222222";
@@ -285,32 +285,113 @@ describe("Morpho Blue (§5.2, §3.1)", () => {
   const ORACLE = "0x1234567890123456789012345678901234567890";
   const IRM = "0x870aC11D48B15DB9a138Cf899d20F13F79Ba00BC";
 
-  function morphoCtx(items: unknown[]): ResolverContext {
+  /** A reviewed Chainlink feed on Ethereum — BTC / USD. */
+  const REVIEWED_FEED = "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c";
+  const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
+
+  /**
+   * The oracle gate reads provenance off the CHAIN, so the ctx now needs a read
+   * stub. `oracleWiring` is what the oracle claims about itself; `deployed` is
+   * what the pinned factory says about the oracle.
+   */
+  function morphoCtx(
+    items: unknown[],
+    onchain: {
+      deployed?: boolean;
+      feeds?: readonly string[];
+      client?: boolean;
+    } = {},
+  ): ResolverContext {
+    const feeds = onchain.feeds ?? [
+      REVIEWED_FEED,
+      ZERO_ADDR,
+      ZERO_ADDR,
+      ZERO_ADDR,
+    ];
+    const wiring: Record<string, unknown> = {
+      BASE_FEED_1: feeds[0] ?? ZERO_ADDR,
+      BASE_FEED_2: feeds[1] ?? ZERO_ADDR,
+      QUOTE_FEED_1: feeds[2] ?? ZERO_ADDR,
+      QUOTE_FEED_2: feeds[3] ?? ZERO_ADDR,
+      BASE_VAULT: ZERO_ADDR,
+      QUOTE_VAULT: ZERO_ADDR,
+      isMorphoChainlinkOracleV2: onchain.deployed ?? true,
+      latestRoundData: [
+        1n,
+        100_000n,
+        0n,
+        BigInt(Math.floor(Date.now() / 1000)),
+        1n,
+      ],
+    };
     return {
       fetchJsonCached: async <T>() =>
         ({ data: { markets: { items } } }) as unknown as T,
       validate: async () => true,
+      publicClient: () =>
+        onchain.client === false
+          ? null
+          : ({
+              readContract: async ({ functionName }) => wiring[functionName],
+            } as EvmReadClient),
     };
   }
 
-  it("fails closed when the market's oracle is not on the reviewed allowlist", async () => {
-    // §12 Q6: a lender inherits bad-debt risk from a manipulated oracle, so an
-    // unreviewed oracle is not a market we route into. The seeded allowlist
-    // has no oracles yet, so every market must be refused.
+  const market = (overrides: Record<string, unknown> = {}) => ({
+    marketId: `0x${"ab".repeat(32)}`,
+    lltv: "860000000000000000",
+    oracle: { address: ORACLE },
+    irmAddress: IRM,
+    listed: true,
+    loanAsset: { address: UNDERLYING },
+    collateralAsset: { address: CANDIDATE },
+    state: { supplyAssetsUsd: 1_000_000 },
+    ...overrides,
+  });
+
+  it("resolves a market whose oracle provenance proves out on chain", async () => {
+    // The positive half of §12 Q6, and the reason the gate was rewritten: the
+    // old per-market allowlist shipped empty, so this case was unreachable and
+    // the whole family sat on Manual. If this ever goes back to null, Morpho
+    // Blue has gone dark again.
     const target = await MorphoBlueResolver.resolve(
       pool({ project: "morpho-blue" }),
-      morphoCtx([
-        {
-          marketId: `0x${"ab".repeat(32)}`,
-          lltv: "860000000000000000",
-          oracle: { address: ORACLE },
-          irmAddress: IRM,
-          listed: true,
-          loanAsset: { address: UNDERLYING },
-          collateralAsset: { address: CANDIDATE },
-          state: { supplyAssetsUsd: 1_000_000 },
-        },
-      ]),
+      morphoCtx([market()]),
+    );
+    expect(target).toMatchObject({
+      kind: "morpho-blue",
+      asset: UNDERLYING,
+      params: { oracle: ORACLE.toLowerCase(), irm: IRM.toLowerCase() },
+    });
+  });
+
+  it("fails closed when the oracle was not deployed by the pinned factory", async () => {
+    // §12 Q6: a lender inherits bad-debt risk from a manipulated oracle, so an
+    // oracle whose code we cannot attribute is not one we route into.
+    const target = await MorphoBlueResolver.resolve(
+      pool({ project: "morpho-blue" }),
+      morphoCtx([market()], { deployed: false }),
+    );
+    expect(target).toBeNull();
+  });
+
+  it("fails closed when a factory oracle reads an unreviewed feed", async () => {
+    // Factory membership alone is not enough: creating an oracle is
+    // permissionless, so the feeds are where the attacker actually gets in.
+    const target = await MorphoBlueResolver.resolve(
+      pool({ project: "morpho-blue" }),
+      morphoCtx([market()], {
+        feeds: ["0x00000000000000000000000000000000DeadBeef"],
+      }),
+    );
+    expect(target).toBeNull();
+  });
+
+  it("fails closed when it cannot reach the chain to check at all", async () => {
+    // "Could not verify" must resolve the same way as "failed verification".
+    const target = await MorphoBlueResolver.resolve(
+      pool({ project: "morpho-blue" }),
+      morphoCtx([market()], { client: false }),
     );
     expect(target).toBeNull();
   });
@@ -570,20 +651,26 @@ describe("registry ordered fallback (§12 Q3)", () => {
     registerResolver(SparkLendResolver);
     registerResolver(SparkSavingsResolver);
 
-    expect(getResolversForProject("spark-savings").map((r) => r.family)).toEqual(
-      ["spark-savings"],
-    );
+    expect(
+      getResolversForProject("spark-savings").map((r) => r.family),
+    ).toEqual(["spark-savings"]);
     // The lending resolver still owns its own slugs.
     expect(getResolversForProject("sparklend").map((r) => r.family)).toEqual([
       "sparklend",
     ]);
 
-    // USDC has no pinned Spark savings vault, so the pool must resolve to
+    // WBTC has no pinned Spark savings vault, so the pool must resolve to
     // nothing rather than to SparkLend's Pool.
+    //
+    // This used to use USDC, which stopped being a valid example the day
+    // `spUSDC` was pinned — the assertion would then have passed or failed for
+    // a reason that has nothing to do with the look-alike rule. Pick an asset
+    // the protocol genuinely has no vault for, and say so, so the next person
+    // who adds a pin knows why this token was chosen.
     const target = await resolveTarget(
       pool({
         project: "spark-savings",
-        underlyingTokens: ["0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"],
+        underlyingTokens: ["0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"],
       }),
       ctxWith({ validate: true }),
     );

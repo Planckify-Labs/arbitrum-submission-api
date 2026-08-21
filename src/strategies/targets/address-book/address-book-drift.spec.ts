@@ -43,6 +43,7 @@ import {
   parseAbi,
 } from "viem";
 import {
+  BALANCER_QUERIES,
   BALANCER_V2_CHAINS,
   BALANCER_V2_VAULT,
   BALANCER_V3_VAULTS,
@@ -56,6 +57,11 @@ import {
 import { AAVE_FORK_POOL_BOOKS, PINNED_VAULT_BOOKS } from "./index";
 import { COMET_MARKETS, MORPHO_BLUE_SINGLETONS } from "./lending";
 import { LST_VENUES } from "./lst";
+import {
+  CHAINLINK_FEEDS,
+  FEED_STALENESS_FACTOR,
+  MORPHO_CHAINLINK_ORACLE_FACTORIES,
+} from "./oracles";
 
 /**
  * `DRIFT_CHECKS=1` turns on every drift check at once (this one plus
@@ -80,6 +86,10 @@ const ABI = parseAbi([
   "function factory() view returns (address)",
   "function poolManager() view returns (address)",
   "function getAuthorizer() view returns (address)",
+  "function vault() view returns (address)",
+  "function description() view returns (string)",
+  "function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)",
+  "function isMorphoChainlinkOracleV2(address) view returns (bool)",
 ]);
 
 type Client = ReturnType<typeof createPublicClient>;
@@ -358,6 +368,28 @@ async function checkBalancer(): Promise<void> {
       );
     },
   );
+  // BalancerQueries is deployed independently per chain (not one address
+  // everywhere like the Vault), so its identity proof is different: it must
+  // round-trip to the SAME v2 Vault we pinned, via its own immutable `vault()`.
+  await forEachChain(
+    Object.keys(BALANCER_QUERIES).map(Number),
+    async (client, chainId) => {
+      const queries = BALANCER_QUERIES[chainId];
+      const what = `balancer-queries chain=${chainId}`;
+      if (!(await requireCode(client, chainId, queries, what))) return;
+      const reportedVault = await read<string>(client, queries, "vault");
+      if (!reportedVault || !nonZero(reportedVault)) {
+        fail(what, `${queries} does not expose vault() — not BalancerQueries`);
+        return;
+      }
+      if (reportedVault.toLowerCase() !== BALANCER_V2_VAULT.toLowerCase()) {
+        fail(
+          what,
+          `${queries}.vault() = ${reportedVault}, expected the pinned v2 Vault ${BALANCER_V2_VAULT}`,
+        );
+      }
+    },
+  );
 }
 
 async function checkCurveAndPendle(): Promise<void> {
@@ -408,6 +440,98 @@ async function checkLstVenues(): Promise<void> {
   );
 }
 
+/**
+ * The oracle-provenance half of the Morpho Blue gate (§12 Q6).
+ *
+ * Two questions, because the gate rests on two independent claims:
+ *
+ *   1. Is the pinned factory really a `MorphoChainlinkOracleV2Factory`? Probed
+ *      by asking it about an address it cannot possibly have deployed — a
+ *      contract that answers `false` there is at least shaped like the factory,
+ *      whereas one that reverts or answers `true` is not the factory at all.
+ *   2. Is each pinned feed still the pair we think, and still alive? A feed
+ *      that gets re-pointed or decommissioned is the bad-debt scenario the
+ *      whole gate exists to prevent, and nothing else in the suite would see it.
+ */
+async function checkOracleProvenance(): Promise<void> {
+  await forEachChain(
+    Object.keys(MORPHO_CHAINLINK_ORACLE_FACTORIES).map(Number),
+    async (client, chainId) => {
+      const factory = MORPHO_CHAINLINK_ORACLE_FACTORIES[chainId];
+      const what = `morpho-oracle-factory chain=${chainId}`;
+      if (!(await requireCode(client, chainId, factory, what))) return;
+      // A never-deployed probe address: the mapping must answer, and answer no.
+      const claimed = await read<boolean>(
+        client,
+        factory,
+        "isMorphoChainlinkOracleV2",
+        ["0x0000000000000000000000000000000000000001"],
+      );
+      if (claimed === null) {
+        fail(
+          what,
+          `${factory} has no isMorphoChainlinkOracleV2 — not the factory`,
+        );
+      } else if (claimed !== false) {
+        fail(what, `${factory} claims to have deployed 0x…01 — wrong contract`);
+      }
+    },
+  );
+
+  await forEachChain(
+    Object.keys(CHAINLINK_FEEDS).map(Number),
+    async (client, chainId) => {
+      const nowSec = Math.floor(Date.now() / 1000);
+      for (const feed of CHAINLINK_FEEDS[chainId] ?? []) {
+        const what = `chainlink ${feed.pair} chain=${chainId}`;
+        if (!(await requireCode(client, chainId, feed.address, what))) continue;
+
+        const description = await read<string>(
+          client,
+          feed.address,
+          "description",
+        );
+        if (description === null) {
+          fail(
+            what,
+            `${feed.address} has no description() — not a Chainlink feed`,
+          );
+          continue;
+        }
+        if (description.trim() !== feed.pair) {
+          fail(
+            what,
+            `${feed.address} reports "${description}", pinned as "${feed.pair}"`,
+          );
+        }
+
+        const round = await read<
+          readonly [bigint, bigint, bigint, bigint, bigint]
+        >(client, feed.address, "latestRoundData");
+        if (!round) {
+          fail(what, `${feed.address} latestRoundData() reverted`);
+          continue;
+        }
+        if (round[1] <= 0n) {
+          fail(
+            what,
+            `${feed.address} answers ${round[1]} — non-positive price`,
+          );
+        }
+        const age = nowSec - Number(round[3]);
+        // Same bound the resolver enforces, so a feed that would silently take
+        // its markets to Manual shows up here as a named failure instead.
+        if (age > feed.heartbeatSec * FEED_STALENESS_FACTOR) {
+          fail(
+            what,
+            `${feed.address} last updated ${age}s ago, heartbeat ${feed.heartbeatSec}s`,
+          );
+        }
+      }
+    },
+  );
+}
+
 const maybeDescribe = ENABLED ? describe : describe.skip;
 
 maybeDescribe("address book — on-chain drift", () => {
@@ -421,6 +545,7 @@ maybeDescribe("address book — on-chain drift", () => {
     await checkBalancer();
     await checkCurveAndPendle();
     await checkLstVenues();
+    await checkOracleProvenance();
   }, TIMEOUT_MS);
 
   it("checked something (a run with no endpoints is not a passing run)", () => {

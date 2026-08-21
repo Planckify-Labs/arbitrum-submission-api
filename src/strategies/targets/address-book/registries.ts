@@ -39,9 +39,23 @@ export const EULER_VAULT_FACTORIES: Readonly<Record<number, Address>> = {
 /**
  * Fluid `LendingResolver` — `getAllFTokens()` returns the full fToken set, so
  * no enumeration paging is needed.
+ *
+ * Verified 2026-08-19 against Instadapp's own deployment table
+ * (`Instadapp/fluid-deployments`, `deployments.md` → LendingResolver). The
+ * mainnet row there matches the address that was already pinned here, which is
+ * the corroboration §12 Q7 asks for before trusting the other three. Each entry
+ * additionally answers `getAllFTokens()` on chain (1 → 7, 8453 → 6, 42161 → 9,
+ * 137 → 6 fTokens).
+ *
+ * Ethereum-only until now, which is why `fluid-lending` pools on Base and
+ * Arbitrum had no candidate source and fell through to Manual despite the
+ * family being live — a missing registry reads exactly like "not our pool".
  */
 export const FLUID_LENDING_RESOLVERS: Readonly<Record<number, Address>> = {
   1: "0xC215485C572365AE87f908ad35233EC2572A3BEC", // Ethereum
+  8453: "0x3aF6FBEc4a2FE517F56E402C65e3f4c3e18C1D86", // Base
+  42161: "0xdF4d3272FfAE8036d9a2E1626Df2Db5863b4b302", // Arbitrum
+  137: "0x8e72291D5e6f4AAB552cc827fB857a931Fc5CAC1", // Polygon
 };
 
 /**
@@ -68,3 +82,44 @@ export const REGISTRIES_DEFERRED = [
   "venus-4626",
   "compound-v2-forks",
 ] as const;
+
+/**
+ * Compound-v2 fork `Comptroller`s, keyed by resolver family then chain.
+ *
+ * These exist so the whole cToken lineage stops depending on DeFiLlama's
+ * `/poolsOld` for candidate addresses (§11.6). Every fork keeps Compound's
+ * `getAllMarkets()`, so one enumeration serves Venus, Benqi, Moonwell and any
+ * future fork — the family already shares a resolver, a validator and an
+ * adapter, and now it shares its discovery too.
+ *
+ * A Comptroller decides which cTokens exist, so whoever can swap it can swap
+ * the deposit destination: same pinning rule as any Pool or router. Each entry
+ * was verified on chain 2026-08-19 by calling `getAllMarkets()` and getting a
+ * non-empty list.
+ */
+export const COMPOUND_V2_COMPTROLLERS: Readonly<
+  Record<string, Readonly<Record<number, Address>>>
+> = {
+  venus: {
+    56: "0xfD36E2c2a6789Db23113685031d7F16329158384", // BNB Chain
+  },
+  benqi: {
+    43114: "0x486Af39519B4Dc9a7fCcd318217352830E8AD9b4", // Avalanche
+  },
+  moonwell: {
+    8453: "0xfBb21d0380beE3312B33c4353c8936a0F13EF26C", // Base
+  },
+  // Compound's OWN v2 markets — the family the forks above were forked FROM.
+  // Address is Compound's `Unitroller` proxy from their own deployment file
+  // (`compound-finance/compound-protocol`, `networks/mainnet.json`,
+  // `Contracts.Comptroller`), verified on chain 2026-08-21: `getAllMarkets()`
+  // returns the live market list (cETH 0x4ddc2d19…, cUSDC 0x39aa39c0…,
+  // cUSDT 0xf650c3d8…).
+  //
+  // Keyed "compound-v2" and not "compound" on purpose: the family lookup is a
+  // SUBSTRING test against the pool slug, so a bare "compound" key would also
+  // claim `compound-v3` pools — a different product with a different adapter.
+  "compound-v2": {
+    1: "0x3d9819210A31b4961b30EF54bE2aeD79B9c9Cd3B",
+  },
+};

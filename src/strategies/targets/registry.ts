@@ -70,11 +70,67 @@ export function getResolversForProject(
 
   // Only when nobody claims the slug outright do we accept a substring match.
   // That is what lets "aave-v3-lido" reach the Aave resolver.
-  return resolvers.filter(
+  const loose = resolvers.filter(
     (r) =>
       needle.includes(r.family.toLowerCase()) ||
       (r.aliases ?? []).some((a) => needle.includes(a.toLowerCase())),
   );
+  if (loose.length > 0) recordSubstringMatch(needle, loose);
+  return loose;
+}
+
+// ── Substring-match surveillance ────────────────────────────────────────────
+//
+// This fallback has mis-routed funds TWICE, and both times it validated cleanly
+// so nothing downstream objected:
+//
+//   `spark-savings`  → SparkLend's lending Pool (savings deposit became a
+//                      lending position; see the comment above)
+//   `aave-v4`        → the Aave v3 Pool (wstETH/WBTC/weETH are real v3
+//                      reserves, so Layer-1 passed; ~$168M across 5 pools)
+//
+// The pattern is always the same: a protocol ships a new version or a variant
+// whose slug CONTAINS an existing family's name, nobody claims it exactly, and
+// the look-alike answers. It will happen again — `compound-v4`, `uniswap-v5`,
+// `morpho-v2` are all one DeFiLlama listing away.
+//
+// So rather than wait to be surprised a third time, every use of the fallback
+// is recorded. The dry run prints them, which turns "a slug we never reviewed
+// reached a resolver" from something you discover into something you are told.
+// The fix for any entry that appears here is a `reserved` manifest entry
+// (protocols.ts) or a real alias — an exact claimant beats a substring one.
+
+const substringMatches = new Map<string, Set<string>>();
+
+function recordSubstringMatch(
+  slug: string,
+  matched: readonly PoolTargetResolver[],
+): void {
+  const families = substringMatches.get(slug) ?? new Set<string>();
+  for (const r of matched) families.add(r.family);
+  substringMatches.set(slug, families);
+}
+
+export interface SubstringMatch {
+  /** The DeFiLlama slug nobody claimed outright. */
+  readonly slug: string;
+  /** Families that answered anyway, by containing part of the slug. */
+  readonly families: readonly string[];
+}
+
+/**
+ * Every slug that reached a resolver ONLY by substring. Each one is a protocol
+ * nobody reviewed being served by a family that merely looks like it.
+ */
+export function substringMatchReport(): readonly SubstringMatch[] {
+  return [...substringMatches.entries()]
+    .map(([slug, families]) => ({ slug, families: [...families].sort() }))
+    .sort((a, b) => a.slug.localeCompare(b.slug));
+}
+
+/** Test seam. */
+export function resetSubstringMatches(): void {
+  substringMatches.clear();
 }
 
 /**

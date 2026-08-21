@@ -68,7 +68,7 @@ export const CompoundV3Resolver: PoolTargetResolver = {
  * `family` doubles as the label; adding another fork is one entry at the bottom
  * of this file.
  */
-function cTokenForkResolver(config: {
+export function cTokenForkResolver(config: {
   family: string;
   aliases: readonly string[];
   minTvlUsd?: number;
@@ -120,9 +120,28 @@ export const SonneResolver = cTokenForkResolver({
   minTvlUsd: 250_000,
 });
 
+/**
+ * Moonwell — Compound-v2 fork on Base/Optimism/Moonbeam. Its `mToken` markets
+ * are the same `mint`/`redeem`/`redeemUnderlying` shape as Venus and Benqi
+ * (moonwell-fi/moonwell-contracts-v2 is a Compound-v2 lineage fork), so this is
+ * a resolver entry with no adapter, validator or address pin of its own:
+ * `validateCompoundV2` proves `mToken.underlying()` on chain, which is the same
+ * bar every other fork in this family clears.
+ *
+ * ⚠️ Blocked on the same thing Venus and Benqi are: the cToken address comes
+ * from candidate discovery, and `/poolsOld` is paywalled (HTTP 402) with no
+ * `DEFILLAMA_API_KEY` set. Inert until discovery is restored (§11.6).
+ */
+export const MoonwellResolver = cTokenForkResolver({
+  family: "moonwell",
+  aliases: ["moonwell-lending", "moonwell", "moonwell-artemis"],
+  minTvlUsd: 250_000,
+});
+
 export const TIER2_COMPOUND_RESOLVERS: readonly PoolTargetResolver[] = [
   CompoundV3Resolver,
   VenusResolver,
   BenqiLendingResolver,
   SonneResolver,
+  MoonwellResolver,
 ];

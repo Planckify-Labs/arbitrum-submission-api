@@ -75,6 +75,7 @@ export function registerCandidateSource(source: CandidateSource): void {
 export function resetCandidateSources(): void {
   byProject.clear();
   fallbacks.length = 0;
+  sourceHealth.clear();
 }
 
 /** Which sources would be consulted for a project, in order. */
@@ -99,13 +100,93 @@ export async function candidateAddressForPool(
   for (const source of sourcesForProject(pool.project)) {
     try {
       const address = await source.candidate(pool, ctx);
+      recordSourceOutcome(source.id, address ? "hit" : "miss");
       if (address) return address;
     } catch {
       // Treated as "this source has no answer". Deliberately silent per-pool:
       // the sources log their own systemic failures once (see poolsOld).
+      recordSourceOutcome(source.id, "error");
     }
   }
   return null;
+}
+
+// ── Discovery health (§11.5b) ───────────────────────────────────────────────
+//
+// `/poolsOld` went to HTTP 402 and took every discovery-dependent family with
+// it. Nothing broke loudly: a source that answers nothing is indistinguishable
+// from a source whose pools simply are not ours, so seven families degraded to
+// Manual and stayed there. The cost of that silence was measured in days.
+//
+// This is the cheap fix. Every dispatch records an outcome per source, and a
+// source that has been asked enough times to have an opinion and has never
+// answered is reported as DARK — once, so it is a signal rather than noise.
+// It cannot decide anything (a wrong candidate still fails Layer-1); it exists
+// so "this family went quiet" is something we notice instead of discover.
+
+interface SourceHealth {
+  hits: number;
+  misses: number;
+  errors: number;
+  /** Latched so the warning is emitted once per process, not per pool. */
+  warned: boolean;
+}
+
+/** Asks before a never-answering source is worth reporting. Below this, "no
+ *  answer" is more likely "no pools of ours" than a broken source. */
+const DARK_SOURCE_MIN_ATTEMPTS = 25;
+
+const sourceHealth = new Map<string, SourceHealth>();
+
+function recordSourceOutcome(
+  id: string,
+  outcome: "hit" | "miss" | "error",
+): void {
+  const h = sourceHealth.get(id) ?? {
+    hits: 0,
+    misses: 0,
+    errors: 0,
+    warned: false,
+  };
+  if (outcome === "hit") h.hits++;
+  else if (outcome === "miss") h.misses++;
+  else h.errors++;
+  sourceHealth.set(id, h);
+
+  if (h.warned || h.hits > 0) return;
+  const attempts = h.misses + h.errors;
+  if (attempts < DARK_SOURCE_MIN_ATTEMPTS) return;
+  h.warned = true;
+  console.warn(
+    `[candidates] source "${id}" is DARK: ${attempts} lookups, 0 addresses ` +
+      `(${h.errors} threw). Every family relying on it resolves to Manual. ` +
+      `Check the endpoint before assuming those protocols simply have no pools.`,
+  );
+}
+
+export interface CandidateSourceHealth {
+  readonly id: string;
+  readonly hits: number;
+  readonly misses: number;
+  readonly errors: number;
+  /** Asked enough to have an opinion, and never answered. */
+  readonly dark: boolean;
+}
+
+/** Snapshot for the dry run and for ops diagnostics. Never used for matching. */
+export function candidateSourceHealth(): readonly CandidateSourceHealth[] {
+  return [...sourceHealth.entries()].map(([id, h]) => ({
+    id,
+    hits: h.hits,
+    misses: h.misses,
+    errors: h.errors,
+    dark: h.hits === 0 && h.misses + h.errors >= DARK_SOURCE_MIN_ATTEMPTS,
+  }));
+}
+
+/** Test seam. */
+export function resetCandidateSourceHealth(): void {
+  sourceHealth.clear();
 }
 
 /**

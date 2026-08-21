@@ -22,6 +22,7 @@
 
 import type { DeFiLlamaYieldPool } from "../../external/defillama.client";
 import {
+  COMPOUND_V2_COMPTROLLERS,
   CURVE_ADDRESS_PROVIDER,
   CURVE_METAREGISTRY_ID,
   EULER_VAULT_FACTORIES,
@@ -117,7 +118,7 @@ const ZERO = "0x0000000000000000000000000000000000000000";
  * Vault enumeration is expensive (Euler lists ~900), so a chain's list is
  * memoised for the poll window. Keyed by `(source, chainId)`.
  */
-interface VaultRow {
+export interface VaultRow {
   address: Address;
   asset: Address;
   symbol: string | null;
@@ -150,16 +151,24 @@ async function read<T>(
  * supports it. Vaults whose reads fail are dropped rather than defaulted — a
  * contract that will not say what its asset is has not identified itself.
  */
-async function describeVaults(
+export async function describeVaults(
   client: EvmReadClient,
   addresses: readonly Address[],
+  /**
+   * How this family names its deposited asset. ERC-4626 says `asset()`;
+   * Compound-v2 cTokens say `underlying()`. Everything else about enumeration
+   * is identical, so this is a parameter rather than a second copy of the
+   * function.
+   */
+  assetAbi: readonly unknown[] = ERC4626_ABI,
+  assetFn: string = "asset",
 ): Promise<VaultRow[]> {
   const rows: VaultRow[] = [];
 
   if (typeof client.multicall === "function") {
     const results = await client.multicall({
       contracts: addresses.flatMap((address) => [
-        { address, abi: ERC4626_ABI, functionName: "asset" },
+        { address, abi: assetAbi, functionName: assetFn },
         { address, abi: ERC4626_ABI, functionName: "symbol" },
         { address, abi: ERC4626_ABI, functionName: "name" },
       ]),
@@ -187,7 +196,7 @@ async function describeVaults(
   }
 
   for (const address of addresses) {
-    const asset = await read<string>(client, address, ERC4626_ABI, "asset");
+    const asset = await read<string>(client, address, assetAbi, assetFn);
     if (!asset || asset.toLowerCase() === ZERO) continue;
     rows.push({
       address,
@@ -199,7 +208,7 @@ async function describeVaults(
   return rows;
 }
 
-async function cachedVaults(
+export async function cachedVaults(
   key: string,
   load: () => Promise<VaultRow[]>,
 ): Promise<VaultRow[]> {
@@ -222,7 +231,7 @@ export function resetCandidateVaultCache(): void {
  * rule everywhere: filter by the deposited asset, then require a label to
  * select exactly one.
  */
-function matchVault(
+export function matchVault(
   rows: readonly VaultRow[],
   pool: DeFiLlamaYieldPool,
 ): Address | null {
@@ -392,7 +401,108 @@ export const SolidlyPoolCandidateSource: CandidateSource = {
   },
 };
 
+// ── Compound-v2 forks — Comptroller.getAllMarkets() ─────────────────────────
+
+const COMPTROLLER_ABI = [
+  {
+    name: "getAllMarkets",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "address[]" }],
+  },
+] as const;
+
+const CTOKEN_ABI = [
+  {
+    name: "underlying",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "address" }],
+  },
+  {
+    name: "symbol",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "string" }],
+  },
+  {
+    name: "name",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "string" }],
+  },
+] as const;
+
+/**
+ * One source for the whole cToken lineage.
+ *
+ * Every Compound-v2 fork keeps `Comptroller.getAllMarkets()`, so the protocol
+ * itself answers "which markets exist" — no aggregator, nothing to paywall.
+ * That matters concretely: `/poolsOld` went to HTTP 402 and took every
+ * discovery-dependent family with it (§11.5b), and this is the fix §11.6 asks
+ * for rather than a paid key.
+ *
+ * A market whose `underlying()` reverts is SKIPPED, not guessed at: that is a
+ * native-coin market (vBNB, mETH), and this family has no native deposit path.
+ */
+export const CompoundV2CandidateSource: CandidateSource = {
+  id: "compound-v2-comptroller",
+  projects: [
+    "venus-core-pool",
+    "venus-isolated-pools",
+    "venus",
+    "benqi-lending",
+    "benqi",
+    "moonwell-lending",
+    "moonwell",
+    "compound-v2",
+  ],
+  async candidate(pool, ctx) {
+    const chainId = resolveEvmChainId(pool.chain);
+    const client = ctx.publicClient?.(chainId);
+    if (!chainId || !client) return null;
+
+    // The pool's slug picks the fork, and the fork picks the Comptroller. A
+    // slug with no pinned Comptroller on this chain declines rather than
+    // borrowing another fork's markets.
+    const slug = (pool.project ?? "").toLowerCase();
+    const family = Object.keys(COMPOUND_V2_COMPTROLLERS).find((f) =>
+      slug.includes(f),
+    );
+    const comptroller = family
+      ? COMPOUND_V2_COMPTROLLERS[family]?.[chainId]
+      : undefined;
+    if (!comptroller) return null;
+
+    const rows = await cachedVaults(
+      `compound-v2:${family}:${chainId}`,
+      async () => {
+        const markets = await read<string[]>(
+          client,
+          comptroller,
+          COMPTROLLER_ABI,
+          "getAllMarkets",
+        );
+        if (!markets?.length) return [];
+        return describeVaults(
+          client,
+          markets.map((m) => m.toLowerCase()) as Address[],
+          CTOKEN_ABI,
+          "underlying",
+        );
+      },
+    );
+
+    return matchVault(rows, pool);
+  },
+};
+
 export const ONCHAIN_CANDIDATE_SOURCES: readonly CandidateSource[] = [
+  CompoundV2CandidateSource,
   EulerVaultCandidateSource,
   FluidVaultCandidateSource,
   CurvePoolCandidateSource,

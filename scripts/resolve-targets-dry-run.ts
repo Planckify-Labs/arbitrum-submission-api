@@ -42,6 +42,8 @@
 // driver adapter to be passed explicitly, the same way PrismaService does.
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
+import { candidateSourceHealth } from "../src/strategies/targets/candidates/registry";
+import { substringMatchReport } from "../src/strategies/targets/registry";
 
 interface Options {
   /** DeFiLlama project slug. NOT --project: ts-node claims that flag. */
@@ -50,6 +52,8 @@ interface Options {
   limit: number;
   minTvlUsd: number;
   verbose: boolean;
+  /** Print the onboarding queue: what is Manual, biggest TVL first. */
+  queue: boolean;
   respectFlags: boolean;
 }
 
@@ -58,6 +62,7 @@ function parseArgs(argv: string[]): Options {
     limit: Number.POSITIVE_INFINITY,
     minTvlUsd: 1_000_000,
     verbose: false,
+    queue: false,
     respectFlags: false,
   };
   for (let i = 2; i < argv.length; i++) {
@@ -68,10 +73,11 @@ function parseArgs(argv: string[]): Options {
     else if (arg === "--limit") opts.limit = Number(next());
     else if (arg === "--min-tvl") opts.minTvlUsd = Number(next());
     else if (arg === "--verbose" || arg === "-v") opts.verbose = true;
+    else if (arg === "--queue") opts.queue = true;
     else if (arg === "--respect-flags") opts.respectFlags = true;
     else if (arg === "--help" || arg === "-h") {
       console.log(
-        "Usage: pnpm defi:dry-run [--protocol <slug>] [--chain <name>] [--limit N] [--min-tvl N] [--respect-flags] [--verbose]",
+        "Usage: pnpm defi:dry-run [--protocol <slug>] [--chain <name>] [--limit N] [--min-tvl N] [--respect-flags] [--verbose] [--queue]",
       );
       process.exit(0);
     }
@@ -337,6 +343,17 @@ async function main(): Promise<void> {
 
     const ctx = makeContext(mod);
     const byProject = new Map<string, { resolved: number; refused: number }>();
+    /** Onboarding queue: what a protocol would be worth if it resolved. */
+    const queue = new Map<
+      string,
+      {
+        refused: number;
+        tvlUsd: number;
+        chains: Set<string>;
+        sample: string[];
+        shape: string;
+      }
+    >();
     const outcomes: Record<string, number> = {};
 
     for (const pool of pools) {
@@ -367,6 +384,40 @@ async function main(): Promise<void> {
       }
 
       outcomes[outcome.status] = (outcomes[outcome.status] ?? 0) + 1;
+      if (outcome.status !== "resolved") {
+        const q = queue.get(pool.project) ?? {
+          refused: 0,
+          tvlUsd: 0,
+          chains: new Set<string>(),
+          sample: [],
+          shape: "",
+        };
+        // Rough triage so the queue does not read as "all of these are one
+        // entry away". A paired symbol is an LP position, which needs an
+        // execution KIND (adapter, validator, Layer-4 decode, Layer-5 pause),
+        // not an extraction. Heuristic on purpose — it orders the work, it does
+        // not decide anything.
+        if (!q.shape) {
+          const paired = /[-/]/.test(pool.symbol ?? "");
+          const dated = /maturity|expiry|\d{1,2}[a-z]{3}\d{4}/i.test(
+            pool.poolMeta ?? "",
+          );
+          q.shape = dated
+            ? "dated market"
+            : paired
+              ? "LP pair — needs kind"
+              : "single-asset";
+        }
+        q.refused++;
+        q.tvlUsd += Number(pool.tvlUsd) || 0;
+        q.chains.add(pool.chain);
+        if (q.sample.length < 2) {
+          q.sample.push(
+            `${pool.chain} ${pool.symbol}${pool.poolMeta ? ` "${pool.poolMeta}"` : ""}`,
+          );
+        }
+        queue.set(pool.project, q);
+      }
       const tally = byProject.get(pool.project) ?? { resolved: 0, refused: 0 };
       if (outcome.status === "resolved") tally.resolved++;
       else tally.refused++;
@@ -390,6 +441,77 @@ async function main(): Promise<void> {
       if (options.verbose && outcome.status !== "resolved") {
         console.log(
           `            poolId=${pool.pool} meta=${pool.poolMeta ?? "-"} underlying=${(pool.underlyingTokens ?? []).join(",") || "-"}`,
+        );
+      }
+    }
+
+    if (options.queue) {
+      console.log(`\n${"=".repeat(110)}`);
+      console.log("Onboarding queue — Manual protocols, biggest TVL first");
+      console.log(
+        "Each row is a protocol nothing can execute today, biggest TVL first.\n" +
+          "\n" +
+          "READ THE SHAPE COLUMN BEFORE PICKING ONE. Only `single-asset` is likely to\n" +
+          "be an extraction (one protocols.ts entry). `LP pair` and `dated market` need\n" +
+          "a new execution kind — adapter, validator, Layer-4 decode, Layer-5 pause —\n" +
+          "which is a different and much larger piece of work. The shape is a heuristic\n" +
+          "from the pool symbol, so confirm it against the protocol's own docs.\n" +
+          "\n" +
+          "Resolving here is NOT shipping: see runbook §12.3 for what production needs.\n",
+      );
+      const rows = [...queue]
+        .filter(([project]) => (byProject.get(project)?.resolved ?? 0) === 0)
+        .sort((a, b) => b[1].tvlUsd - a[1].tvlUsd)
+        .slice(0, 25);
+      if (rows.length === 0) {
+        console.log(
+          "  (nothing fully Manual — every project resolved at least one pool)",
+        );
+      }
+      for (const [project, q] of rows) {
+        const tvl =
+          q.tvlUsd >= 1e9
+            ? `$${(q.tvlUsd / 1e9).toFixed(2)}B`
+            : q.tvlUsd >= 1e6
+              ? `$${(q.tvlUsd / 1e6).toFixed(1)}M`
+              : `$${(q.tvlUsd / 1e3).toFixed(0)}K`;
+        console.log(
+          `  ${pad(project, 30)} ${tvl.padStart(8)}  ${String(q.refused).padStart(3)} pools  ${pad(q.shape, 22)} [${[...q.chains].sort().join(", ")}]`,
+        );
+        console.log(`     e.g. ${q.sample.join(" · ")}`);
+      }
+    }
+
+    const loose = substringMatchReport();
+    if (loose.length > 0) {
+      console.log(`\n${"=".repeat(110)}`);
+      console.log("!! Slugs that reached a resolver only by SUBSTRING");
+      console.log(
+        "Nobody claims these slugs outright, so a family that merely looks like them\n" +
+          "answered. This has mis-routed funds twice (spark-savings -> SparkLend,\n" +
+          "aave-v4 -> the Aave v3 Pool) and BOTH validated cleanly. Review each row:\n" +
+          "if it is not the same protocol, add a `reserved` entry in protocols.ts.\n",
+      );
+      for (const m of loose) {
+        console.log(`  ${pad(m.slug, 34)} served by: ${m.families.join(", ")}`);
+      }
+    }
+
+    const health = candidateSourceHealth();
+    if (health.length > 0) {
+      console.log(`\n${"=".repeat(110)}`);
+      console.log("Discovery health — where candidate addresses came from");
+      for (const h of [...health].sort((a, b) => b.hits - a.hits)) {
+        const flag = h.dark ? "  << DARK" : "";
+        console.log(
+          `  ${pad(h.id, 30)} ${String(h.hits).padStart(4)} hits  ${String(h.misses).padStart(4)} miss  ${String(h.errors).padStart(3)} err${flag}`,
+        );
+      }
+      if (health.some((h) => h.dark)) {
+        console.log(
+          "\n  A DARK source answered nothing at all. That is indistinguishable from\n" +
+            "  'these pools are not ours' unless someone looks, which is how the /poolsOld\n" +
+            "  outage went unnoticed. Check the endpoint before assuming no coverage.",
         );
       }
     }

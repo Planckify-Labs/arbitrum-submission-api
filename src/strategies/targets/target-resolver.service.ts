@@ -20,8 +20,8 @@ import { ValkeyService } from "../../valkey/valkey.service";
 import type { DeFiLlamaYieldPool } from "../external/defillama.client";
 import { bootTargetResolvers } from "./bootstrap";
 import {
-  chainDirectoryDiagnostics,
   type ChainDirectoryRow,
+  chainDirectoryDiagnostics,
   loadChainDirectory,
 } from "./chain-directory";
 import { resolveTarget } from "./registry";

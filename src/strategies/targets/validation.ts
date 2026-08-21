@@ -63,7 +63,16 @@ const ERC4626_ABI = parseAbi([
   "function asset() view returns (address)",
   "function totalAssets() view returns (uint256)",
   "function convertToShares(uint256 assets) view returns (uint256)",
+  "function maxDeposit(address receiver) view returns (uint256)",
 ]);
+
+/**
+ * Probe receiver for `maxDeposit`. Any address nobody has allowlisted works —
+ * the question being asked is "would an ordinary user be allowed to deposit",
+ * and an ordinary user is exactly that. Never used as a call target.
+ */
+const MAX_DEPOSIT_PROBE =
+  "0x000000000000000000000000000000000000dEaD" as Address;
 
 const AAVE_POOL_ABI = parseAbi([
   // Aave v3 Pool.getReserveData returns a struct; we only need aTokenAddress.
@@ -213,6 +222,32 @@ async function validateErc4626(
     // A vault that prices one whole unit at zero shares is either empty in a
     // way that rounds deposits to nothing, or not really 4626.
     if (shares <= 0n) return false;
+
+    // CAN AN ORDINARY USER ACTUALLY DEPOSIT?
+    //
+    // Everything above proves the vault is real and prices correctly, and none
+    // of it proves a deposit would succeed. Maple's syrupUSDC / syrupUSDT are
+    // the counter-example: both pass every check above (asset matches, TVL in
+    // band, convertToShares fine) and both return `maxDeposit == 0` for anyone
+    // not allowlisted, because the pool is permissioned. Without this the pool
+    // badges "Deposit in-app" and the user's transaction reverts on chain
+    // (verified 2026-08-21).
+    //
+    // A supply-capped vault also reads 0 here, and refusing that is right too:
+    // the deposit really would fail right now.
+    //
+    // A REVERT is not treated as a zero. ERC-4626 says `maxDeposit` must not
+    // revert, but the checks above have already established 4626 behaviour, so
+    // a non-conforming-but-working vault should not lose coverage over it.
+    const maxDeposit = await client
+      .readContract({
+        address: target.vault,
+        abi: ERC4626_ABI,
+        functionName: "maxDeposit",
+        args: [MAX_DEPOSIT_PROBE],
+      })
+      .catch(() => null);
+    if (maxDeposit !== null && maxDeposit === 0n) return false;
 
     // TVL band — stablecoins only (assume ~$1); skip otherwise.
     if (isStable(pool.symbol) && pool.tvlUsd > 0) {

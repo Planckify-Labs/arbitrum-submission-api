@@ -28,6 +28,7 @@
 
 import { getAddress } from "viem";
 import {
+  BALANCER_QUERIES,
   BALANCER_V2_CHAINS,
   BALANCER_V2_VAULT,
   BALANCER_V3_VAULTS,
@@ -40,6 +41,7 @@ import {
 import { AAVE_FORK_POOL_BOOKS, PINNED_VAULT_BOOKS } from "./index";
 import { COMET_MARKETS, MORPHO_BLUE_SINGLETONS } from "./lending";
 import { LST_VENUES } from "./lst";
+import { CHAINLINK_FEEDS, MORPHO_CHAINLINK_ORACLE_FACTORIES } from "./oracles";
 import type { PinnedVaultBook } from "./vaults";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
@@ -83,6 +85,23 @@ function collectPins(): Pin[] {
 
   for (const [chainId, singleton] of Object.entries(MORPHO_BLUE_SINGLETONS)) {
     pins.push(pin(singleton, Number(chainId), "morpho-blue", "Morpho"));
+  }
+
+  for (const [chainId, factory] of Object.entries(
+    MORPHO_CHAINLINK_ORACLE_FACTORIES,
+  )) {
+    pins.push(
+      pin(factory, Number(chainId), "morpho-blue", "ChainlinkOracleV2Factory"),
+    );
+  }
+
+  // Chainlink feeds get their own owner: they are shared infrastructure, and
+  // two Morpho markets reading the same ETH/USD feed is the normal case rather
+  // than the copy-paste the collision check hunts for.
+  for (const [chainId, feeds] of Object.entries(CHAINLINK_FEEDS)) {
+    for (const feed of feeds) {
+      pins.push(pin(feed.address, Number(chainId), "chainlink", feed.pair));
+    }
   }
 
   // Two resolver families can legitimately SHARE one book object — Spark
@@ -130,6 +149,9 @@ function collectPins(): Pin[] {
   }
   for (const chainId of BALANCER_V2_CHAINS) {
     pins.push(pin(BALANCER_V2_VAULT, chainId, "balancer-v2", "Vault"));
+  }
+  for (const [chainId, queries] of Object.entries(BALANCER_QUERIES)) {
+    pins.push(pin(queries, Number(chainId), "balancer-v2", "BalancerQueries"));
   }
 
   for (const venue of LST_VENUES) {
@@ -243,6 +265,47 @@ describe("address book — structural invariants", () => {
     const bad = LST_VENUES.filter(
       (v) => !Number.isInteger(v.chainId) || v.chainId <= 0,
     ).map((v) => v.key);
+    expect(bad).toEqual([]);
+  });
+});
+
+describe("oracle provenance book (Morpho Blue §12 Q6)", () => {
+  it("pins an oracle factory for every chain that has a Morpho singleton", () => {
+    // A chain with markets but no factory pin cannot prove ANY oracle, so the
+    // family silently goes dark there — the exact failure this rewrite fixed.
+    const withMarkets = Object.keys(MORPHO_BLUE_SINGLETONS);
+    const withFactory = new Set(Object.keys(MORPHO_CHAINLINK_ORACLE_FACTORIES));
+    expect(withMarkets.filter((c) => !withFactory.has(c))).toEqual([]);
+  });
+
+  it("ships a non-empty reviewed feed list per factory chain", () => {
+    // A factory with no feeds accepts nothing: the provenance check would pass
+    // and every market would then fail `feed-not-reviewed`. That is fail-closed
+    // but useless, and it is how the old per-market allowlist behaved.
+    const bad = Object.keys(MORPHO_CHAINLINK_ORACLE_FACTORIES).filter(
+      (chainId) => (CHAINLINK_FEEDS[Number(chainId)] ?? []).length === 0,
+    );
+    expect(bad).toEqual([]);
+  });
+
+  it("never lists the same feed address twice on one chain", () => {
+    for (const [chainId, feeds] of Object.entries(CHAINLINK_FEEDS)) {
+      const seen = feeds.map((f) => f.address.toLowerCase());
+      expect(`${chainId}:${new Set(seen).size}`).toBe(
+        `${chainId}:${seen.length}`,
+      );
+    }
+  });
+
+  it("gives every feed a describable pair and a positive heartbeat", () => {
+    // `pair` is asserted against the feed's own `description()` by the drift
+    // spec, and `heartbeatSec` is the denominator of the liveness bound — a
+    // zero or missing one would make every feed look permanently fresh.
+    const bad = Object.entries(CHAINLINK_FEEDS).flatMap(([chainId, feeds]) =>
+      feeds
+        .filter((f) => !f.pair.trim() || !(f.heartbeatSec > 0))
+        .map((f) => `${chainId}:${f.address}`),
+    );
     expect(bad).toEqual([]);
   });
 });

@@ -12,6 +12,8 @@
  */
 
 import type { DeFiLlamaYieldPool } from "../external/defillama.client";
+import { warnOnce } from "./candidates/protocol-api.source";
+import { candidateAddressForPool } from "./candidates/registry";
 import type {
   Address,
   DepositTarget,
@@ -82,6 +84,62 @@ function pickLabelledCandidate<T>(
   return candidates.length === 1 ? candidates[0] : null;
 }
 
+/**
+ * Disambiguate by ADDRESS when the labels cannot.
+ *
+ * Yearn is the case that forced this: DeFiLlama's yearn rows carry
+ * `poolMeta: null` and `symbol` = the *asset* ("USDC"), and mainnet has four
+ * distinct USDC vaults. There is nothing in the pool row to tell them apart, so
+ * `pickLabelledCandidate` correctly refused all thirteen — correct, and also
+ * permanently zero coverage.
+ *
+ * The candidate registry does have an answer (the protocol's own deep link
+ * names the vault), so it is consulted as a tie-break. The important property
+ * is the direction: the candidate may only **select** from vaults the
+ * protocol's own registry already lists for this asset, never introduce one.
+ * An address that the registry does not list is discarded, so a bad candidate
+ * degrades to Manual instead of steering the match.
+ */
+async function pickByCandidateAddress<T>(
+  candidates: readonly T[],
+  pool: DeFiLlamaYieldPool,
+  ctx: ResolverContext,
+  addressOf: (candidate: T) => string | null | undefined,
+): Promise<T | null> {
+  if (candidates.length === 0) return null;
+  const address = await candidateAddressForPool(pool, ctx);
+  if (!address) return null;
+  const hits = candidates.filter((c) => eqAddr(addressOf(c), address));
+  return hits.length === 1 ? hits[0] : null;
+}
+
+/**
+ * A bespoke resolver fetches its own registry, which means the discovery-health
+ * check in `candidates/registry.ts` cannot see it: those counters only track
+ * registered `CandidateSource`s. So when one of these endpoints goes quiet the
+ * family reads as "no pools of ours" with nothing anywhere saying otherwise.
+ *
+ * That is not hypothetical. `ydaemon.yearn.fi` publishes a NAT64 AAAA record
+ * that Node's happy-eyeballs fails against while curl succeeds, so the fetch
+ * threw, the catch returned `[]`, and Yearn resolved 0/13 with no signal at
+ * all — the /poolsOld outage in miniature, one file over.
+ *
+ * An empty registry is always worth one line. It is either a real outage or a
+ * protocol with no vaults, and those two need very different responses.
+ */
+function warnEmptyRegistry(
+  family: string,
+  chainId: number,
+  host: string,
+): void {
+  warnOnce(
+    `${family}:empty:${chainId}`,
+    `[${family}] ${host} returned no vaults for chain ${chainId}. Every ${family} ` +
+      `pool on this chain will resolve to Manual. Check the endpoint before ` +
+      `assuming the protocol has no vaults here.`,
+  );
+}
+
 // ── Morpho MetaMorpho (api.morpho.org/graphql) ──────────────────────────────
 
 interface MorphoVault {
@@ -135,7 +193,10 @@ async function fetchMorphoVaults(
     );
     return [];
   }
-  return res?.data?.vaults?.items ?? [];
+  const items = res?.data?.vaults?.items ?? [];
+  if (items.length === 0)
+    warnEmptyRegistry("morpho", chainId, "api.morpho.org");
+  return items;
 }
 
 export const MorphoResolver: PoolTargetResolver = {
@@ -165,11 +226,12 @@ export const MorphoResolver: PoolTargetResolver = {
 
     // Morpho pools carry the vault identity in `symbol` (STEAKUSDC) with
     // `poolMeta` null, so `symbol` is the fallback label here.
-    const match = pickLabelledCandidate(
-      candidates,
-      [pool.poolMeta, pool.symbol],
-      (v) => [v.name, v.symbol],
-    );
+    const match =
+      pickLabelledCandidate(candidates, [pool.poolMeta, pool.symbol], (v) => [
+        v.name,
+        v.symbol,
+      ]) ??
+      (await pickByCandidateAddress(candidates, pool, ctx, (v) => v.address));
     if (!match) return null;
 
     const target: DepositTarget = {
@@ -201,7 +263,10 @@ async function fetchYearnVaults(
     `https://ydaemon.yearn.fi/${chainId}/vaults/all`,
     VAULT_LIST_TTL_SEC,
   );
-  return Array.isArray(res) ? res : [];
+  const items = Array.isArray(res) ? res : [];
+  if (items.length === 0)
+    warnEmptyRegistry("yearn", chainId, "ydaemon.yearn.fi");
+  return items;
 }
 
 export const YearnResolver: PoolTargetResolver = {
@@ -221,11 +286,12 @@ export const YearnResolver: PoolTargetResolver = {
     );
     if (candidates.length === 0) return null;
 
-    const match = pickLabelledCandidate(
-      candidates,
-      [pool.poolMeta, pool.symbol],
-      (v) => [v.name, v.symbol],
-    );
+    const match =
+      pickLabelledCandidate(candidates, [pool.poolMeta, pool.symbol], (v) => [
+        v.name,
+        v.symbol,
+      ]) ??
+      (await pickByCandidateAddress(candidates, pool, ctx, (v) => v.address));
     if (!match) return null;
 
     const target: DepositTarget = {

@@ -61,7 +61,10 @@ function normLabel(s: string | null | undefined): string {
   return (s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-function labelMatches(poolMeta: string, name: string | null | undefined): boolean {
+function labelMatches(
+  poolMeta: string,
+  name: string | null | undefined,
+): boolean {
   const needle = normLabel(poolMeta);
   const hay = normLabel(name);
   if (!needle || !hay) return false;
@@ -154,7 +157,8 @@ export const EmberResolver: PoolTargetResolver = {
         );
     }
     // No poolMeta (or no name hit): only accept a single unambiguous vault.
-    if (!match && !pool.poolMeta && candidates.length === 1) match = candidates[0];
+    if (!match && !pool.poolMeta && candidates.length === 1)
+      match = candidates[0];
     if (!match) return null;
 
     const target: DepositTarget = {
