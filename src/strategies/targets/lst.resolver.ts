@@ -18,7 +18,7 @@
  * reach here.
  */
 
-import { findLstVenuesForProject } from "./address-book";
+import { LST_VENUE_SLUGS, findLstVenuesForProject } from "./address-book";
 import type { DepositTarget, PoolTargetResolver } from "./types";
 import { eqAddr, resolveEvmChainId } from "./types";
 
@@ -30,19 +30,22 @@ import { eqAddr, resolveEvmChainId } from "./types";
  */
 export const LstStakeResolver: PoolTargetResolver = {
   family: "lst-stake",
-  aliases: [
-    "lido",
-    "lido-eth",
-    "rocket-pool",
-    "ether.fi-stake",
-    "etherfi",
-    "stader",
-    "binance-staked-eth",
-    "meth-protocol",
-    "mantle-staked-eth",
-    "benqi-staked-avax",
-    "benqi-liquid-staking",
-  ],
+  /**
+   * DERIVED from the venue book, never hand-maintained.
+   *
+   * This used to be a second hand-written list that had to agree with every
+   * venue's `externalSlugs`, and the two drifting is not a hypothetical
+   * failure — it is precisely how Lido stayed Manual for the entire life of
+   * the feature (§11.6a). The device shipped a complete Lido adapter from
+   * Phase 1, but `in_app` is driven by `depositTarget`, and no resolver
+   * claimed the `lido` slug, so the single largest pool in the catalog
+   * rendered as a deep link. An adapter with no resolver is invisible.
+   *
+   * Deriving it means adding a venue cannot leave that venue unclaimed:
+   * `findLstVenuesForProject` matches on the same `externalSlugs` this list is
+   * built from, so the two cannot disagree by construction.
+   */
+  aliases: LST_VENUE_SLUGS,
   async resolve(pool, ctx): Promise<DepositTarget | null> {
     const chainId = resolveEvmChainId(pool.chain);
     if (!chainId) return null;

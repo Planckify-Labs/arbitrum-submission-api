@@ -46,7 +46,7 @@ import {
   routerAllowlist,
 } from "./index";
 import { COMET_MARKETS, MORPHO_BLUE_SINGLETONS } from "./lending";
-import { LST_VENUES } from "./lst";
+import { LST_VENUES, MIN_OUT_STAKE_SHAPES } from "./lst";
 import { CHAINLINK_FEEDS, MORPHO_CHAINLINK_ORACLE_FACTORIES } from "./oracles";
 import type { PinnedVaultBook } from "./vaults";
 
@@ -281,7 +281,16 @@ describe("address book — structural invariants", () => {
     // that could ship is a ZERO minimum — which §12 Q4 forbids outright
     // because it is an open invitation to sandwich the deposit.
     const bad = LST_VENUES.filter(
-      (v) => v.shape === "payable-stake-minout" && !v.previewView,
+      (v) => MIN_OUT_STAKE_SHAPES.has(v.shape) && !v.previewView,
+    ).map((v) => v.key);
+    expect(bad).toEqual([]);
+  });
+
+  it("only marks previewTakesAsset on a shape that reads a preview", () => {
+    // `previewTakesAsset` changes the ABI the preview is read with, so it is
+    // meaningless — and misleading — on a venue that never reads one.
+    const bad = LST_VENUES.filter(
+      (v) => v.previewTakesAsset && !v.previewView,
     ).map((v) => v.key);
     expect(bad).toEqual([]);
   });
@@ -289,7 +298,7 @@ describe("address book — structural invariants", () => {
   it("never declares a preview view on a shape that cannot use one", () => {
     // The reverse, so the field cannot rot into decoration nobody reads.
     const bad = LST_VENUES.filter(
-      (v) => v.previewView && v.shape !== "payable-stake-minout",
+      (v) => v.previewView && !MIN_OUT_STAKE_SHAPES.has(v.shape),
     ).map((v) => v.key);
     expect(bad).toEqual([]);
   });

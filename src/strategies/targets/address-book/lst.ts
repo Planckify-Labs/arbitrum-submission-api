@@ -41,7 +41,36 @@ export type LstStakeShape =
    * zero minimum is never acceptable, so a venue on this shape MUST also
    * declare `previewView`.
    */
-  | "payable-stake-minout";
+  | "payable-stake-minout"
+  /**
+   * `depositETH(uint256 minRSETHAmountExpected, string referralId)` payable —
+   * Kelp `LRTDepositPool`.
+   *
+   * The second min-out venue, and it differs from Mantle's in two ways that
+   * both have to be CONFIG rather than a branch on the venue (the
+   * `getPooledAvaxByShares` name-branch in `lstStake.ts` is the mistake this
+   * avoids repeating):
+   *
+   *   - the call carries a referral STRING alongside the minimum, where
+   *     `payable-deposit-referral` carries a referral ADDRESS;
+   *   - its preview view takes `(address asset, uint256 amount)` rather than
+   *     `(uint256)`, so a venue on this shape declares `previewTakesAsset`.
+   */
+  | "payable-deposit-eth-minout-referral";
+
+/**
+ * The shapes whose stake call carries a caller-supplied minimum-out.
+ *
+ * Declared as a set rather than compared against a single literal, because
+ * there are now two of them and the conformance rule is about the PROPERTY —
+ * "this call can be sandwiched, so it needs a quote to floor it" — not about
+ * any one venue's ABI. A third min-out shape adds itself here and inherits
+ * every check.
+ */
+export const MIN_OUT_STAKE_SHAPES = new Set<LstStakeShape>([
+  "payable-stake-minout",
+  "payable-deposit-eth-minout-referral",
+]);
 
 export interface LstVenue {
   /** Stable join key carried on the target. Never displayed raw. */
@@ -70,6 +99,16 @@ export interface LstVenue {
    * min-out shape with nothing to quote against could only ship a zero floor.
    */
   readonly previewView?: string;
+  /**
+   * The preview view takes `(address asset, uint256 amount)` instead of
+   * `(uint256 amount)`, and is called with `asset`.
+   *
+   * Declared rather than inferred from the view's NAME. `lstStake.ts` used to
+   * decide a rate view's arity by comparing it to the literal string
+   * `"getPooledAvaxByShares"`, which silently mis-valued the second venue that
+   * shared the convention; this is the same class of bug one call earlier.
+   */
+  readonly previewTakesAsset?: boolean;
   /**
    * Smallest stake the contract accepts, in wei. Present when the venue
    * enforces one on chain, so the device can refuse with friendly copy instead
@@ -187,6 +226,50 @@ export const LST_VENUES: readonly LstVenue[] = [
     displayName: "Mantle mETH",
   },
   {
+    // Kelp rsETH (~$1.09B) — deferred until its preview view could be
+    // confirmed on chain, which is the whole of what was blocking it. The
+    // runbook's note was exact: "Confirm it and Kelp is a config row."
+    //
+    // Verified on chain 2026-08-21 against the LRTDepositPool proxy
+    // (implementation 0xea38dfa1…):
+    //   getRsETHAmountToMint(0xEeee…, 1e18)  → 927271688944689890  (0.927 rsETH/ETH)
+    //   getTotalAssetDeposits(0xEeee…)       → 143,858 ETH, matching DeFiLlama's TVL
+    //   minAmountToDeposit()                 → 1e14 wei (0.0001 ETH)
+    //   depositETH(minOut, "") with 1 ETH    → simulates clean from a funded
+    //                                          address at a 99.5%-of-quote floor
+    //   rsETH symbol()                       → "rsETH"
+    //
+    // Two config-only differences from Mantle, both declared rather than
+    // branched on: the referral is a STRING, and the preview view takes the
+    // asset as its first argument (`previewTakesAsset`). The native sentinel
+    // it wants is `0xEeee…`, NOT the zero address — the zero address reverts
+    // (0x762798e1), which is why the sentinel is translated at the call site
+    // rather than passed through from the target.
+    //
+    // `exit: "queue"` — withdrawal is `initiateWithdrawal` → `completeWithdrawal`
+    // on the LRTWithdrawalManager (0x62De59c0…, nextUnusedNonce reads 7047, so
+    // the queue is live and in use). Two-phase, so deposit-only until Tier 4,
+    // the same verdict as Lido and mETH.
+    key: "kelp-rseth",
+    chainId: 1,
+    entry: "0x036676389e48133B63a802f8635AD39E752D375D", // LRTDepositPool
+    receipt: "0xA1290d69c65A6Fe4DF752f95823fae25cB99e5A7", // rsETH
+    asset: NATIVE_ASSET_SENTINEL,
+    shape: "payable-deposit-eth-minout-referral",
+    previewView: "getRsETHAmountToMint",
+    previewTakesAsset: true,
+    minStakeWei: 100_000_000_000_000n, // minAmountToDeposit() = 0.0001 ETH
+    exit: "queue",
+    // Just the slug the feed actually uses, plus the venue key. `kelp-dao` and
+    // similar are not in the catalog, and a speculative alias only widens the
+    // substring surface a future sibling product could be captured by — the
+    // `lista` lesson (§11.5c "Never give a family a bare brand alias"). `kelp`
+    // is not that mistake: it is this pool's literal DeFiLlama project slug,
+    // verified against the row (Ethereum RSETH, poolMeta null, ~$1.10B).
+    externalSlugs: ["kelp", "kelp-rseth"],
+    displayName: "Kelp rsETH",
+  },
+  {
     key: "benqi-savax",
     chainId: 43114,
     entry: "0x2b2C81e08f1Af8835a78Bb2A90AE924ACE0eA4bE", // StakedAvax
@@ -219,11 +302,6 @@ export const LST_VENUES: readonly LstVenue[] = [
  *   revert for reasons the validator cannot see, and its exit is a
  *   request/claim queue. Needs the shape reviewed plus a cap read before the
  *   entry address is treated as authoritative.
- * - **Kelp rsETH** — takes a caller-supplied minimum-out on deposit, like
- *   Mantle did, but its preview view has not been verified on chain. Mantle
- *   mETH SHIPPED on 2026-08-21 once `ethToMETH` was confirmed: the blocker was
- *   never the min-out itself, it was having a quote to derive the floor from.
- *   Kelp needs the same confirmation and then reuses `payable-stake-minout`.
  */
 export const LST_VENUES_DEFERRED = [
   "renzo-ezeth",
@@ -231,8 +309,23 @@ export const LST_VENUES_DEFERRED = [
   "liquid-collective-lseth",
   "lombard-lbtc",
   "stakewise-v3",
-  "kelp-rseth",
 ] as const;
+
+/**
+ * Every DeFiLlama project slug the venue book claims, plus each venue key.
+ *
+ * The resolver's `aliases` are built from this rather than hand-listed, so a
+ * newly pinned venue is claimed the moment it is added. Lido was Manual for
+ * the whole life of the feature because those two lists were maintained
+ * separately and one of them was missed (§11.6a).
+ */
+export const LST_VENUE_SLUGS: readonly string[] = [
+  ...new Set(
+    LST_VENUES.flatMap((v) => [v.key, ...v.externalSlugs]).map((s) =>
+      s.toLowerCase(),
+    ),
+  ),
+];
 
 export function findLstVenue(key: string): LstVenue | null {
   return LST_VENUES.find((v) => v.key === key) ?? null;
