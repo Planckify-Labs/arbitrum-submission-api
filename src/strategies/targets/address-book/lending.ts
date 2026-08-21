@@ -103,6 +103,17 @@ export const COMET_MARKETS: Readonly<Record<number, readonly Address[]>> = {
     // corroborated by forge/script/marketupdates/helpers/MarketAddresses.sol.
     "0xA17581A9E3356d9A858b789D68B4d866e593aE94", // cWETHv3
     "0x3Afdc9BCA9213A35503b077a6072F3D0d5AB0840", // cUSDTv3
+    // Three markets added 2026-08-21. `compound-finance/comet`'s own
+    // `deployments/mainnet/` directory listing is the source (six mainnet
+    // markets today: usdc, usds, usdt, wbtc, weth, wsteth — this book only had
+    // three of them), each `roots.json`'s `comet` field, verified on chain:
+    // `baseToken()` matches the named asset and `totalSupply()` is non-zero for
+    // all three. They were resolving NOTHING — `CompoundV3Resolver` already
+    // iterates every pinned Comet on the chain and validates `baseToken()`
+    // against each, so this was purely a missing address, not a resolver gap.
+    "0xe85Dc543813B8c2CFEaAc371517b925a166a9293", // cWBTCv3 — baseToken()=WBTC
+    "0x3D0bb1ccaB520A66e607822fC55BC921738fAFE3", // cWstETHv3 — baseToken()=wstETH
+    "0x5D409e56D886231aDAf00c8775665AD0f9897b56", // cUSDSv3 — baseToken()=USDS
   ],
   10: [
     "0x2e44e174f7D53F0212823acC11C01A11d58c5bCB", // cUSDCv3
@@ -117,6 +128,15 @@ export const COMET_MARKETS: Readonly<Record<number, readonly Address[]>> = {
     "0xb125E6687d4313864e53df431d5425969c15Eb2F", // cUSDCv3
     "0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf", // cUSDbCv3
     "0x46e6b214b524310239732D51387075E0e70970bf", // cWETHv3
+    // Two markets added 2026-08-21, same source and same verification as the
+    // Ethereum additions above. `compound-finance/comet`'s
+    // `deployments/base/` lists five markets (aero, usdbc, usdc, usds, weth);
+    // this book had three. Neither has a DeFiLlama pool yet as of this pin —
+    // both markets are new — so this is forward provenance rather than an
+    // immediate coverage gain: the resolver claims the pool the moment
+    // DeFiLlama indexes it, with no further code change (§11.1).
+    "0x784efeB622244d2348d4F2522f8860B96fbEcE89", // cAEROv3 — baseToken()=AERO
+    "0x2c776041CCFe903071AF44aa147368a9c8EEA518", // cUSDSv3 — baseToken()=USDS
   ],
   42161: [
     "0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf", // cUSDCv3 (native)
