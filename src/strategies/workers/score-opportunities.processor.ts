@@ -18,6 +18,13 @@ interface ScorePoolJobData {
 }
 
 /**
+ * How long a previously validated `depositTarget` survives failed
+ * re-validation. Long enough to ride out RPC flakiness, short enough that a
+ * target that really has become invalid clears within a day.
+ */
+const TARGET_GRACE_MS = 24 * 60 * 60 * 1000;
+
+/**
  * DeFiLlama chain name → (namespace, chainId), sourced from the `Blockchain`
  * table through the chain directory — chains are **data, never a literal map**,
  * so onboarding a chain for DeFi is a seeded row, not an edit here.
@@ -39,7 +46,133 @@ function resolveChain(chainName: string): {
 // can't keep pace with the 30-min poll cadence and newly-added pools (e.g. the
 // synthesized Sui LST rows) sit unscored for a long time. Parallelising drains
 // it quickly; most metadata is Valkey-cached so this doesn't hammer DeFiLlama.
-@Processor("score-opportunities", { concurrency: 8 })
+
+export interface PreviousTarget {
+  depositTarget: unknown;
+  targetResolvedAt: Date | null;
+}
+
+export interface TargetWriteDecision {
+  target: Prisma.OpportunityCacheUpdateInput["depositTarget"];
+  resolvedAt: Date | null;
+  keptPrevious: boolean;
+}
+
+/**
+ * Decide what to persist for `depositTarget`, given what the resolver just said
+ * and what was already stored.
+ *
+ * A NULL result means one of two very different things, and by the time it
+ * reaches the processor they are indistinguishable: the resolver genuinely
+ * refused, or it could not check. Every validator ends in
+ * `catch { return false }` and `TargetResolverService.resolve` ends in
+ * `catch { return null }`, so one flaky RPC read looks exactly like "this pool
+ * is not depositable".
+ *
+ * That is not theoretical. Measured 2026-08-21: four Aave v3 reserves
+ * (Ethereum cbBTC, Base cbBTC, Ethereum rETH, Arbitrum weETH) were persisted as
+ * NULL by this worker while `pnpm defi:dry-run --protocol aave-v3` resolved all
+ * four against the same chain state and the same pinned Pool addresses. Across
+ * three device captures aave-v3 read 19/33, then 26/33, then 21/33 with no code
+ * change touching Aave — a deterministic resolver cannot produce three answers.
+ * This worker runs at concurrency 8 against one RPC proxy; the dry run does not.
+ *
+ * So a null NEVER overwrites a target that was validated recently. The pool is
+ * retried on the next tick, and if it keeps failing for the whole grace window
+ * the target does clear — bounding how long a genuinely dead target can survive
+ * to one day, while the flapping disappears entirely.
+ *
+ * `resolvedAt` is deliberately NOT refreshed when the previous target is kept:
+ * the window is measured from the last SUCCESSFUL validation, so repeated
+ * failures cannot extend it indefinitely.
+ */
+export function decideTargetWrite(
+  resolved: unknown,
+  previous: PreviousTarget | null,
+  nowMs: number,
+): TargetWriteDecision {
+  if (resolved) {
+    return {
+      target: resolved as Prisma.InputJsonValue,
+      resolvedAt: new Date(nowMs),
+      keptPrevious: false,
+    };
+  }
+  const withinGrace =
+    previous?.depositTarget != null &&
+    previous.targetResolvedAt != null &&
+    nowMs - previous.targetResolvedAt.getTime() < TARGET_GRACE_MS;
+
+  return withinGrace
+    ? {
+        target: previous?.depositTarget as Prisma.InputJsonValue,
+        resolvedAt: previous?.targetResolvedAt ?? null,
+        keptPrevious: true,
+      }
+    : { target: Prisma.DbNull, resolvedAt: null, keptPrevious: false };
+}
+
+/**
+ * How many pools are scored in parallel.
+ *
+ * A poll enqueues ~300 pools, each doing a DeFiLlama metadata lookup, a
+ * discovery fetch and several `eth_call`s. At the BullMQ default of 1 the queue
+ * cannot keep pace with the 30-minute cadence and newly-added pools sit
+ * unscored; 8 drains it comfortably.
+ *
+ * It is CONFIGURABLE because the right value depends on the uplink, not on the
+ * code. Measured 2026-08-21: 16 parallel requests to api.llama.fi from a bare
+ * Node process succeeded 16/16 in 1.7s, while this worker was taking
+ * `UND_ERR_CONNECT_TIMEOUT` at 10s against that same host — the difference is
+ * everything else the process does concurrently (RPC-proxy calls, several
+ * discovery APIs) sharing one uplink. On a slow or contended link, FEWER
+ * parallel jobs finish MORE pools per tick than more parallel jobs that all
+ * time out.
+ *
+ * Lower it (`SCORE_CONCURRENCY=3`) when the logs show connect timeouts; raise
+ * it on a fat pipe. Nothing here is unsafe either way: a pool that cannot be
+ * scored keeps its previous target (see `decideTargetWrite`) or stays Manual.
+ */
+function scoreConcurrency(): number {
+  const raw = Number.parseInt(process.env.SCORE_CONCURRENCY ?? "", 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 8;
+}
+
+export interface PreviousScore {
+  score: number;
+  tier: string;
+}
+
+/**
+ * Keep the previous score when this pass could not read the protocol's
+ * metadata.
+ *
+ * `mapPoolToDimensions` charges `protocolSafety = auditCount > 0 ? 85 : 40`,
+ * and a failed lookup returns `auditCount: 0`. So a network timeout does not
+ * merely lose information — it actively asserts "unaudited" and takes 45 points
+ * off a dimension. That moves the composite score, which moves the TIER, and
+ * the opportunity list is filtered by tier. The pool then vanishes from the
+ * app rather than merely losing its in-app badge, which is strictly worse and
+ * much harder to notice.
+ *
+ * Measured 2026-08-21: as `api.llama.fi` lookups started timing out, the EVM
+ * row count fell 169 → 141 and `sparklend` went from 5 visible pools to 1 —
+ * with no change to Spark, to the scorer, or to the pools themselves.
+ *
+ * A degraded read therefore keeps whatever was computed from a GOOD read. With
+ * no previous score there is nothing to keep, so the degraded value stands —
+ * a new pool still gets scored, just conservatively.
+ */
+export function decideScoreWrite(
+  fresh: { score: number; tier: string },
+  degradedMetadata: boolean,
+  previous: PreviousScore | null,
+): { score: number; tier: string; keptPrevious: boolean } {
+  if (!degradedMetadata || !previous) return { ...fresh, keptPrevious: false };
+  return { score: previous.score, tier: previous.tier, keptPrevious: true };
+}
+
+@Processor("score-opportunities", { concurrency: scoreConcurrency() })
 export class ScoreOpportunitiesProcessor extends WorkerHost {
   private readonly logger = new Logger(ScoreOpportunitiesProcessor.name);
 
@@ -68,7 +201,7 @@ export class ScoreOpportunitiesProcessor extends WorkerHost {
         pool,
         protocolMetadata,
       );
-      const { score, tier } = this.scoringService.calculateScore(dimensions);
+      const fresh = this.scoringService.calculateScore(dimensions);
 
       // The chain directory is DB-backed, so make sure it is loaded before the
       // (synchronous) name → namespace/chainId lookup below.
@@ -84,11 +217,43 @@ export class ScoreOpportunitiesProcessor extends WorkerHost {
         typeof pool.underlyingTokens?.[0] === "string"
           ? pool.underlyingTokens[0].toLowerCase()
           : null;
-      const targetJson: Prisma.OpportunityCacheUpdateInput["depositTarget"] =
-        depositTarget
-          ? (depositTarget as unknown as Prisma.InputJsonValue)
-          : Prisma.DbNull;
-      const targetResolvedAt = depositTarget ? new Date() : null;
+      const previous = await this.prisma.opportunityCache
+        .findUnique({
+          where: { poolId: pool.pool },
+          select: {
+            depositTarget: true,
+            targetResolvedAt: true,
+            score: true,
+            tier: true,
+          },
+        })
+        .catch(() => null);
+
+      const scoreDecision = decideScoreWrite(
+        fresh,
+        protocolMetadata.degraded,
+        previous ? { score: previous.score, tier: previous.tier } : null,
+      );
+      if (scoreDecision.keptPrevious) {
+        this.logger.warn(
+          `[score] pool ${pool.pool} (${pool.project}) scored with DEGRADED metadata ` +
+            `(the DeFiLlama lookup failed, so auditCount reads 0) — keeping the previous ` +
+            `score ${previous?.score}/${previous?.tier} instead of letting a network ` +
+            `failure re-tier the pool out of the user's list.`,
+        );
+      }
+      const { score, tier } = scoreDecision;
+
+      const decision = decideTargetWrite(depositTarget, previous, Date.now());
+      if (decision.keptPrevious) {
+        this.logger.warn(
+          `[score] pool ${pool.pool} (${pool.project}) resolved to null but a target ` +
+            `validated at ${previous?.targetResolvedAt?.toISOString()} is still within the ` +
+            `grace window — keeping it and retrying next tick rather than badging Manual.`,
+        );
+      }
+      const targetJson = decision.target;
+      const targetResolvedAt = decision.resolvedAt;
 
       // Upsert into OpportunityCache
       await this.prisma.opportunityCache.upsert({

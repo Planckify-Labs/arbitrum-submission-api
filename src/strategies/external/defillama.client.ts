@@ -47,6 +47,42 @@ interface DeFiLlamaPoolsResponse {
   }>;
 }
 
+export interface ProtocolMetadata {
+  slug: string;
+  name: string;
+  auditCount: number;
+  gecko_id: string | null;
+  category: string | null;
+  chains: string[];
+  /** Protocol's own app URL — manual deep-link homepage fallback (spec §9.1). */
+  appUrl: string | null;
+  /**
+   * True when this is a PLACEHOLDER because the lookup failed, not a real
+   * answer. Callers must not treat degraded fields as facts: `auditCount: 0`
+   * here means "we could not ask", which is a completely different claim from
+   * "this protocol has no audits" — and the scorer charges 45 points of
+   * `protocolSafety` for the difference (85 → 40), enough to move a pool's
+   * tier and drop it out of the user's filtered list entirely.
+   */
+  degraded: boolean;
+}
+
+/**
+ * How long a FAILED protocol lookup is remembered before it is retried.
+ *
+ * Sized against the POLL CADENCE, not against how fast an endpoint might
+ * recover. A scoring tick takes minutes to drain ~338 pools at concurrency 8,
+ * and a failing lookup costs a worker slot the full connect timeout (10s) every
+ * time it is attempted. At 60s a single bad slug is retried ~30 times per tick
+ * and burns ~5 minutes of scoring throughput on its own; at 10 minutes it is
+ * retried about three times, and the tick after that starts clean.
+ *
+ * Recovery is not actually delayed by this: metadata is `auditCount`/`category`
+ * feeding the SCORE, and it never gates `depositTarget`. A pool with degraded
+ * metadata still resolves its deposit target and still badges in-app.
+ */
+const PROTOCOL_FAILURE_TTL_MS = 10 * 60_000;
+
 interface DeFiLlamaProtocol {
   id?: string;
   name?: string;
@@ -190,6 +226,33 @@ export class DeFiLlamaClient {
   private readonly minTvlUsdNonEvm: number;
   private readonly maxPools: number;
   private readonly maxPoolsPerChain: number;
+  /**
+   * One in-flight request per protocol slug.
+   *
+   * `getProtocolMetadata` is called ONCE PER POOL, but the answer is
+   * protocol-scoped — ~338 pools a tick share ~50 slugs. On a cache hit that is
+   * harmless. On a cache MISS at concurrency 8 it is eight simultaneous
+   * requests for the same slug, and on a cache miss that keeps failing it is
+   * every pool re-asking, every tick, forever: nothing is stored when the fetch
+   * fails, so the next pool starts from scratch.
+   *
+   * That is the "logs never stop" symptom, and it is self-reinforcing — the
+   * storm is exactly what earns a rate limit from the endpoint that is already
+   * struggling.
+   */
+  private readonly inflightProtocol = new Map<
+    string,
+    Promise<ProtocolMetadata>
+  >();
+  /**
+   * Slug → when it may be retried. A FAILED lookup is remembered too, briefly.
+   *
+   * Caching only successes means a failure costs one request per pool instead
+   * of one request per protocol. Sixty seconds is short enough that a recovered
+   * endpoint is picked up within the same tick, and long enough that a broken
+   * one is asked once rather than hundreds of times.
+   */
+  private readonly protocolRetryAfter = new Map<string, number>();
 
   constructor(
     private readonly configService: ConfigService,
@@ -297,16 +360,7 @@ export class DeFiLlamaClient {
     }
   }
 
-  async getProtocolMetadata(slug: string): Promise<{
-    slug: string;
-    name: string;
-    auditCount: number;
-    gecko_id: string | null;
-    category: string | null;
-    chains: string[];
-    /** Protocol's own app URL — manual deep-link homepage fallback (spec §9.1). */
-    appUrl: string | null;
-  }> {
+  async getProtocolMetadata(slug: string): Promise<ProtocolMetadata> {
     // v2: shape gains `appUrl` (spec §9.1). Bumped so cached v1 entries are
     // re-fetched instead of served without the new field.
     const cacheKey = `defillama:protocol:${slug}:v2`;
@@ -315,18 +369,54 @@ export class DeFiLlamaClient {
       .catch(() => null);
     if (cached) {
       try {
-        return JSON.parse(cached);
+        return JSON.parse(cached) as ProtocolMetadata;
       } catch {
         // fall through
       }
     }
 
+    // Recently failed: serve degraded WITHOUT asking again. Every pool sharing
+    // this slug would otherwise repeat the same failing request.
+    const retryAfter = this.protocolRetryAfter.get(slug);
+    if (retryAfter !== undefined && Date.now() < retryAfter) {
+      return this.degradedProtocolMetadata(slug);
+    }
+
+    // Already being fetched by another pool in this tick — join it.
+    const existing = this.inflightProtocol.get(slug);
+    if (existing) return existing;
+
+    const task = this.fetchProtocolMetadata(slug, cacheKey).finally(() => {
+      this.inflightProtocol.delete(slug);
+    });
+    this.inflightProtocol.set(slug, task);
+    return task;
+  }
+
+  private degradedProtocolMetadata(slug: string): ProtocolMetadata {
+    return {
+      degraded: true,
+      slug,
+      name: this.titleCase(slug),
+      auditCount: 0,
+      gecko_id: null,
+      category: null,
+      chains: [],
+      appUrl: null,
+    };
+  }
+
+  private async fetchProtocolMetadata(
+    slug: string,
+    cacheKey: string,
+  ): Promise<ProtocolMetadata> {
     this.logger.log(`[getProtocolMetadata] -> DeFiLlama slug=${slug}`);
     try {
       const data = await this.fetchJson<DeFiLlamaProtocol>(
         `${this.apiBaseUrl}/protocol/${encodeURIComponent(slug)}`,
       );
-      const normalised = {
+      const normalised: ProtocolMetadata = {
+        degraded: false,
         slug,
         name: data?.name ?? this.titleCase(slug),
         auditCount: this.parseAuditCount(data?.audits),
@@ -338,6 +428,7 @@ export class DeFiLlamaClient {
             ? data.url.trim()
             : null,
       };
+      this.protocolRetryAfter.delete(slug);
       await this.valkeyService
         .set(cacheKey, JSON.stringify(normalised), {
           ttl: this.protocolCacheTtlSec,
@@ -345,18 +436,11 @@ export class DeFiLlamaClient {
         .catch(() => undefined);
       return normalised;
     } catch (error: unknown) {
+      this.protocolRetryAfter.set(slug, Date.now() + PROTOCOL_FAILURE_TTL_MS);
       this.logger.warn(
-        `[getProtocolMetadata] DeFiLlama failed for slug=${slug} (url=${this.apiBaseUrl}/protocol/${encodeURIComponent(slug)}): ${describeFetchError(error)} — using degraded metadata`,
+        `[getProtocolMetadata] DeFiLlama failed for slug=${slug} (url=${this.apiBaseUrl}/protocol/${encodeURIComponent(slug)}): ${describeFetchError(error)} — using degraded metadata, not retrying this slug for ${PROTOCOL_FAILURE_TTL_MS / 60_000}min`,
       );
-      return {
-        slug,
-        name: this.titleCase(slug),
-        auditCount: 0,
-        gecko_id: null,
-        category: null,
-        chains: [],
-        appUrl: null,
-      };
+      return this.degradedProtocolMetadata(slug);
     }
   }
 
