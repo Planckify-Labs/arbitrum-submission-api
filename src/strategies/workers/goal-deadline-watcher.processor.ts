@@ -81,7 +81,10 @@ export class GoalDeadlineWatcherProcessor extends WorkerHost {
    * when this call wrote the row; `false` when it already existed
    * (i.e. another invocation already emitted this event).
    */
-  private async tryRecordEvent(positionId: string, kind: string): Promise<boolean> {
+  private async tryRecordEvent(
+    positionId: string,
+    kind: string,
+  ): Promise<boolean> {
     try {
       await this.prisma.strategyPositionEvent.create({
         data: { positionId, kind },
