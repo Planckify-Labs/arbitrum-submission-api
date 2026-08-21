@@ -49,10 +49,30 @@ export const ZEROLEND_POOLS: SingletonBook = {
   59144: "0x2f9bB73a8e98793e26Cb2F6C4ad037BDf1C6B269",
 };
 
-/** Radiant v2 — Aave-v2/v3-shaped `Pool` (`supply`/`withdraw`) on Arbitrum. */
-export const RADIANT_POOLS: SingletonBook = {
-  42161: "0xF4B1486DD74D07706052A33d31d7c0AAFD0659E1",
-};
+/**
+ * **Radiant was REMOVED 2026-08-21 (security sign-off, finding 2). Do not
+ * re-add it.**
+ *
+ * Two independent reasons, either of which is disqualifying:
+ *
+ *  1. The address that used to sit here, `0xF4B1486DD74D07706052A33d31d7c0AAFD0659E1`,
+ *     is not Radiant's lending Pool. It REVERTS on `getReservesList()` and on
+ *     `getReserveData(asset)` — the exact call `validateAaveV3` makes — so the
+ *     family resolved nothing. Radiant's own docs name a different pool
+ *     (`0xE23B4AE3624fB6f7cDEF29bC8EAD912f1Ede6886`, 15 reserves, unpaused).
+ *     The pinned value matched only a block-explorer label, which
+ *     ./README.md rule 1 forbids as a source.
+ *  2. **Radiant is winding down.** After a ~$50M exploit in October 2024
+ *     (attributed to a DPRK-linked group), its DAO announced a wind-down on
+ *     2026-06-01: maintenance mode, no further development, borrow caps to
+ *     zero, TVL down from >$300M to ~$2.2M, front-end committed only through
+ *     end of 2026.
+ *
+ * Reason 2 is why this is a deletion rather than an address fix. Correcting
+ * the constant would have taken a family that resolved nothing and made it
+ * resolve into a protocol that is shutting down — the failure mode a
+ * diff-only review walks straight into.
+ */
 
 /**
  * Avalon — Aave-v3 fork with a market per collateral/BTC-LST. Its Pool address
@@ -71,10 +91,17 @@ export const AVALON_POOLS: SingletonBook = {};
 export const COMET_MARKETS: Readonly<Record<number, readonly Address[]>> = {
   1: [
     "0xc3d688B66703497DAA19211EEdff47f25384cdc3", // cUSDCv3
-    // Casing corrected to EIP-55; byte-identical to the form Compound's docs
-    // publish, which is not checksummed (address-book.spec.ts enforces the
-    // checksummed form so a future typo is caught by the checksum).
-    "0xa17581A9e3356D9Dce248e3A0B3a532E28D7F5A9", // cWETHv3
+    // CORRECTED 2026-08-21 (security sign-off, finding 1). This previously read
+    // 0xa17581A9e3356D9Dce248e3A0B3a532E28D7F5A9, which diverges from the real
+    // market at the 15th nibble and has NO CODE on mainnet, so `baseToken()`
+    // reverted and Compound III WETH was never depositable in-app.
+    //
+    // The old comment claimed the checksum guard would catch a typo here. It
+    // cannot: that wrong string is itself valid EIP-55, because it was
+    // re-checksummed AFTER the mistake. `address-book.spec.ts` passed on it.
+    // Source: compound-finance/comet deployments/mainnet/weth/roots.json,
+    // corroborated by forge/script/marketupdates/helpers/MarketAddresses.sol.
+    "0xA17581A9E3356d9A858b789D68B4d866e593aE94", // cWETHv3
     "0x3Afdc9BCA9213A35503b077a6072F3D0d5AB0840", // cUSDTv3
   ],
   10: [

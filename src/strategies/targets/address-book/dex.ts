@@ -17,16 +17,77 @@ import type { Address } from "../types";
 export const CURVE_ADDRESS_PROVIDER =
   "0x0000000022D53366457F9d5E68Ec105046FC4383" as Address;
 
-/** `AddressProvider.get_address(id)` slot for the MetaRegistry. */
-export const CURVE_METAREGISTRY_ID = 7;
+/**
+ * `AddressProvider.get_address(id)` slot for the MetaRegistry, **per chain**.
+ *
+ * This was a single global `CURVE_METAREGISTRY_ID = 7`, which is right on
+ * Ethereum and wrong everywhere else. Measured on chain 2026-08-21 by walking
+ * `get_id_info(0..max_id)` on every directory chain:
+ *
+ *   - **Ethereum (1)** — `max_id = 11`, id 7 = `"Metaregistry"`, active. ✅
+ *   - **Optimism, Gnosis, Arbitrum, Avalanche** — `max_id = 5..6` and **no id
+ *     describes a MetaRegistry at all**. Curve never deployed one there.
+ *   - **BNB, Base, Scroll** — `max_id = 0` and that id is inactive.
+ *   - **Linea** — no `AddressProvider` code at all.
+ *   - **Polygon (137)** — the dangerous one. `max_id = 7`, and id 7 is
+ *     `"Cryptopool Factory"`, **active and non-zero**. The old constant read it
+ *     as the MetaRegistry, and `find_pool_for_coins(USDC.e, WETH)` on it
+ *     **succeeds** (returns 0x4Cce5169…) rather than reverting — so the
+ *     candidate source silently answered from the wrong registry, on a
+ *     narrower pool set than the MetaRegistry unions, with no error anywhere.
+ *
+ * Polygon is also why "non-zero" was never a sufficient check: the old drift
+ * assertion PASSED there while the read was wrong. The id is now data, and the
+ * drift spec asserts the slot's own `description` says `Metaregistry` and that
+ * it is active (see `address-book-drift.spec.ts`).
+ *
+ * A chain absent from this map has no MetaRegistry we can trust, so
+ * `CurvePoolCandidateSource` declines and the pool degrades to Manual.
+ */
+export const CURVE_METAREGISTRY_IDS: Readonly<Record<number, number>> = {
+  1: 7, // Ethereum — the only chain where Curve deployed a MetaRegistry
+};
+
+/** The `description()` an id must report before we treat it as the MetaRegistry. */
+export const CURVE_METAREGISTRY_DESCRIPTION = "Metaregistry";
 
 /**
- * Pendle Router v4 — one deterministic address across every supported chain.
- * A `router-call` build whose returned `to` is not this address is BLOCKED
+ * Pendle Router v4 — one deterministic address on every chain Pendle deploys
+ * to. A `router-call` build whose returned `to` is not this address is BLOCKED
  * (§6 guardrail 2).
+ *
+ * **"Deterministic" is not "everywhere", and the difference is the guardrail.**
+ * This used to be handed to `routerAllowlist()` unconditionally, so the
+ * allowlist returned a non-empty answer for EVERY chainId — including the five
+ * in our directory where Pendle is not deployed and this address holds no code
+ * (100, 137, 43114, 59144, 534352; verified on chain 2026-08-21). That defeats
+ * the allowlist twice over: `router-call.resolver.ts`'s
+ * `routerAllowlist(...).length === 0` fail-closed gate could never fire for
+ * Pendle, and `isRouterAllowlisted()` would approve a codeless `to` — which a
+ * `call` does not revert on, so attached value is simply gone and an ERC-20
+ * approval to it is a standing approval on an address a later `CREATE2` could
+ * occupy.
+ *
+ * So the chain set is pinned explicitly, exactly like `BALANCER_V2_CHAINS`.
+ * Sourced from Pendle's own `deployments/<chainId>-core.json` (a file exists
+ * only where Pendle is deployed) and each entry confirmed to hold code on
+ * chain. Note chain 43114 HAS a deployment file but no `router` key in it, and
+ * indeed no code at this address — a file's existence is not the test.
  */
 export const PENDLE_ROUTER =
   "0x888888888889758F76e7103c6CbF23ABbF58F946" as Address;
+
+/**
+ * Chains where `PENDLE_ROUTER` is actually deployed. A chain absent here gets
+ * an EMPTY allowlist, so the `router-call` resolver fails closed to Manual.
+ *
+ * Pendle also deploys to chains outside our `Blockchain` directory (130, 143,
+ * 146, 196, 999, 4217, 5000, 9745, 57073, 80094, 747474). They are deliberately
+ * NOT listed: an entry here is a `tx.to` allowlist for a chain we cannot
+ * currently reach, and it should be added — with an on-chain code check — only
+ * when that chain is onboarded.
+ */
+export const PENDLE_ROUTER_CHAINS: readonly number[] = [1, 10, 56, 8453, 42161];
 
 /** Pendle's hosted SDK origin. Only ever called from the backend proxy (§6). */
 export const PENDLE_HOSTED_SDK_ORIGIN = "https://api-v2.pendle.finance";

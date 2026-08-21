@@ -33,12 +33,18 @@ import {
   BALANCER_V2_VAULT,
   BALANCER_V3_VAULTS,
   CURVE_ADDRESS_PROVIDER,
+  CURVE_METAREGISTRY_IDS,
   PENDLE_ROUTER,
+  PENDLE_ROUTER_CHAINS,
   SOLIDLY_DEPLOYMENTS,
   UNISWAP_V3_POSITION_MANAGERS,
   UNISWAP_V4_POSITION_MANAGERS,
 } from "./dex";
-import { AAVE_FORK_POOL_BOOKS, PINNED_VAULT_BOOKS } from "./index";
+import {
+  AAVE_FORK_POOL_BOOKS,
+  PINNED_VAULT_BOOKS,
+  routerAllowlist,
+} from "./index";
 import { COMET_MARKETS, MORPHO_BLUE_SINGLETONS } from "./lending";
 import { LST_VENUES } from "./lst";
 import { CHAINLINK_FEEDS, MORPHO_CHAINLINK_ORACLE_FACTORIES } from "./oracles";
@@ -293,6 +299,58 @@ describe("address book — structural invariants", () => {
       (v) => !Number.isInteger(v.chainId) || v.chainId <= 0,
     ).map((v) => v.key);
     expect(bad).toEqual([]);
+  });
+});
+
+/**
+ * Regressions for the two scoping defects the 2026-08-21 security sign-off
+ * found (findings 5 and 6). Both are about a constant that is correct on one
+ * chain being applied to every chain, and NEITHER was catchable by the checksum
+ * or zero-address checks above — the addresses involved are all well-formed.
+ *
+ * These are unit tests on purpose: the on-chain drift spec also covers them,
+ * but it is opt-in and needs an RPC per chain, and "the check exists but never
+ * runs" is precisely how finding 1 survived.
+ */
+describe("router allowlists are scoped per chain (finding 5)", () => {
+  it("returns an EMPTY pendle allowlist for chains pendle is not deployed on", () => {
+    // Every directory chain where the router provably holds no code. An entry
+    // here would let `isRouterAllowlisted` approve a codeless `to`, and would
+    // stop `router-call.resolver`'s length===0 gate from ever firing.
+    const notDeployed = [100, 137, 43114, 59144, 534352];
+    const leaked = notDeployed.filter(
+      (chainId) => routerAllowlist("pendle", chainId).length > 0,
+    );
+    expect(leaked).toEqual([]);
+  });
+
+  it("still allowlists the pendle router on every chain it IS deployed on", () => {
+    const missing = PENDLE_ROUTER_CHAINS.filter(
+      (chainId) => !routerAllowlist("pendle", chainId).includes(PENDLE_ROUTER),
+    );
+    expect(missing).toEqual([]);
+  });
+
+  it("never allowlists a uniswap position manager on an unpinned chain", () => {
+    // The pattern pendle was corrected TO — guarded so it cannot regress either.
+    for (const protocol of ["uniswap-v3", "uniswap-v4"] as const) {
+      expect(routerAllowlist(protocol, 999_999)).toEqual([]);
+    }
+  });
+});
+
+describe("curve metaregistry id is per chain (finding 6)", () => {
+  it("pins an id only for chains that actually have a MetaRegistry", () => {
+    // Curve deployed a MetaRegistry on Ethereum only. Polygon is the trap: its
+    // id 7 is an ACTIVE "Cryptopool Factory" that answers find_pool_for_coins
+    // without reverting, so a wrong id reads as a working registry.
+    expect(Object.keys(CURVE_METAREGISTRY_IDS).map(Number)).toEqual([1]);
+  });
+
+  it("never reintroduces a global default id", () => {
+    for (const chainId of [10, 56, 100, 137, 8453, 42161, 43114, 534352]) {
+      expect(CURVE_METAREGISTRY_IDS[chainId]).toBeUndefined();
+    }
   });
 });
 

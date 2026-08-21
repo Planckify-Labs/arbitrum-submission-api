@@ -36,9 +36,24 @@ cannot become a `tx.to`.
 1. Source the address from the protocol's **own** documentation or deployment
    registry, never a block-explorer search or an aggregator.
 2. Cross-check it against a second official source.
-3. Security-team sign-off on the diff (same bar as `constants/about.ts`).
-4. Ship behind the family's feature flag, dark, and verify the on-chain
+3. **Confirm the label matches.** An address can be real, official, and still be
+   the wrong contract — a past review found a genuine Origin address, published
+   in Origin's own registry under a `// OGV` comment, pinned here as a vault.
+4. Security-team sign-off on the diff (same bar as `constants/about.ts`).
+5. Ship behind the family's feature flag, dark, and verify the on-chain
    validator accepts it on a fork before enabling.
+
+Procedure, evidence format and the standing sign-off record:
+`mobile-app/docs/runbooks/defi-address-book-security-signoff.md`.
+
+> **Do not lean on `address-book.spec.ts` to catch a typo.** It asserts every
+> address is valid EIP-55, which only detects corruption of an address that was
+> already correct. A mistyped address that is then re-checksummed produces a
+> *valid* checksum and passes the guard — measured, not theorised (2026-08-21).
+>
+> Nor does a green fork test help: it proves the calldata is well-formed for
+> whatever address it was handed. A wrong pin here fails closed to Manual, which
+> is safe but silent, and reads exactly like "that pool was never ours".
 
 Nothing here is trusted on its own: every entry still has to pass its Layer-1
 validator (`validation.ts`) at resolve time. A wrong constant fails closed to

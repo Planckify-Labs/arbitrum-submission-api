@@ -121,8 +121,8 @@ export const SPARK_SAVINGS_VAULTS: PinnedVaultBook = {
  * and `OETH` themselves rebase and are not 4626, so only the wrappers are
  * listed; a pool that names the rebasing token resolves to nothing → Manual.
  *
- * **Every Origin pool DeFiLlama publishes is currently Manual, and that is
- * correct — do not re-investigate.** Checked 2026-08-21: `origin-ether` OETH
+ * **Every Origin pool DeFiLlama publishes is currently Manual, and the
+ * POOL-SIDE reason below is correct.** Checked 2026-08-21: `origin-ether` OETH
  * and Base `superOETHb` both carry `underlyingTokens: [0x0]` (native ETH), and
  * `origin-dollar` OUSD carries USDC. None of those is the asset of a wrapper
  * here, because the deposit Origin actually wants is a **Vault mint** —
@@ -133,11 +133,29 @@ export const SPARK_SAVINGS_VAULTS: PinnedVaultBook = {
  * The wrapper pins stay because they are correct contracts and would match
  * immediately if a `wOETH`/`wOUSD` pool ever appears. They are not the sUSDS
  * case: those addresses work, they simply have no pool today.
+ *
+ * **This comment used to end "do not re-investigate", and that instruction was
+ * load-bearing in the wrong direction.** The pool-side reasoning above was
+ * right, but `wOUSD` ALSO had a book-side defect — it pinned OGV, Origin's
+ * governance token — and the instruction is what kept anyone from looking.
+ * Fixed 2026-08-21 (see the entry below). A conclusion about why something is
+ * Manual is only as good as the constants it was reasoning about; verify the
+ * addresses before trusting the explanation.
  */
 export const ORIGIN_VAULTS: PinnedVaultBook = {
   1: [
     {
-      vault: "0x9c354503C38481a7A7a51629142963F98eCC12D0",
+      // CORRECTED 2026-08-21 (security sign-off, finding 3). This previously
+      // read 0x9c354503C38481a7A7a51629142963F98eCC12D0, which is not a vault
+      // at all: it is OGV, Origin's GOVERNANCE token. On chain it answers
+      // name() = "Origin DeFi Governance" and REVERTS on asset(), and Origin's
+      // own registry lists it under a literal `// OGV` comment
+      // (OriginProtocol/origin-dollar, contracts/utils/addresses.js).
+      //
+      // The real wrapper is WOUSDProxy, below, whose asset() is exactly the
+      // OUSD address this entry already declared.
+      // Source: OriginProtocol/ousd.com, src/constants/contractAddresses.ts.
+      vault: "0xD2af830E8CBdFed6CC11Bab697bB25496ed6FA62",
       asset: "0x2A8e1E676Ec238d8A992307B495b45B3fEAa5e86", // OUSD
       label: "wOUSD",
     },
@@ -245,11 +263,43 @@ export const FORTY_ACRES_VAULTS: PinnedVaultBook = {
  * Avantis — the `avUSDC` liquidity vault on Base. One vault, one asset, so it
  * pins rather than discovers.
  *
- * Address from `yield-server/src/adaptors/avantis` (`ADDRESSES.base.AvantisVault`)
- * and verified on chain 2026-08-21: `symbol()` = avUSDC, `asset()` = Base USDC,
- * `maxDeposit` unbounded. It is an EIP-1967 proxy, so the shape check was run
- * against the implementation (0xbd1a1896…) too — plain 4626, no request,
- * queue or cooldown selectors.
+ * **Provenance (security sign-off finding 4, closed 2026-08-21).** This was
+ * previously transcribed from DeFiLlama's `yield-server/src/adaptors/avantis`,
+ * i.e. an aggregator, which ./README.md rule 1 does not accept. It now comes
+ * from Avantis's OWN registry:
+ *
+ *   GET https://tx-builder.avantisfi.com/addresses
+ *     → data.addresses.tranche = 0x944766f715b51967E56aFdE5f0Aa76cEaCc9E7f9
+ *       (chainId 8453)
+ *
+ * That endpoint is authenticated rather than taken on trust: all EIGHT of its
+ * sibling addresses (tradingRouter, tradingStorage, pairStorage, pairInfos,
+ * priceAggregator, usdc, multicall, referral) match Avantis's published
+ * `Avantis-Labs/avantis-trading-skill` → `contracts.md` table exactly. A second
+ * endpoint, `GET /v2/lp/state`, independently returns the same `tranche`.
+ *
+ * Then tied to the chain: the vault's on-chain `totalAssets()` and
+ * `totalSupply()` match that endpoint's reported values EXACTLY (18078157898262
+ * / 13331490199376 at time of review), so the API demonstrably describes this
+ * contract and not merely an address that looks plausible. `symbol()` = avUSDC,
+ * `asset()` = Base USDC, `decimals()` = 6. It is an EIP-1967 proxy, so the
+ * shape check was run against the implementation (0xbd1a1896…) too — plain
+ * 4626, no request, queue or cooldown selectors.
+ *
+ * Avantis publishes no STATIC document listing the tranche (contracts.md covers
+ * the trading contracts only, and notes vault internals live in a private
+ * repo), so both documentary sources are endpoints of the same first-party
+ * service. That is well above aggregator provenance but worth re-checking if
+ * the address ever appears in a static Avantis doc.
+ *
+ * **Exit is instant but CONDITIONAL, and the card must not overstate it.**
+ * `/v2/lp/state` reports `withdrawThreshold` — documented as "utilization
+ * ceiling for withdrawals, 1e10-scaled; withdrawals that would push utilization
+ * above it REVERT" — at 90%, against a current `utilizationRatio` of ~9.4%.
+ * There is no lock or epoch (Avantis' SDK: "No lock/epoch in v2: withdrawals
+ * are immediate, gated by utilization"), so `instant` is the right verdict
+ * today, but a MAX withdraw can revert when the vault is heavily utilised
+ * (§11.3b, §12 Q2).
  *
  * **What this vault IS matters more than its ABI.** It is the counterparty
  * side of a perps venue: depositors underwrite trader PnL, so the share price

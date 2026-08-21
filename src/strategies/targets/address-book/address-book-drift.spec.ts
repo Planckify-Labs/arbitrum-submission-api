@@ -11,7 +11,10 @@
  *   Uniswap      positionManager.factory()/poolManager() is non-zero
  *   Comet        comet.baseToken() is non-zero (and its symbol is reported)
  *   Morpho       morpho.owner() is non-zero
- *   Curve        addressProvider.get_address(7) is non-zero
+ *   Curve        addressProvider.get_id_info(id) is active AND describes
+ *                itself as "Metaregistry" (non-zero alone is NOT enough — on
+ *                Polygon the old id 7 is an active "Cryptopool Factory")
+ *   Pendle       the router holds code on each PENDLE_ROUTER_CHAINS entry
  *
  * That round-trip is the "second official source" the README asks for, except
  * it cannot go stale and cannot be transcribed wrong — it IS the deployment.
@@ -48,8 +51,10 @@ import {
   BALANCER_V2_VAULT,
   BALANCER_V3_VAULTS,
   CURVE_ADDRESS_PROVIDER,
-  CURVE_METAREGISTRY_ID,
+  CURVE_METAREGISTRY_DESCRIPTION,
+  CURVE_METAREGISTRY_IDS,
   PENDLE_ROUTER,
+  PENDLE_ROUTER_CHAINS,
   SOLIDLY_DEPLOYMENTS,
   UNISWAP_V3_POSITION_MANAGERS,
   UNISWAP_V4_POSITION_MANAGERS,
@@ -81,6 +86,7 @@ const ABI = parseAbi([
   "function symbol() view returns (string)",
   "function owner() view returns (address)",
   "function get_address(uint256 id) view returns (address)",
+  "function get_id_info(uint256 id) view returns (address addr, bool is_active, uint256 version, uint256 last_modified, string description)",
   "function asset() view returns (address)",
   "function defaultFactory() view returns (address)",
   "function factory() view returns (address)",
@@ -393,27 +399,53 @@ async function checkBalancer(): Promise<void> {
 }
 
 async function checkCurveAndPendle(): Promise<void> {
-  // Both are one deterministic deployment across chains, so any chain with an
-  // endpoint proves them; check every chain we have one for.
-  const chainIds = [
-    ...new Set(Object.keys(AAVE_FORK_POOL_BOOKS.aave).map(Number)),
-  ];
-  await forEachChain(chainIds, async (client, chainId) => {
-    const curveWhat = `curve chain=${chainId}`;
-    if (await requireCode(client, chainId, CURVE_ADDRESS_PROVIDER, curveWhat)) {
-      const registry = await read<string>(
+  // NEITHER of these is "one deployment that exists everywhere", which is what
+  // this function used to assume. Both are deterministic ADDRESSES on the
+  // chains their protocol actually deployed to, so each is checked against its
+  // own pinned chain set — otherwise every unsupported chain reports drift
+  // (noise) while the one genuinely wrong chain hides in it (Polygon, below).
+
+  // Curve: only the chains that pin a MetaRegistry id, and the slot must
+  // describe ITSELF as the MetaRegistry. "Non-zero" was not enough — on Polygon
+  // id 7 is an active, non-zero "Cryptopool Factory", so the old assertion
+  // passed while the read was wrong.
+  await forEachChain(
+    Object.keys(CURVE_METAREGISTRY_IDS).map(Number),
+    async (client, chainId) => {
+      const id = CURVE_METAREGISTRY_IDS[chainId];
+      const what = `curve chain=${chainId}`;
+      if (!(await requireCode(client, chainId, CURVE_ADDRESS_PROVIDER, what))) {
+        return;
+      }
+      const info = await read<[string, boolean, bigint, bigint, string]>(
         client,
         CURVE_ADDRESS_PROVIDER,
-        "get_address",
-        [BigInt(CURVE_METAREGISTRY_ID)],
+        "get_id_info",
+        [BigInt(id)],
       );
-      if (!nonZero(registry)) {
+      if (!info) {
+        fail(what, `AddressProvider.get_id_info(${id}) did not answer`);
+        return;
+      }
+      const [addr, isActive, , , description] = info;
+      if (!nonZero(addr)) {
+        fail(what, `AddressProvider.get_address(${id}) is empty`);
+      } else if (!isActive) {
+        fail(what, `AddressProvider id ${id} is INACTIVE`);
+      } else if (
+        description.trim().toLowerCase() !==
+        CURVE_METAREGISTRY_DESCRIPTION.toLowerCase()
+      ) {
         fail(
-          curveWhat,
-          `AddressProvider.get_address(${CURVE_METAREGISTRY_ID}) is empty — the MetaRegistry slot moved`,
+          what,
+          `AddressProvider id ${id} describes itself as "${description.trim()}", not "${CURVE_METAREGISTRY_DESCRIPTION}" — the slot moved and a wrong registry would answer silently`,
         );
       }
-    }
+    },
+  );
+
+  // Pendle: only the chains the router is actually deployed on.
+  await forEachChain(PENDLE_ROUTER_CHAINS, async (client, chainId) => {
     await requireCode(
       client,
       chainId,

@@ -1,7 +1,7 @@
 /**
  * Family B — Aave-v3 forks (spec §5.3b, §1.5).
  *
- * SparkLend, Seamless, ZeroLend, Radiant and friends are Aave-v3 forks: the
+ * SparkLend, Seamless, ZeroLend and friends are Aave-v3 forks: the
  * same `Pool` exposing `supply(asset,amount,onBehalf,ref)` /
  * `withdraw(asset,amount,to)`, minting an aToken analog (`spToken`, `sToken`,
  * `rToken`). Only the Pool address differs, and the shipped `AaveV3` adapter
@@ -73,10 +73,13 @@ export const ZeroLendResolver = aaveForkResolver({
   aliases: ["zerolend", "zerolend-rwa", "zerolend-linea"],
 });
 
-export const RadiantResolver = aaveForkResolver({
-  family: "radiant",
-  aliases: ["radiant-v2", "radiant", "radiant-capital"],
-});
+/**
+ * **Radiant was removed 2026-08-21** (security sign-off, finding 2): its pinned
+ * Pool reverted on the validator's own call, and the protocol has been winding
+ * down since 2026-06-01 after a ~$50M exploit. Deliberately NOT registered, so
+ * `radiant*` slugs fall through to the Manual deep-link. Full reasoning lives
+ * in `address-book/lending.ts`; do not re-add without a fresh sign-off.
+ */
 
 /**
  * Avalon has no single pinned Pool (one per BTC-LST market), so its book is
@@ -93,6 +96,5 @@ export const TIER1_AAVE_FORK_RESOLVERS: readonly PoolTargetResolver[] = [
   SparkLendResolver,
   SeamlessResolver,
   ZeroLendResolver,
-  RadiantResolver,
   AvalonResolver,
 ];

@@ -16,7 +16,9 @@ import {
   BALANCER_V2_CHAINS,
   BALANCER_V2_VAULT,
   BALANCER_V3_VAULTS,
+  CURVE_METAREGISTRY_IDS,
   PENDLE_ROUTER,
+  PENDLE_ROUTER_CHAINS,
   SOLIDLY_DEPLOYMENTS,
   UNISWAP_V3_POSITION_MANAGERS,
   UNISWAP_V4_POSITION_MANAGERS,
@@ -26,7 +28,6 @@ import {
   AVALON_POOLS,
   COMET_MARKETS,
   MORPHO_BLUE_SINGLETONS,
-  RADIANT_POOLS,
   SEAMLESS_POOLS,
   SPARKLEND_POOLS,
   type SingletonBook,
@@ -58,7 +59,8 @@ export const AAVE_FORK_POOL_BOOKS: Readonly<Record<string, SingletonBook>> = {
   sparklend: SPARKLEND_POOLS,
   seamless: SEAMLESS_POOLS,
   zerolend: ZEROLEND_POOLS,
-  radiant: RADIANT_POOLS,
+  // `radiant` removed 2026-08-21 — wrong Pool + protocol winding down. See the
+  // note in ./lending.ts before considering a re-add.
   avalon: AVALON_POOLS,
 };
 
@@ -86,6 +88,19 @@ export function morphoSingleton(chainId: number): Address | null {
 
 export function solidlyDeployment(chainId: number) {
   return SOLIDLY_DEPLOYMENTS[chainId] ?? null;
+}
+
+/**
+ * The `AddressProvider` id holding Curve's MetaRegistry on this chain, or
+ * `null` when Curve never deployed one there.
+ *
+ * Callers MUST treat `null` as "no Curve discovery on this chain" and decline.
+ * Do not fall back to a default id: on Polygon, id 7 is an active, non-zero
+ * `Cryptopool Factory` that answers `find_pool_for_coins` without reverting,
+ * so a wrong id reads as a working registry (see `CURVE_METAREGISTRY_IDS`).
+ */
+export function curveMetaRegistryId(chainId: number): number | null {
+  return CURVE_METAREGISTRY_IDS[chainId] ?? null;
 }
 
 export function balancerVault(
@@ -121,8 +136,10 @@ export function routerAllowlist(
 ): readonly Address[] {
   switch (protocol) {
     case "pendle":
-      // One deterministic Router across every chain Pendle supports.
-      return [PENDLE_ROUTER];
+      // Deterministic address, but ONLY on the chains Pendle deployed to — a
+      // chain we have not reviewed gets an empty allowlist and fails closed,
+      // exactly like the Uniswap cases below. See PENDLE_ROUTER_CHAINS.
+      return PENDLE_ROUTER_CHAINS.includes(chainId) ? [PENDLE_ROUTER] : [];
     case "uniswap-v3": {
       const pm = UNISWAP_V3_POSITION_MANAGERS[chainId];
       return pm ? [pm] : [];

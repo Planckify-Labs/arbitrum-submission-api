@@ -24,7 +24,7 @@ import type { DeFiLlamaYieldPool } from "../../external/defillama.client";
 import {
   COMPOUND_V2_COMPTROLLERS,
   CURVE_ADDRESS_PROVIDER,
-  CURVE_METAREGISTRY_ID,
+  curveMetaRegistryId,
   EULER_VAULT_FACTORIES,
   FLUID_LENDING_RESOLVERS,
   MULTICALL3,
@@ -340,12 +340,19 @@ export const CurvePoolCandidateSource: CandidateSource = {
     );
     if (coins.length < 2) return null;
 
+    // The MetaRegistry id is per chain, and a chain without one declines rather
+    // than defaulting: on Polygon the old global id 7 resolved to an ACTIVE
+    // "Cryptopool Factory" whose find_pool_for_coins answers successfully, so
+    // the wrong registry was queried with no error to notice (§ Finding 6).
+    const metaRegistryId = curveMetaRegistryId(chainId);
+    if (metaRegistryId === null) return null;
+
     const metaRegistry = await read<string>(
       client,
       CURVE_ADDRESS_PROVIDER,
       CURVE_ABI,
       "get_address",
-      [BigInt(CURVE_METAREGISTRY_ID)],
+      [BigInt(metaRegistryId)],
     );
     if (!metaRegistry || metaRegistry.toLowerCase() === ZERO) return null;
 
