@@ -9,25 +9,10 @@ const ALCHEMY_PRICES_BASE_URL = "https://api.g.alchemy.com/prices/v1";
 const MAX_ADDRESSES_PER_CALL = 25;
 const MAX_SYMBOLS_PER_CALL = 25;
 
-/**
- * `Blockchain.chainId` -> Alchemy's own network-slug vocabulary. Third-party
- * naming, not derivable from `chain-directory.ts` (which only knows our own
- * chain rows) — same "address-book posture" as `AaveV3Deployments` /
- * `aaveViemChainFor` in mobile-app's `services/defi/positions/reader.ts`.
- * Extend as new EVM chains are onboarded for DeFi.
- */
-const ALCHEMY_NETWORK_BY_CHAIN_ID: Record<number, string> = {
-  1: "eth-mainnet",
-  8453: "base-mainnet",
-  42161: "arb-mainnet",
-  11155111: "eth-sepolia",
-  84532: "base-sepolia",
-  421614: "arb-sepolia",
-};
-
-export function alchemyNetworkForChainId(chainId: number): string | null {
-  return ALCHEMY_NETWORK_BY_CHAIN_ID[chainId] ?? null;
-}
+// Alchemy's chain-slug vocabulary is shared with the Token API client; the
+// map lives in `alchemy/alchemy-networks.ts`. Re-exported here so existing
+// importers of this module keep working.
+export { alchemyNetworkForChainId } from "../../alchemy/alchemy-networks";
 
 interface AlchemyPriceEntry {
   currency: string;
@@ -117,10 +102,15 @@ export class AlchemyPricesClient {
     private readonly configService: ConfigService,
     private readonly valkeyService: ValkeyService,
   ) {
-    this.apiKey = this.configService.get<string>("ALCHEMY_PRICES_API_KEY") ?? null;
+    this.apiKey =
+      this.configService.get<string>("ALCHEMY_API_KEY") ??
+      // Deploy-order fallback: the key was product-scoped before the Token
+      // API started sharing it. Remove once every environment is renamed.
+      this.configService.get<string>("ALCHEMY_PRICES_API_KEY") ??
+      null;
     if (!this.apiKey) {
       this.logger.warn(
-        "ALCHEMY_PRICES_API_KEY not configured — asset prices will resolve to null.",
+        "ALCHEMY_API_KEY not configured — asset prices will resolve to null.",
       );
     }
     const budget = Number(
