@@ -25,7 +25,7 @@
  */
 
 import type { DeFiLlamaYieldPool } from "../external/defillama.client";
-import { pinnedVaults } from "./address-book";
+import { type PinnedVault, pinnedVaults } from "./address-book";
 import { candidateAddressForPool } from "./candidates/registry";
 import type {
   Address,
@@ -40,6 +40,33 @@ import { eqAddr, resolveEvmChainId, underlyingOf } from "./types";
  * `(chain, underlyingTokens[0])` against the book — a pool for a token the
  * protocol has no reviewed vault for resolves to nothing.
  */
+/** Case/punctuation-insensitive identity for a ticker comparison. */
+function normaliseTicker(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * The one vault in `candidates` whose label the pool row names exactly, or
+ * `null` if that is zero or more than one.
+ *
+ * `null` is a refusal, and refusing is the correct outcome: two reviewed
+ * vaults over one asset and nothing in the row to tell them apart means we do
+ * not know where the user's money should go.
+ */
+function uniqueByLabel(
+  candidates: readonly PinnedVault[],
+  pool: DeFiLlamaYieldPool,
+): PinnedVault | null {
+  const needles = new Set(
+    [pool.symbol, pool.poolMeta]
+      .filter((v): v is string => !!v?.trim())
+      .map(normaliseTicker),
+  );
+  if (needles.size === 0) return null;
+  const hits = candidates.filter((c) => needles.has(normaliseTicker(c.label)));
+  return hits.length === 1 ? hits[0] : null;
+}
+
 export function pinnedVaultResolver(config: {
   family: string;
   aliases: readonly string[];
@@ -71,12 +98,29 @@ export function pinnedVaultResolver(config: {
       const candidates = pinnedVaults(bookKey, chainId).filter((v) =>
         eqAddr(v.asset, underlying),
       );
-      // Exactly one reviewed vault for this token, or we cannot be confident.
-      if (candidates.length !== 1) return null;
+      if (candidates.length === 0) return null;
+
+      // One reviewed vault for this token is the common case and needs no
+      // disambiguation at all.
+      //
+      // More than one is legitimate — Sky ships both `sUSDS` and `stUSDS` over
+      // USDS — but it used to be an automatic refusal, which would have taken
+      // the ~$4.66B sUSDS pool down with the new one. The discriminator is the
+      // vault's own TICKER against the row's `symbol`/`poolMeta`, matched
+      // EXACTLY and required to be unique.
+      //
+      // Deliberately not fuzzy. `hay.includes(needle)` on a shared symbol is
+      // what routed 25 Morpho pools into the wrong vault (§11.6b), and a book
+      // that cannot say which vault a row means must refuse rather than pick.
+      const chosen =
+        candidates.length === 1
+          ? candidates[0]
+          : uniqueByLabel(candidates, pool);
+      if (!chosen) return null;
 
       const target: DepositTarget = {
         kind: "erc4626",
-        vault: candidates[0].vault.toLowerCase() as Address,
+        vault: chosen.vault.toLowerCase() as Address,
         asset: underlying as Address,
       };
       return (await ctx.validate(target, pool)) ? target : null;

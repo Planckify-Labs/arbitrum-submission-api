@@ -21,7 +21,18 @@ import type { Address } from "../types";
 export interface PinnedVault {
   readonly vault: Address;
   readonly asset: Address;
-  /** Human label for logs/tests — never used for matching. */
+  /**
+   * The vault's own ticker.
+   *
+   * Used for logs and tests, and — ONLY when a book holds more than one vault
+   * over the same asset — as an EXACT, case-insensitive discriminator against
+   * the pool row's `symbol`/`poolMeta`. It is never a fuzzy match: substring
+   * matching on a shared symbol is what mis-routed 25 Morpho pools (§11.6b),
+   * and a book that cannot disambiguate exactly must refuse instead of
+   * guessing.
+   *
+   * With one vault per asset this field is still not consulted at all.
+   */
   readonly label: string;
 }
 
@@ -45,6 +56,35 @@ export const SKY_SAVINGS_VAULTS: PinnedVaultBook = {
       vault: "0x83F20F44975D03b1b09e64809B757c47f942BEeA",
       asset: "0x6B175474E89094C44Da98b954EedeAC495271d0F", // DAI
       label: "sDAI",
+    },
+    {
+      // stUSDS — Sky's "Expert Mode" savings vault, and the SECOND vault in
+      // this book over USDS. That is what the label discriminator above exists
+      // for: `sUSDS` and `stUSDS` are both 4626 vaults for the same asset, so
+      // the asset filter alone is ambiguous and would refuse BOTH — including
+      // the ~$4.66B sUSDS pool.
+      //
+      // Address from Sky's OWN on-chain registry, which is as first-party as
+      // provenance gets: the dss-chain-log at 0xdA0Ab1e0…, 515 entries,
+      // `getAddress("STUSDS")` → this address. The same registry returns
+      // `SUSDS` → 0xa3931d71… and `USDS` → 0xdC035D45…, both of which match
+      // what this book and the pool row already carry — so the source is
+      // cross-checked against constants that were reviewed independently.
+      //
+      // Verified on chain 2026-08-21: symbol() "stUSDS", name() "Staked USDS",
+      // asset() = USDS (matching the pool's underlyingTokens[0]), totalAssets()
+      // 199,876,037 USDS against DeFiLlama's $204.0M (~2%), and
+      // maxDeposit(<ordinary address>) = 13,123,962 USDS — capped, but NOT the
+      // hard zero that correctly refuses Maple and Morpho's V2 vaults.
+      //
+      // Exit: every lockup probe reverts — no cooldownDuration, no
+      // withdrawEpochsTimelock, no ERC-7540 interface, no exit fee — so
+      // readExitTerms reports `instant`. Per §11.3b that verdict rests on the
+      // family allowlist rather than on proof, and Avant is the reason that is
+      // not good enough on its own, so the round trip is EXECUTED on a fork.
+      vault: "0x99CD4Ec3f88A45940936F469E4bB72A2A701EEB9",
+      asset: "0xdC035D45d973E3EC169d2276DDab16f1e407384F", // USDS
+      label: "stUSDS",
     },
   ],
   // Base and Arbitrum are deliberately ABSENT. Sky's L2 `sUSDS` is a bridged

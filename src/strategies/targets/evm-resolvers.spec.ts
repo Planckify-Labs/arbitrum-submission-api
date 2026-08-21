@@ -127,9 +127,16 @@ function ctxWith(opts: {
 }
 
 describe("Family A — pinned vault resolvers (§4)", () => {
-  it("resolves a pinned sUSDS vault by (chain, underlying)", async () => {
+  it("resolves a pinned sUSDS vault by (chain, underlying, ticker)", async () => {
+    // The ticker is load-bearing now: Sky pins TWO vaults over USDS (`sUSDS`
+    // and `stUSDS`), so the asset alone no longer identifies one. The live row
+    // carries `symbol: "SUSDS"`, which is what selects it.
     const target = await SkySavingsResolver.resolve(
-      pool({ project: "sky-lending", underlyingTokens: [USDS] }),
+      pool({
+        project: "sky-lending",
+        symbol: "SUSDS",
+        underlyingTokens: [USDS],
+      }),
       ctxWith({ validate: true }),
     );
     expect(target).toEqual({
@@ -137,6 +144,53 @@ describe("Family A — pinned vault resolvers (§4)", () => {
       vault: "0xa3931d71877c0e7a3148cb7eb4463524fec27fbd",
       asset: USDS.toLowerCase(),
     });
+  });
+
+  it("resolves stUSDS, the second pinned vault over the same asset", async () => {
+    const target = await SkySavingsResolver.resolve(
+      pool({
+        project: "sky-lending",
+        symbol: "STUSDS",
+        poolMeta: "Expert Mode",
+        underlyingTokens: [USDS],
+      }),
+      ctxWith({ validate: true }),
+    );
+    expect(target).toEqual({
+      kind: "erc4626",
+      vault: "0x99cd4ec3f88a45940936f469e4bb72a2a701eeb9",
+      asset: USDS.toLowerCase(),
+    });
+  });
+
+  it("refuses when two pinned vaults share an asset and the row names neither", async () => {
+    // The whole point of the discriminator being EXACT. An unrecognised ticker
+    // is a refusal, not an invitation to pick the first or the biggest — that
+    // is the Morpho mis-route (§11.6b) in miniature, and here it would be
+    // choosing between two live vaults with different products behind them.
+    const target = await SkySavingsResolver.resolve(
+      pool({
+        project: "sky-lending",
+        symbol: "USDS",
+        underlyingTokens: [USDS],
+      }),
+      ctxWith({ validate: true }),
+    );
+    expect(target).toBeNull();
+  });
+
+  it("does not let a ticker substring select a sibling vault", async () => {
+    // `sUSDS` vs `stUSDS` would both "match" under the bidirectional
+    // `includes()` matching used elsewhere. Exactness is what stops that.
+    const target = await SkySavingsResolver.resolve(
+      pool({
+        project: "sky-lending",
+        symbol: "USDS-something",
+        underlyingTokens: [USDS],
+      }),
+      ctxWith({ validate: true }),
+    );
+    expect(target).toBeNull();
   });
 
   it("fails closed for a token the protocol has no reviewed vault for", async () => {
