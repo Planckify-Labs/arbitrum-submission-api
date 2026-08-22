@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { erc20Abi, parseAbi } from "viem";
 import { PrismaService } from "../prisma/prisma.service";
 import { ValkeyService } from "../valkey/valkey.service";
@@ -10,8 +10,8 @@ import {
   alchemyNetworkForChainId,
 } from "./external/alchemy-prices.client";
 import { LifiClient, LifiQuote } from "./external/lifi.client";
-import { type ZerionPosition, ZerionClient } from "./external/zerion.client";
-import { cometMarkets, COMET_MARKETS } from "./targets/address-book";
+import { ZerionClient, type ZerionPosition } from "./external/zerion.client";
+import { COMET_MARKETS, cometMarkets } from "./targets/address-book";
 import { OPP_ROW_CACHE_TTL_SEC, oppRowCacheKey } from "./targets/cache-keys";
 import { findChainById } from "./targets/chain-directory";
 import { getPublicClientForChain } from "./targets/rpc";
@@ -103,7 +103,8 @@ export class StrategiesService {
       const network = alchemyNetworkForChainId(q.chainId);
       const usd =
         q.assetContract && network
-          ? (addressPrices.get(`${network}:${q.assetContract.toLowerCase()}`) ?? null)
+          ? (addressPrices.get(`${network}:${q.assetContract.toLowerCase()}`) ??
+            null)
           : (symbolPrices.get(q.assetSymbol.toUpperCase()) ?? null);
       return { ...q, usd };
     });
@@ -500,14 +501,23 @@ export class StrategiesService {
   private async discoverCometPositions(
     userId: string,
     walletAddress: string,
-    existing: { protocolSlug: string; chainId: number; assetContract: string | null; status: string }[],
+    existing: {
+      protocolSlug: string;
+      chainId: number;
+      assetContract: string | null;
+      status: string;
+    }[],
   ) {
     const known = new Set(
       existing
-        .filter((p) => p.protocolSlug === "compound-v3" && p.status === "active")
+        .filter(
+          (p) => p.protocolSlug === "compound-v3" && p.status === "active",
+        )
         .map((p) => `${p.chainId}:${(p.assetContract ?? "").toLowerCase()}`),
     );
-    const created: NonNullable<Awaited<ReturnType<StrategiesService["createPosition"]>>>[] = [];
+    const created: NonNullable<
+      Awaited<ReturnType<StrategiesService["createPosition"]>>
+    >[] = [];
 
     for (const chainIdStr of Object.keys(COMET_MARKETS)) {
       const chainId = Number(chainIdStr);
@@ -540,32 +550,49 @@ export class StrategiesService {
                 chainId,
                 depositTarget: { path: ["comet"], equals: comet },
               },
-              select: { poolId: true, assetSymbol: true, chainName: true, tier: true },
+              select: {
+                poolId: true,
+                assetSymbol: true,
+                chainName: true,
+                tier: true,
+              },
             })
             .catch(() => null);
 
           let assetSymbol = opp?.assetSymbol;
           if (!assetSymbol) {
             assetSymbol = await client
-              .readContract({ address: baseToken, abi: erc20Abi, functionName: "symbol" })
+              .readContract({
+                address: baseToken,
+                abi: erc20Abi,
+                functionName: "symbol",
+              })
               .catch(() => "");
           }
           const decimals = await client
-            .readContract({ address: baseToken, abi: erc20Abi, functionName: "decimals" })
+            .readContract({
+              address: baseToken,
+              abi: erc20Abi,
+              functionName: "decimals",
+            })
             .catch(() => 18);
 
-          const position = await this.createDiscoveredPosition(userId, walletAddress, {
-            protocolSlug: "compound-v3",
-            chainId,
-            namespace: "eip155",
-            assetSymbol,
-            assetContract: baseToken,
-            poolId: opp?.poolId,
-            amountRaw: balance.toString(),
-            decimals,
-            tier: opp?.tier,
-            chainName: opp?.chainName ?? findChainById(chainId)?.name ?? "",
-          });
+          const position = await this.createDiscoveredPosition(
+            userId,
+            walletAddress,
+            {
+              protocolSlug: "compound-v3",
+              chainId,
+              namespace: "eip155",
+              assetSymbol,
+              assetContract: baseToken,
+              poolId: opp?.poolId,
+              amountRaw: balance.toString(),
+              decimals,
+              tier: opp?.tier,
+              chainName: opp?.chainName ?? findChainById(chainId)?.name ?? "",
+            },
+          );
           if (position) created.push(position);
         } catch (err) {
           this.logger.warn(
@@ -580,7 +607,12 @@ export class StrategiesService {
   private async discoverZerionPositions(
     userId: string,
     walletAddress: string,
-    existing: { protocolSlug: string; chainId: number; assetContract: string | null; status: string }[],
+    existing: {
+      protocolSlug: string;
+      chainId: number;
+      assetContract: string | null;
+      status: string;
+    }[],
   ) {
     const known = new Set(
       existing
@@ -598,7 +630,9 @@ export class StrategiesService {
       return [];
     }
 
-    const created: NonNullable<Awaited<ReturnType<StrategiesService["createPosition"]>>>[] = [];
+    const created: NonNullable<
+      Awaited<ReturnType<StrategiesService["createPosition"]>>
+    >[] = [];
     for (const zp of zerionPositions) {
       // A dust-value or unpriced row isn't worth adopting as a tracked
       // position — Zerion's own numbers are display-only anyway.
@@ -623,26 +657,35 @@ export class StrategiesService {
                 assetSymbol: zp.assetSymbol,
                 protocolSlug: { contains: zp.dappId.split("-")[0] },
               },
-              select: { poolId: true, protocolSlug: true, chainName: true, tier: true },
+              select: {
+                poolId: true,
+                protocolSlug: true,
+                chainName: true,
+                tier: true,
+              },
             })
             .catch(() => null)
         : null;
 
-      const position = await this.createDiscoveredPosition(userId, walletAddress, {
-        protocolSlug: opp?.protocolSlug ?? `zerion:${zp.dappId ?? "unknown"}`,
-        chainId,
-        namespace: "eip155",
-        assetSymbol: zp.assetSymbol,
-        assetContract: zp.assetContract ?? undefined,
-        poolId: opp?.poolId,
-        amountRaw: zp.quantityRaw,
-        decimals: zp.decimals,
-        tier: opp?.tier,
-        chainName: opp?.chainName ?? findChainById(chainId)?.name ?? "",
-        // Zerion already computed USD — cheaper and no less accurate than
-        // a second price lookup for a row we're only backfilling once.
-        amountUsdOverride: zp.valueUsd,
-      });
+      const position = await this.createDiscoveredPosition(
+        userId,
+        walletAddress,
+        {
+          protocolSlug: opp?.protocolSlug ?? `zerion:${zp.dappId ?? "unknown"}`,
+          chainId,
+          namespace: "eip155",
+          assetSymbol: zp.assetSymbol,
+          assetContract: zp.assetContract ?? undefined,
+          poolId: opp?.poolId,
+          amountRaw: zp.quantityRaw,
+          decimals: zp.decimals,
+          tier: opp?.tier,
+          chainName: opp?.chainName ?? findChainById(chainId)?.name ?? "",
+          // Zerion already computed USD — cheaper and no less accurate than
+          // a second price lookup for a row we're only backfilling once.
+          amountUsdOverride: zp.valueUsd,
+        },
+      );
       if (position) created.push(position);
     }
     return created;
@@ -761,7 +804,9 @@ export class StrategiesService {
     if (positions.length === 0) return [];
 
     const poolIds = [
-      ...new Set(positions.map((p) => p.poolId).filter((id): id is string => !!id)),
+      ...new Set(
+        positions.map((p) => p.poolId).filter((id): id is string => !!id),
+      ),
     ];
     const byPoolId =
       poolIds.length > 0
@@ -783,7 +828,12 @@ export class StrategiesService {
             namespace: p.namespace,
           })),
         },
-        select: { protocolSlug: true, chainId: true, namespace: true, apy: true },
+        select: {
+          protocolSlug: true,
+          chainId: true,
+          namespace: true,
+          apy: true,
+        },
       });
       for (const row of rows) {
         const key = `${row.protocolSlug}:${row.chainId}:${row.namespace}`;
@@ -795,7 +845,9 @@ export class StrategiesService {
       ...p,
       currentApy: p.poolId
         ? (apyByPoolId.get(p.poolId) ?? null)
-        : (apyByLegacyKey.get(`${p.protocolSlug}:${p.chainId}:${p.namespace}`) ?? null),
+        : (apyByLegacyKey.get(
+            `${p.protocolSlug}:${p.chainId}:${p.namespace}`,
+          ) ?? null),
     }));
   }
 
@@ -876,8 +928,37 @@ export class StrategiesService {
       openTxHash?: string;
       goal?: string;
       targetDate?: Date;
+      /**
+       * ERC-7540 async vaults only (docs/defi-evm-protocol-expansion-spec.md
+       * §7). A position opened by `buildRequestDeposit` is not yet a
+       * settled deposit — it is a REQUEST, and `asyncPhase` is what makes
+       * that durable: without it, the row is indistinguishable from a
+       * normal position and `async-claim-watcher.processor.ts`'s own
+       * `WHERE asyncPhase IN (...)` scan never finds it, so it is never
+       * polled, never flips to claimable, and the user is never notified.
+       * The mobile executor sets this from `adapter.buildRequestDeposit`
+       * capability-detection, never from a client-asserted flag on an
+       * ordinary sync deposit (§8.2 — only what the executor itself proved).
+       */
+      /**
+       * Deliberately NOT imported from `async-claim-watcher.processor.ts`
+       * (which owns the canonical `ASYNC_PHASE` map) — that file pulls in
+       * `PushService` -> `expo-server-sdk`, an ESM package jest's transform
+       * config does not cover, and importing it here broke every test that
+       * imports this service. Two literals duplicated is cheaper than a
+       * service file the whole app depends on failing to parse under test.
+       */
+      asyncPhase?: "deposit_requested" | "redeem_requested";
+      /** The ERC-7540 requestId the request tx emitted, echoed back at claim. */
+      asyncRequestId?: string;
+      asyncRequestedRaw?: string;
     },
   ) {
+    // The type above already restricts `asyncPhase` to the two "*_requested"
+    // values at compile time; deposit_claimable/redeem_claimable only exist
+    // after the watcher observes fulfilment, so a caller cannot even express
+    // "already claimable" here — the constraint that used to be a runtime
+    // check is a type constraint instead.
     // Inherit chainName + tier from the source OpportunityCache row
     // (DefiLlama-provided label + our own scoring). Works uniformly for
     // EVM (chainId match) and non-EVM (chainId=0 with namespace
@@ -923,6 +1004,10 @@ export class StrategiesService {
           openedAt: new Date(),
           goal: dto.goal,
           targetDate: dto.targetDate,
+          asyncPhase: dto.asyncPhase,
+          asyncRequestId: dto.asyncRequestId,
+          asyncRequestedRaw: dto.asyncRequestedRaw,
+          asyncRequestedAt: dto.asyncPhase ? new Date() : undefined,
         },
       });
     } catch (err) {
@@ -978,5 +1063,51 @@ export class StrategiesService {
 
     const [enriched] = await this.attachCurrentApy([updated]);
     return { ...enriched, refreshedAt: new Date() };
+  }
+
+  /**
+   * ERC-7540 claim recorded — the position leaves the `*_requested`/
+   * `*_claimable` state machine (§7). Called by the mobile executor after
+   * `buildClaimDeposit`/`buildClaimRedeem` confirms on chain.
+   *
+   * `asyncPhase` clears to `null` rather than being set to some terminal
+   * "claimed" value: once claimed, the position is an ordinary settled
+   * position again — `deposit` claims land as a normal supply-side balance,
+   * `redeem` claims mean the withdraw finished — and the async-specific
+   * columns have done their job. `async-claim-watcher.processor.ts`'s scan
+   * (`WHERE asyncPhase IN ('*_requested')`) already ignores `null`, so
+   * clearing it is what actually removes the position from the watcher —
+   * this endpoint is the other half of that contract, not just bookkeeping.
+   */
+  async claimAsyncPosition(
+    id: string,
+    walletAddress: string,
+    claimTxHash: string,
+  ) {
+    const position = await this.getPosition(id, walletAddress);
+    if (
+      position.asyncPhase !== "deposit_claimable" &&
+      position.asyncPhase !== "redeem_claimable"
+    ) {
+      throw new BadRequestException(
+        `position ${id} is not in a claimable async phase (asyncPhase=${position.asyncPhase ?? "null"})`,
+      );
+    }
+
+    const wasRedeem = position.asyncPhase === "redeem_claimable";
+    const updated = await this.prisma.strategyPosition.update({
+      where: { id: position.id },
+      data: {
+        asyncPhase: null,
+        asyncTxHash: claimTxHash,
+        // A claimed REDEEM is the position closing, mirroring how every
+        // other family's withdraw sets status; a claimed DEPOSIT is not a
+        // status change, it just stops being "pending".
+        ...(wasRedeem ? { status: "withdrawn", closedAt: new Date() } : {}),
+      },
+    });
+
+    const [enriched] = await this.attachCurrentApy([updated]);
+    return { ...enriched, claimedAt: new Date() };
   }
 }

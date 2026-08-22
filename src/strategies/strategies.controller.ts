@@ -174,7 +174,10 @@ export class StrategiesController {
     if (!userId) {
       throw new DefiError("unauthorized", "User ID missing from JWT");
     }
-    return this.strategiesService.getPositions(userId, this.getWalletAddress(req));
+    return this.strategiesService.getPositions(
+      userId,
+      this.getWalletAddress(req),
+    );
   }
 
   @Post("positions")
@@ -194,22 +197,53 @@ export class StrategiesController {
       openTxHash?: string;
       goal?: string;
       targetDate?: string;
+      /** ERC-7540 async vaults only — see the service method's doc comment. */
+      asyncPhase?: "deposit_requested" | "redeem_requested";
+      asyncRequestId?: string;
+      asyncRequestedRaw?: string;
     },
   ) {
     const userId = req.user?.id;
     if (!userId) {
       throw new DefiError("unauthorized", "User ID missing from JWT");
     }
-    return this.strategiesService.createPosition(userId, this.getWalletAddress(req), {
-      ...dto,
-      targetDate: dto.targetDate ? new Date(dto.targetDate) : undefined,
-    });
+    return this.strategiesService.createPosition(
+      userId,
+      this.getWalletAddress(req),
+      {
+        ...dto,
+        targetDate: dto.targetDate ? new Date(dto.targetDate) : undefined,
+      },
+    );
   }
 
   @Get("positions/:id")
   @ApiOperation({ summary: "Get details for a specific position" })
   getPosition(@Request() req: AuthedRequest, @Param("id") id: string) {
     return this.strategiesService.getPosition(id, this.getWalletAddress(req));
+  }
+
+  @Post("positions/:id/claim")
+  @ApiOperation({
+    summary:
+      "Record a successful ERC-7540 claim — mobile calls this after " +
+      "buildClaimDeposit/buildClaimRedeem confirms, so the position leaves " +
+      "the async-claim-watcher's pending scan and stops badging 'pending'",
+  })
+  claimPosition(
+    @Request() req: AuthedRequest,
+    @Param("id") id: string,
+    @Body() dto: { claim_tx_hash: string },
+  ) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new DefiError("unauthorized", "User ID missing from JWT");
+    }
+    return this.strategiesService.claimAsyncPosition(
+      id,
+      this.getWalletAddress(req),
+      dto.claim_tx_hash,
+    );
   }
 
   @Post("positions/:id/refresh")

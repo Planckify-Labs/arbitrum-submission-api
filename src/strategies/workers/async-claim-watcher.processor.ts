@@ -24,6 +24,7 @@ import { Logger } from "@nestjs/common";
 import type { Job } from "bullmq";
 import { parseAbi } from "viem";
 import { PrismaService } from "../../prisma/prisma.service";
+import { PushService } from "../../push/push.service";
 import { getPublicClientForChain } from "../targets/rpc";
 import type { DepositTarget } from "../targets/types";
 import { resolveEvmChainId } from "../targets/types";
@@ -44,7 +45,10 @@ const ERC7540_VIEW_ABI = parseAbi([
 export class AsyncClaimWatcherProcessor extends WorkerHost {
   private readonly logger = new Logger(AsyncClaimWatcherProcessor.name);
 
-  constructor(private readonly prisma: PrismaService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly pushService: PushService,
+  ) {
     super();
   }
 
@@ -62,8 +66,11 @@ export class AsyncClaimWatcherProcessor extends WorkerHost {
         chainId: true,
         chainName: true,
         poolId: true,
+        assetSymbol: true,
+        protocolSlug: true,
         asyncPhase: true,
         asyncRequestId: true,
+        userStrategy: { select: { userId: true } },
       },
     });
     if (pending.length === 0) return;
@@ -90,11 +97,38 @@ export class AsyncClaimWatcherProcessor extends WorkerHost {
         });
         if (claimable > 0n) {
           becameClaimable++;
-          // Notification dispatch hooks in here, keyed off the phase flip so
-          // the user is told exactly once per request.
           this.logger.log(
             `[async-claim] position=${position.id} is now claimable (${position.asyncPhase})`,
           );
+          // Keyed off the phase flip (§7 requirement 2) rather than every
+          // tick, and deduped through the same `StrategyPositionEvent`
+          // marker the goal-deadline and auto-compound watchers use — a
+          // position sits in a `*_claimable` phase for potentially many
+          // scans until the user actually claims, and without the marker
+          // every 10-minute tick would re-notify.
+          const noun =
+            position.asyncPhase === ASYNC_PHASE.depositRequested
+              ? "deposit"
+              : "withdrawal";
+          const eventKind =
+            position.asyncPhase === ASYNC_PHASE.depositRequested
+              ? "defi.async.deposit_claimable"
+              : "defi.async.redeem_claimable";
+          const notified = await this.tryRecordEvent(position.id, eventKind);
+          if (notified) {
+            await this.pushService.sendToUser({
+              userId: position.userStrategy.userId,
+              title: "Ready to claim",
+              body: `Your ${position.assetSymbol} ${noun} on ${position.protocolSlug} has settled — tap to claim it.`,
+              data: {
+                kind: "async_claimable",
+                positionId: position.id,
+                protocolSlug: position.protocolSlug,
+                chainId: position.chainId,
+              },
+              channelId: "strategies",
+            });
+          }
         }
       } catch (err) {
         this.logger.warn(
@@ -147,6 +181,25 @@ export class AsyncClaimWatcherProcessor extends WorkerHost {
       });
     } catch {
       return null;
+    }
+  }
+
+  /** Same dedup pattern as `auto-compound-watcher.processor.ts`. */
+  private async tryRecordEvent(
+    positionId: string,
+    kind: string,
+  ): Promise<boolean> {
+    try {
+      await this.prisma.strategyPositionEvent.create({
+        data: { positionId, kind },
+      });
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("Unique") || message.includes("P2002")) {
+        return false;
+      }
+      throw err;
     }
   }
 
