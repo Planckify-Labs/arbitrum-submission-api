@@ -20,9 +20,12 @@
 import { TIER1_AAVE_FORK_RESOLVERS } from "./aave-fork.resolver";
 import { AaveResolver } from "./aave.resolver";
 import { TIER3_BALANCER_RESOLVERS } from "./balancer.resolver";
+import { BluefinSpotResolver } from "./bluefin.resolver";
 import { ONCHAIN_CANDIDATE_SOURCES } from "./candidates/onchain.source";
 import { registerCandidateSource } from "./candidates/registry";
+import { CetusResolver } from "./cetus.resolver";
 import { TIER2_COMPOUND_RESOLVERS } from "./compound.resolver";
+import { CurrentResolver } from "./current.resolver";
 import { CurveResolver } from "./curve.resolver";
 import {
   PoolUrlCandidateSource,
@@ -32,23 +35,22 @@ import { EmberResolver } from "./ember.resolver";
 import { TIER1_ERC4626_RESOLVERS } from "./erc4626-family.resolver";
 import { MorphoResolver, YearnResolver } from "./erc4626.resolver";
 import { familyEnabled, isFamilyKilled } from "./feature-flags";
+import { KaiResolver } from "./kai.resolver";
 import { LstStakeResolver } from "./lst.resolver";
 import { MorphoBlueResolver } from "./morpho-blue.resolver";
 import { NaviResolver } from "./navi.resolver";
 import { bootProtocolManifests } from "./protocol-manifest";
+import { TurbosResolver } from "./turbos.resolver";
 import "./protocols";
 import { TIER4_CENTRIFUGE_RESOLVERS } from "./centrifuge.resolver";
 import { registerResolver } from "./registry";
 import { TIER3_ROUTER_CALL_RESOLVERS } from "./router-call.resolver";
 import { ScallopResolver } from "./scallop.resolver";
 import { TIER3_SOLIDLY_RESOLVERS } from "./solidly.resolver";
+import { SuilendResolver } from "./suilend.resolver";
 import { SuiLstResolver } from "./suilst.resolver";
 import type { PoolTargetResolver } from "./types";
 import { TIER3_UNISWAP_V2_RESOLVERS } from "./uniswap-v2.resolver";
-// SuilendResolver is implemented but NOT registered: Suilend's deposit AND
-// withdraw both assert a fresh reserve price (abort code 1), which needs a Pyth
-// pull-oracle push in-tx — deferred (see suilend.resolver.ts / suilendSui.ts).
-// Registering it would badge Suilend "in-app" and then intermittently fail.
 
 let booted = false;
 
@@ -119,9 +121,45 @@ export function bootTargetResolvers(): void {
   // `{ kind: "sui-lst" }` for the mobile SuiLstAdapter. The pools these match
   // are synthesized by `SuiLstSource` (absent from DeFiLlama's Sui feed).
   registerResolver(SuiLstResolver);
-  // Suilend NOT registered — its deposit + withdraw are both Pyth-gated (see the
-  // import note). The resolver + mobile adapter are ready; wire the Pyth push
-  // then register here.
+  // Sui — Suilend (single-market-per-asset). Emits `{ kind: "suilend-market" }`
+  // for the mobile SuilendSuiAdapter. Was withheld for a reason that turned out
+  // to be wrong ("Pyth-gated" — corrected 2026-08-22, see suilendSui.ts's file
+  // header): the actual blocker was a stale moveCall package derived from the
+  // market type's immutable address, now fixed via an on-chain UpgradeCap read
+  // (suilend.config.ts, mobile). Deposit is device-verified via
+  // sui_devInspectTransactionBlock against live mainnet; withdraw stays
+  // deferred pending its own verification, independent of this resolver.
+  registerResolver(SuilendResolver);
+  // Sui — Kai Finance Single Asset Vaults (generic tokenized vault, own
+  // package — not Ember's or Suilend's). Emits `{ kind: "kai-vault" }` for
+  // the mobile KaiSuiAdapter. Deposit AND withdraw both device-verified via
+  // sui_devInspectTransactionBlock chained atomically in one PTB against live
+  // mainnet 2026-08-22, no oracle either direction (kai.resolver.ts).
+  registerResolver(KaiResolver);
+  // Sui — Current Finance (isolated-market money market, 5 markets). Emits
+  // `{ kind: "current-market" }` for the mobile CurrentSuiAdapter.
+  // DEPOSIT-ONLY: withdraw needs a live Pyth push in-tx (a real, new
+  // subsystem — see types.ts's `current-market` comment; this is NOT the
+  // same false alarm Suilend had). Deposit device-verified via
+  // sui_devInspectTransactionBlock against live mainnet 2026-08-22 —
+  // creating the obligation and depositing chain atomically in one PTB.
+  registerResolver(CurrentResolver);
+  // Sui — Cetus CLMM (concentrated liquidity, full-range only). Emits
+  // `{ kind: "cetus-clmm-pool" }` for the mobile CetusSuiAdapter. Deposit is
+  // a swap-split zap into both legs (own-pool swap, never external) — see
+  // types.ts's `cetus-clmm-pool` comment. WITHDRAW is not wired.
+  registerResolver(CetusResolver);
+  // Sui — Turbos Finance CLMM (concentrated liquidity, full-range only).
+  // Emits `{ kind: "turbos-clmm-pool" }` for the mobile TurbosSuiAdapter.
+  // Same swap-split-zap deposit shape as Cetus, simpler on-chain interface
+  // (explicit amountA/amountB, no hot-potato receipt) — see types.ts's
+  // `turbos-clmm-pool` comment. WITHDRAW is not wired.
+  registerResolver(TurbosResolver);
+  // Sui — Bluefin Spot CLMM (concentrated liquidity, full-range only).
+  // Emits `{ kind: "bluefin-spot-pool" }` for the mobile BluefinSpotSuiAdapter.
+  // Same swap-split-zap deposit shape as Cetus/Turbos — see types.ts's
+  // `bluefin-spot-pool` comment. WITHDRAW is not wired.
+  registerResolver(BluefinSpotResolver);
 
   // ── Tier 1 — widen the existing funnels. No new adapter, no new kind. ────
   // Family A (ERC-4626) first so a protocol that ships BOTH a 4626 wrapper and

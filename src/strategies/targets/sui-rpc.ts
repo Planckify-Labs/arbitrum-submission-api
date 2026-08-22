@@ -9,6 +9,18 @@
  * `Function()`-wrapped `import()` bypasses TS static resolution (the SDK's
  * `exports` map + `module: commonjs` disagree) while Node 22 loads the ESM
  * build at runtime.
+ *
+ * Endpoint (found + fixed 2026-08-22): the Sui Foundation disabled JSON-RPC
+ * on public fullnodes the week of 2026-07-27 (full decommission ~mid-October
+ * 2026 — see docs.sui.io/develop/accessing-data/json-rpc-migration), so the
+ * old bare `fullnode.mainnet.sui.io` default returned `Method not found` for
+ * EVERY call — `getSuiObjectType`/`getSuiObjectFields` are best-effort and
+ * swallow that as `null`, so every resolver that validates on-chain
+ * (Ember/Scallop/NAVI) failed closed to Manual with no visible error. This
+ * mirrors `rpc.ts`'s pattern instead: resolve through rpc-proxy
+ * (`resolveRpcEndpoint`, the same helper EVM uses), which now fronts Sui with
+ * Alchemy (rpc-proxy/src/db/seed.ts). `STRATEGIES_SUI_RPC_URL` remains an env
+ * override escape hatch, same shape as EVM's `STRATEGIES_RPC_URL_<chainId>`.
  */
 
 type SuiObjectFields = Record<string, unknown>;
@@ -23,12 +35,16 @@ type SuiClientLike = {
     } | null;
   }>;
 };
-type SuiClientCtor = new (opts: {
+type SuiTransportLike = unknown;
+type SuiClientCtor = new (
+  opts:
+    | { url: string; network?: string }
+    | { transport: SuiTransportLike; network?: string },
+) => SuiClientLike;
+type SuiTransportCtor = new (opts: {
   url: string;
-  network?: string;
-}) => SuiClientLike;
-
-const DEFAULT_SUI_RPC = "https://fullnode.mainnet.sui.io:443";
+  rpc?: { headers?: Record<string, string> };
+}) => SuiTransportLike;
 
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
   specifier: string,
@@ -36,7 +52,7 @@ const dynamicImport = new Function("specifier", "return import(specifier)") as (
 
 let clientPromise: Promise<SuiClientLike> | null = null;
 
-async function getClient(): Promise<SuiClientLike> {
+function getClient(): Promise<SuiClientLike> {
   if (!clientPromise) {
     clientPromise = (async () => {
       // The installed `@mysten/sui` no longer exports `SuiClient`/`getFullnodeUrl`
@@ -46,8 +62,31 @@ async function getClient(): Promise<SuiClientLike> {
       // read (object types + the LST staking APY) failed.
       const mod = await dynamicImport("@mysten/sui/jsonRpc");
       const SuiJsonRpcClient = mod.SuiJsonRpcClient as SuiClientCtor;
-      const url = process.env.STRATEGIES_SUI_RPC_URL?.trim() || DEFAULT_SUI_RPC;
-      return new SuiJsonRpcClient({ url, network: "mainnet" });
+
+      const override = process.env.STRATEGIES_SUI_RPC_URL?.trim();
+      if (override) {
+        return new SuiJsonRpcClient({ url: override, network: "mainnet" });
+      }
+
+      // Same endpoint-resolution helper `rpc.ts` uses for EVM: `/sui/mainnet`
+      // is a proxy ROUTE (rpc-proxy/src/db/seed.ts), not an absolute URL — the
+      // proxy origin + bearer live in env (RPC_PROXY_URL / RPC_PROXY_API_KEY).
+      const { resolveRpcEndpoint } = await import(
+        "../../blockchains/rpc-endpoint"
+      );
+      const endpoint = resolveRpcEndpoint("/sui/mainnet");
+      if (Object.keys(endpoint.headers).length === 0) {
+        return new SuiJsonRpcClient({ url: endpoint.url, network: "mainnet" });
+      }
+      // A bare `url` can't carry the proxy's bearer header (same trap the EVM
+      // drift check hit — see runbook §11.5c #3), so route through an explicit
+      // transport that can.
+      const JsonRpcHTTPTransport = mod.JsonRpcHTTPTransport as SuiTransportCtor;
+      const transport = new JsonRpcHTTPTransport({
+        url: endpoint.url,
+        rpc: { headers: endpoint.headers },
+      });
+      return new SuiJsonRpcClient({ transport, network: "mainnet" });
     })();
   }
   return clientPromise;
