@@ -798,17 +798,6 @@ for (const [slug, aliases, reason] of [
       "not a 4626 vault. Reserved until someone reviews its stake shape and " +
       "exit; until then the `lista-lending` family must not answer for it.",
   ],
-  [
-    "centrifuge",
-    ["centrifuge-protocol", "centrifuge"],
-    // ~$1.19B across three chains, and the largest thing in the queue that is
-    // NOT an AMM. It is withheld by the spec, not by a missing address.
-    "Centrifuge's tokenised funds are ERC-7540 ASYNCHRONOUS vaults " +
-      "(request -> fulfil -> claim). §7 forbids a resolver for `async-vault` " +
-      "until the two-phase flow ships: badging one 'Deposit in-app' produces a " +
-      "deposit that requests and then appears stuck. Reserved so no 4626 " +
-      "family answers for it in the meantime.",
-  ],
 ] as const) {
   registerProtocol({
     slug,
