@@ -20,6 +20,7 @@
  * deposits into the wrong leg.
  */
 
+import { CURVE_ADDRESS_PROVIDER, curveMetaRegistryId } from "./address-book";
 import { candidateAddressForPool } from "./candidates/registry";
 import type {
   Address,
@@ -121,6 +122,80 @@ async function isOwnLpToken(
   }
 }
 
+const METAREGISTRY_ABI = [
+  {
+    name: "get_address",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ type: "uint256" }],
+    outputs: [{ type: "address" }],
+  },
+  {
+    name: "get_lp_token",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "pool", type: "address" }],
+    outputs: [{ type: "address" }],
+  },
+] as const;
+
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+/**
+ * Curve's own MetaRegistry answer for "what is this pool's LP token" —
+ * authoritative because it is the SAME registry `CurvePoolCandidateSource`
+ * already trusts to find the pool in the first place (§11.6), reached through
+ * the same pinned `AddressProvider` (deterministic on every chain Curve
+ * deploys to) and the same per-chain MetaRegistry slot the drift spec checks.
+ *
+ * `null` on any chain without a reviewed MetaRegistry slot, any AddressProvider
+ * miss, or an LP token with no code — every one of those degrades the pool to
+ * Manual rather than trusting an unreviewed answer.
+ */
+export /**
+ * Typed to just the one method this needs, rather than the full
+ * `EvmReadClient` — viem's concrete `PublicClient` (what the Layer-1
+ * validator passes) and the resolver's structural `EvmReadClient` disagree on
+ * `multicall`'s return shape, and this function never calls `multicall`.
+ */
+interface ReadContractClient {
+  readContract(args: {
+    address: Address;
+    abi: readonly unknown[];
+    functionName: string;
+    args?: readonly unknown[];
+  }): Promise<unknown>;
+}
+
+export async function metaRegistryLpToken(
+  client: ReadContractClient,
+  chainId: number,
+  pool: Address,
+): Promise<Address | null> {
+  const metaRegistryId = curveMetaRegistryId(chainId);
+  if (metaRegistryId === null) return null;
+  try {
+    const metaRegistry = (await client.readContract({
+      address: CURVE_ADDRESS_PROVIDER,
+      abi: METAREGISTRY_ABI,
+      functionName: "get_address",
+      args: [BigInt(metaRegistryId)],
+    })) as Address;
+    if (!metaRegistry || eqAddr(metaRegistry, ZERO_ADDRESS)) return null;
+
+    const lpToken = (await client.readContract({
+      address: metaRegistry.toLowerCase() as Address,
+      abi: METAREGISTRY_ABI,
+      functionName: "get_lp_token",
+      args: [pool],
+    })) as Address;
+    if (!lpToken || eqAddr(lpToken, ZERO_ADDRESS)) return null;
+    return lpToken.toLowerCase() as Address;
+  } catch {
+    return null;
+  }
+}
+
 async function readCoins(
   client: EvmReadClient,
   pool: Address,
@@ -213,19 +288,23 @@ export const CurveResolver: PoolTargetResolver = {
     const isNg = await detectIsNg(client, poolAddress, index);
     if (isNg === null) return null;
 
-    // The pool must BE its own LP token.
+    // Is the pool its own LP token (NG), or does it mint a separate ERC-20
+    // (classic — 3pool and its lineage)? Both are supported; only the SOURCE
+    // of the receipt address differs.
     //
-    // `curveLp.ts:lpTokenOf` returns `target.pool`, which holds for Curve's NG
-    // generation and is false for the classic pools — 3pool's LP token is a
-    // separate ERC-20. The union carries no `lpToken`, so a classic pool would
-    // resolve fine and then read the user's balance off the wrong contract,
-    // surfacing at `MAX` withdraw as an exit that cannot be built.
-    //
-    // Refusing here is the fail-closed half of the fix (§8.2): a classic pool
-    // degrades to Manual instead of badging "Deposit in-app". Supporting them
-    // properly means adding `lpToken` to the shared union, which is a change to
-    // both repos and the parity test.
-    if (!(await isOwnLpToken(client, poolAddress))) return null;
+    // Added 2026-08-21: classic pools used to refuse here outright, because
+    // the union carried no `lpToken` and every reader assumed `pool` doubled
+    // as the receipt — true for NG, false for classic, where the pool
+    // contract has no `balanceOf` at all. A guessed value would read a
+    // balance off the wrong contract and burn nothing on a `MAX` withdraw, so
+    // the fix is to fetch it from the SAME first-party registry that found the
+    // pool, never to infer or guess it.
+    let lpToken: Address | undefined;
+    if (!(await isOwnLpToken(client, poolAddress))) {
+      const found = await metaRegistryLpToken(client, chainId, poolAddress);
+      if (!found) return null; // no reviewed registry answer → fail closed
+      lpToken = found;
+    }
 
     const target: DepositTarget = {
       kind: "curve-lp",
@@ -234,6 +313,7 @@ export const CurveResolver: PoolTargetResolver = {
       index,
       nCoins: coins.length as 2 | 3 | 4,
       isNg,
+      ...(lpToken ? { lpToken } : {}),
     };
     return (await ctx.validate(target, pool)) ? target : null;
   },

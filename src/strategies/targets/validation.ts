@@ -30,6 +30,7 @@ import {
   isRouterAllowlisted,
   pinnedDestinationFor,
 } from "./address-book";
+import { metaRegistryLpToken } from "./curve.resolver";
 import { getPublicClientForChain } from "./rpc";
 import type { DepositTarget, MorphoMarketParams } from "./types";
 import {
@@ -466,7 +467,21 @@ async function validateCurveLp(
         args: [BigInt(target.nCoins)],
       })
       .catch(() => null);
-    return beyond === null;
+    if (beyond !== null) return false;
+
+    // Classic pools carry a `lpToken` distinct from `pool` (§11.6c). This is
+    // an independent RE-DERIVATION, not a trust of the resolver's own answer:
+    // the validator asks the same first-party MetaRegistry the resolver asked
+    // and requires an EXACT match, so a resolver bug or a stale cached target
+    // cannot smuggle a wrong receipt address past Layer-1. `undefined` on both
+    // sides (the common NG case) also passes, since there is nothing to
+    // re-derive.
+    if (target.lpToken) {
+      const canonical = await metaRegistryLpToken(client, chainId, target.pool);
+      if (!canonical || !eqAddr(canonical, target.lpToken)) return false;
+      if (!(await hasCode(client, target.lpToken))) return false;
+    }
+    return true;
   } catch {
     return false;
   }

@@ -78,6 +78,19 @@ export type DepositTarget =
       index: number;
       nCoins: 2 | 3 | 4;
       isNg: boolean;
+      /**
+       * The LP receipt token, when it is NOT the pool contract itself.
+       *
+       * Curve's NG generation (and every pool this family shipped with before
+       * 2026-08-21) mints its LP token AS the pool contract, so `lpToken` is
+       * absent and every reader falls back to `pool`. Classic pools (3pool and
+       * its lineage) mint a SEPARATE ERC-20 — `pool` has no `balanceOf` at
+       * all — so THIS is where a withdraw or a position read must look
+       * instead. Read from Curve's own MetaRegistry (`get_lp_token`), never
+       * guessed: a wrong value here reads a balance from the wrong contract
+       * and a `MAX` withdraw silently burns zero.
+       */
+      lpToken?: Address;
     }
   // Solidly-fork LP (Aerodrome on Base, Velodrome on OP). Deposits go through
   // the Router's `addLiquidity`; `stable` picks the invariant (§6.1).
