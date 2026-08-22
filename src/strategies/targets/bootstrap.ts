@@ -37,6 +37,7 @@ import { MorphoBlueResolver } from "./morpho-blue.resolver";
 import { NaviResolver } from "./navi.resolver";
 import { bootProtocolManifests } from "./protocol-manifest";
 import "./protocols";
+import { TIER4_CENTRIFUGE_RESOLVERS } from "./centrifuge.resolver";
 import { registerResolver } from "./registry";
 import { TIER3_ROUTER_CALL_RESOLVERS } from "./router-call.resolver";
 import { ScallopResolver } from "./scallop.resolver";
@@ -171,17 +172,23 @@ export function bootTargetResolvers(): void {
   // `/poolsOld` in practice: sources are consulted in registration order.
   bootProtocolManifests();
 
-  // ── Tier 4 — ERC-7540 async vaults. Deliberately NO resolver. ────────────
-  // §7 is explicit: do not register an `async-vault` resolver until the
-  // two-phase request/claim interface ships. Badging an async pool "Deposit
-  // in-app" before then produces a deposit that requests and then appears
-  // stuck. The kind, its validator and the adapter's optional two-phase
-  // methods all exist; only the resolver is withheld.
-  //
-  // Convex / Aura (§6.3) are withheld for the same reason: boosting is a
-  // two-leg flow (acquire the Curve/Balancer LP, then stake it) that
-  // `UnsignedCall`'s one-shot model cannot express, and §8.1 assigns them no
-  // validator. They ship on the Tier-4 two-phase machinery, not before.
+  // ── Tier 4 — ERC-7540 async vaults. ──────────────────────────────────────
+  // §7's condition for registering an `async-vault` resolver ("the two-phase
+  // request/claim interface ships") is now met: `StrategyPosition.asyncPhase`
+  // is persisted at request time, `async-claim-watcher.processor.ts` polls
+  // and notifies, and `defi_claim` (mobile) has a wired path to actually
+  // claim once a position is claimable. Centrifuge is the first protocol —
+  // discovered via its own GraphQL API, validated the same way every other
+  // EVM kind is (§8.1: no `default: true`).
+  registerGated("tier4", TIER4_CENTRIFUGE_RESOLVERS);
+
+  // Convex / Aura (§6.3) are STILL withheld, and for a different reason than
+  // async vaults were: boosting is a two-leg flow (acquire the Curve/Balancer
+  // LP, then stake it) that `UnsignedCall`'s one-shot model cannot express at
+  // all, request/claim or otherwise. §8.1 assigns them no validator. This is
+  // not "the same machinery, not shipped yet" — it needs a genuinely
+  // different multi-call primitive that async-vault's landing does not
+  // provide.
 
   booted = true;
 }

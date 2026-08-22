@@ -101,8 +101,14 @@ if (!options.respectFlags) {
   process.env.FEATURE_DEFI_EVM_TIER1 = "true";
   process.env.FEATURE_DEFI_EVM_TIER2 = "true";
   process.env.FEATURE_DEFI_EVM_TIER3 = "true";
-  // Tier 4 stays off: §7 withholds the async-vault resolver entirely, so
-  // forcing the flag would register nothing anyway and imply otherwise.
+  // Tier 4 forced on 2026-08-22: §7's condition ("the two-phase request/claim
+  // interface ships") is met and Centrifuge is registered under it. Leaving
+  // this off silently reproduced the EXACT failure this tool exists to catch
+  // — every centrifuge-protocol pool read as an ordinary refusal, indistinguishable
+  // from a real one, when the actual cause was "no resolver was registered at
+  // all" (found 2026-08-22 debugging a resolver that resolved correctly in
+  // isolation but showed 0/18 through this script).
+  process.env.FEATURE_DEFI_EVM_TIER4 = "true";
 }
 
 /**

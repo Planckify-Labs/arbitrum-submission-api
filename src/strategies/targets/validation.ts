@@ -30,6 +30,7 @@ import {
   isRouterAllowlisted,
   pinnedDestinationFor,
 } from "./address-book";
+import { isLinkedOnChain } from "./centrifuge.resolver";
 import { metaRegistryLpToken } from "./curve.resolver";
 import { getPublicClientForChain } from "./rpc";
 import type { DepositTarget, MorphoMarketParams } from "./types";
@@ -669,7 +670,20 @@ async function validateAsyncVault(
       abi: ERC4626_ABI,
       functionName: "asset",
     });
-    return eqAddr(asset, target.asset);
+    if (!eqAddr(asset, target.asset)) return false;
+
+    // Centrifuge-specific, and harmless for any future ERC-7540 protocol
+    // that has no such registry: `isLinkedOnChain` is scoped to the ONE
+    // pinned `CENTRIFUGE_VAULT_REGISTRY` address, so a vault from a
+    // different protocol simply gets a `false` read (registry does not
+    // recognise it) rather than a wrong answer. Independent re-derivation
+    // of what the resolver already checked, not a trust of its claim — the
+    // same pattern Curve's `lpToken` re-check follows: their own indexer
+    // (verified 2026-08-22) lists superseded vault contracts alongside the
+    // live one with nothing in the API response distinguishing them, and
+    // `supportsInterface`/`asset()` both pass on a superseded vault too, so
+    // without this a stale vault would validate cleanly.
+    return await isLinkedOnChain(client, target.vault);
   } catch {
     return false;
   }

@@ -19,6 +19,26 @@
 import type { Address } from "../types";
 
 /**
+ * Centrifuge's `VaultRegistry` — the same address on every chain their CREATE3
+ * deployment system reaches (deployed 2026, verified against
+ * `centrifuge/protocol`'s own `env/{ethereum,base,arbitrum}.json`, all three
+ * pointing at this address, and cross-checked against `root()` read on each
+ * chain matching the config's `root` entry).
+ *
+ * `isLinked(vault)` is the disambiguator a naive read of Centrifuge's own
+ * GraphQL API cannot give you: their indexer's `vaults` query returns
+ * SUPERSEDED vault contracts alongside the current one for the same
+ * (pool, share class, asset) — verified 2026-08-22, Ethereum "JTRSY deRWA"
+ * has two entries sharing an identical `manager()`/`root()`/`poolId()`/
+ * `scId()`/`totalAssets()`, and only one answers `isLinked == true` on this
+ * registry. A resolver trusting the API list alone would non-deterministically
+ * pick either one — `VaultRegistry` is the source that actually knows which
+ * is live.
+ */
+export const CENTRIFUGE_VAULT_REGISTRY =
+  "0xd9531AC47928c3386346f82d9A2478960bf2CA7B" as Address;
+
+/**
  * Multicall3 — the same deterministic deployment on essentially every EVM
  * chain. Only ever used to BATCH read calls, so unlike the other entries here
  * it can never be a `tx.to`; it is pinned anyway because a wrong address would

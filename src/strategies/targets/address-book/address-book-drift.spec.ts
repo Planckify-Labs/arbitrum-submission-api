@@ -72,6 +72,7 @@ import {
   FEED_STALENESS_FACTOR,
   MORPHO_CHAINLINK_ORACLE_FACTORIES,
 } from "./oracles";
+import { CENTRIFUGE_VAULT_REGISTRY } from "./registries";
 
 /**
  * `DRIFT_CHECKS=1` turns on every drift check at once (this one plus
@@ -101,6 +102,7 @@ const ABI = parseAbi([
   "function description() view returns (string)",
   "function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)",
   "function isMorphoChainlinkOracleV2(address) view returns (bool)",
+  "function spoke() view returns (address)",
 ]);
 
 type Client = ReturnType<typeof createPublicClient>;
@@ -630,6 +632,35 @@ async function checkOracleProvenance(): Promise<void> {
   );
 }
 
+/**
+ * Centrifuge's `VaultRegistry` — cross-checked against `spoke()`, its own
+ * on-chain reference to the deployment it belongs to, matching
+ * `centrifuge/protocol`'s `env/ethereum.json`. This is the SAME pattern
+ * `checkSolidly`/`checkUniswap` use (router reports its own factory): ask the
+ * pinned contract a question only the genuine deployment answers correctly,
+ * rather than trusting that an address with code is the right address.
+ */
+const CENTRIFUGE_SPOKE = "0xEC3582fcDc34078a4B7a8c75a5a3AE46f48525aB";
+
+async function checkCentrifuge(): Promise<void> {
+  await forEachChain([1, 8453, 42161], async (client, chainId) => {
+    const what = `centrifuge chain=${chainId}`;
+    if (!(await requireCode(client, chainId, CENTRIFUGE_VAULT_REGISTRY, what)))
+      return;
+    const spoke = await read<string>(
+      client,
+      CENTRIFUGE_VAULT_REGISTRY,
+      "spoke",
+    );
+    if (!sameAddress(spoke, CENTRIFUGE_SPOKE)) {
+      fail(
+        what,
+        `registry ${CENTRIFUGE_VAULT_REGISTRY} reports spoke ${spoke ?? "<unreadable>"} but the book pins ${CENTRIFUGE_SPOKE}`,
+      );
+    }
+  });
+}
+
 const maybeDescribe = ENABLED ? describe : describe.skip;
 
 maybeDescribe("address book — on-chain drift", () => {
@@ -641,6 +672,7 @@ maybeDescribe("address book — on-chain drift", () => {
     await checkSolidly();
     await checkUniswap();
     await checkBalancer();
+    await checkCentrifuge();
     await checkCurveAndPendle();
     await checkLstVenues();
     await checkOracleProvenance();
