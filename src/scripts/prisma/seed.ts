@@ -750,21 +750,6 @@ async function main() {
       },
     }),
     prisma.blockchain.upsert({
-      where: { chainId: 4202 },
-      update: {
-        rpcUrl: "/evm/4202",
-      },
-      create: {
-        name: "Lisk",
-        chainId: 4202,
-        rpcUrl: "/evm/4202",
-        blockExplorer: "https://sepolia-blockscout.lisk.com",
-        type: "EVM",
-        isActive: true,
-        isTestnet: true,
-      },
-    }),
-    prisma.blockchain.upsert({
       where: { chainId: 421614 },
       update: {
         rpcUrl: "/evm/421614",
@@ -804,6 +789,48 @@ async function main() {
         chainId: 42161,
         rpcUrl: "/evm/42161",
         blockExplorer: "https://arbiscan.io",
+        type: "EVM",
+        isActive: true,
+        isTestnet: false,
+      },
+    }),
+    // BSC — keyed by chainId 56 (evmChain()). Named "BSC", not "BNB Smart
+    // Chain": DeFiLlama's own pool `chain` field says "BSC" (confirmed live
+    // in OpportunityCache 2026-08-22), and chain-directory.ts's `byName`
+    // lookup normalises on the row's bare `name` — matching the external
+    // catalog directly avoids needing a `STRATEGIES_CHAIN_ALIASES` entry, the
+    // same reasoning the "Base" (not "Base Mainnet") row already documents.
+    // Unblocks the Venus/Benqi/Aave-v3 BSC resolvers, which were already
+    // pinned and drift-verified but never ran because no chain row existed
+    // (see docs/runbooks/defi-manual-reasons-reference.md §5).
+    prisma.blockchain.upsert({
+      where: { chainId: 56 },
+      update: {
+        rpcUrl: "/evm/56",
+      },
+      create: {
+        name: "BSC",
+        chainId: 56,
+        rpcUrl: "/evm/56",
+        blockExplorer: "https://bscscan.com",
+        type: "EVM",
+        isActive: true,
+        isTestnet: false,
+      },
+    }),
+    // Avalanche C-Chain — keyed by chainId 43114 (evmChain()). Same
+    // seed-driven-DeFi rationale as BSC above; DeFiLlama's `chain` field is
+    // "Avalanche", matching this row's bare name.
+    prisma.blockchain.upsert({
+      where: { chainId: 43114 },
+      update: {
+        rpcUrl: "/evm/43114",
+      },
+      create: {
+        name: "Avalanche",
+        chainId: 43114,
+        rpcUrl: "/evm/43114",
+        blockExplorer: "https://snowtrace.io",
         type: "EVM",
         isActive: true,
         isTestnet: false,
@@ -1079,19 +1106,6 @@ async function main() {
         type: "payment",
         blockchainId: evmChain(11155111).id, // Ethereum Sepolia
         address: "0xf64BA8EEBD3f9e268bC1989Af0dde77ab2418779",
-        isActive: true,
-      },
-    }),
-    // takumi_pay on Lisk
-    prisma.smartContract.upsert({
-      where: { id: "smart-contract-payment-lisk" },
-      update: {},
-      create: {
-        id: "smart-contract-payment-lisk",
-        name: "takumi_pay",
-        type: "payment",
-        blockchainId: evmChain(4202).id, // Lisk
-        address: "0x39EDabDd022C39B6cfeB3161Ac77c439F325D6a0",
         isActive: true,
       },
     }),
@@ -1841,37 +1855,6 @@ async function main() {
         peggedCurrency: "USD",
       },
     }),
-    // IDRX on Lisk
-    prisma.token.upsert({
-      where: {
-        blockchainId_contractAddress: {
-          blockchainId: evmChain(4202).id,
-          contractAddress: "0x53080Db01Ca5C60A36B6eE01436C2f300a31d16A",
-        },
-      },
-      update: {
-        name: "IDRX Stablecoin",
-        symbol: "IDRX",
-        decimals: 2,
-        logoUrl:
-          "https://assets.coingecko.com/coins/images/34630/large/idrx.png",
-        isStablecoin: true,
-        isActive: true,
-        peggedCurrency: "IDR",
-      },
-      create: {
-        name: "IDRX Stablecoin",
-        symbol: "IDRX",
-        decimals: 2,
-        blockchainId: evmChain(4202).id, // Lisk
-        contractAddress: "0x53080Db01Ca5C60A36B6eE01436C2f300a31d16A",
-        logoUrl:
-          "https://assets.coingecko.com/coins/images/34630/large/idrx.png",
-        isStablecoin: true,
-        isActive: true,
-        peggedCurrency: "IDR",
-      },
-    }),
     // IDRX on Base
     prisma.token.upsert({
       where: {
@@ -2094,35 +2077,6 @@ async function main() {
         contractAddress: "0x0000000000000000000000000000000000000002",
         logoUrl:
           "https://assets.coingecko.com/coins/images/279/small/ethereum.png",
-        isStablecoin: false,
-        isNativeCurrency: true,
-        isActive: true,
-      },
-    }),
-    // ETH on Lisk
-    prisma.token.upsert({
-      where: {
-        blockchainId_contractAddress: {
-          blockchainId: evmChain(4202).id,
-          contractAddress: "0x0000000000000000000000000000000000000003",
-        },
-      },
-      update: {
-        name: "Lisk",
-        symbol: "ETH",
-        decimals: 18,
-        logoUrl: "https://avatars.githubusercontent.com/u/16600915?s=200&v=4",
-        isStablecoin: false,
-        isNativeCurrency: true,
-        isActive: true,
-      },
-      create: {
-        name: "Lisk",
-        symbol: "ETH",
-        decimals: 18,
-        blockchainId: evmChain(4202).id, // Lisk
-        contractAddress: "0x0000000000000000000000000000000000000003",
-        logoUrl: "https://avatars.githubusercontent.com/u/16600915?s=200&v=4",
         isStablecoin: false,
         isNativeCurrency: true,
         isActive: true,
@@ -2532,6 +2486,48 @@ async function main() {
         isActive: true,
       },
     });
+  }
+
+  // BNB on BSC / AVAX on Avalanche — native currencies, no contract address.
+  // Same (blockchainId, isNativeCurrency) identification as MON on Monad
+  // above, for the same reason (Postgres allows multiple null-contractAddress
+  // rows per blockchain, so the compound-unique upsert path can't target
+  // this row). logoUrl/symbol/decimals verified against CoinGecko's own API
+  // (`/coins/binancecoin`, `/coins/avalanche-2`) 2026-08-22, not guessed.
+  for (const [chainId, name, symbol, logoUrl] of [
+    [
+      56,
+      "BNB",
+      "BNB",
+      "https://coin-images.coingecko.com/coins/images/825/small/bnb-icon2_2x.png",
+    ],
+    [
+      43114,
+      "Avalanche",
+      "AVAX",
+      "https://coin-images.coingecko.com/coins/images/12559/small/Avalanche_Circle_RedWhite_Trans.png",
+    ],
+  ] as const) {
+    const nativeBlockchainId = evmChain(chainId).id;
+    const existingNative = await prisma.token.findFirst({
+      where: { blockchainId: nativeBlockchainId, isNativeCurrency: true },
+    });
+    const data = {
+      name,
+      symbol,
+      decimals: 18,
+      logoUrl,
+      isStablecoin: false,
+      isNativeCurrency: true,
+      isActive: true,
+    };
+    if (existingNative) {
+      await prisma.token.update({ where: { id: existingNative.id }, data });
+    } else {
+      await prisma.token.create({
+        data: { ...data, blockchainId: nativeBlockchainId, contractAddress: null },
+      });
+    }
   }
 
   // SUI native currency rows — `0x2::sui::SUI` is the canonical CoinType.

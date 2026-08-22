@@ -10,26 +10,20 @@
  * `underlyingTokens[0]`. Validation (§3.2) confirms the reserve is listed.
  */
 
+import { aaveForkPool } from "./address-book";
 import type { Address, DepositTarget, PoolTargetResolver } from "./types";
 import { resolveEvmChainId, underlyingOf } from "./types";
-
-// Canonical Aave v3 Pool per chain (aave-address-book). Most chains share the
-// deterministic-deploy address; Ethereum L1 and Base differ.
-const AAVE_V3_POOLS: Record<number, Address> = {
-  1: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2", // Ethereum
-  10: "0x794a61358D6845594F94dc1DB02A252b5b4814aD", // Optimism
-  137: "0x794a61358D6845594F94dc1DB02A252b5b4814aD", // Polygon
-  8453: "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5", // Base
-  42161: "0x794a61358D6845594F94dc1DB02A252b5b4814aD", // Arbitrum
-  43114: "0x794a61358D6845594F94dc1DB02A252b5b4814aD", // Avalanche
-};
 
 export const AaveResolver: PoolTargetResolver = {
   family: "aave",
   aliases: ["aave-v3", "aave", "aave-v2"],
   async resolve(pool, ctx): Promise<DepositTarget | null> {
     const chainId = resolveEvmChainId(pool.chain);
-    const poolAddr = AAVE_V3_POOLS[chainId];
+    // `AAVE_FORK_POOL_BOOKS.aave` — one address book, shared with
+    // aave-fork.resolver.ts, so canonical Aave and its forks can never drift
+    // out of sync the way this file's own hand-copied Pool map once did (it
+    // was missing BSC entirely — see docs/runbooks/defi-manual-reasons-reference.md).
+    const poolAddr = aaveForkPool("aave", chainId);
     if (!poolAddr) return null;
     const underlying = underlyingOf(pool);
     if (!underlying) return null;

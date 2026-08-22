@@ -163,6 +163,17 @@ export const LST_VENUES: readonly LstVenue[] = [
     exit: "dex", // redemption is CEX-side; on-chain exit is a swap
     externalSlugs: ["binance-staked-eth", "wbeth"],
     displayName: "Binance Staked ETH",
+    // No BSC entry, deliberately: DeFiLlama's own adaptor
+    // (yield-server/src/adaptors/binance-staked-eth/index.js) reads WBETH's
+    // totalSupply on BSC at this SAME address (0xa2E3…E2e1 — confirmed on
+    // chain 2026-08-22, real contract, real exchangeRate()), but the
+    // `deposit(address)` mint is not open there: an eth_call with a valid
+    // non-zero referral + real msg.value that succeeds cleanly on Ethereum
+    // (empty 0x return) bare-reverts on BSC with no reason string, from a
+    // funded caller. `findLstVenuesForProject` already keys on (project,
+    // chainId), so a BSC `binance-staked-eth` pool correctly finds no venue
+    // and stays Manual without needing anything added here — this note exists
+    // so the closed mint isn't rediscovered as "just needs a BSC venue row."
   },
   {
     // Lido — the largest single pool in the whole catalog (~$23B) and, until
