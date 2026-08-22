@@ -107,6 +107,11 @@ const SOLIDLY_POOL_ABI = parseAbi([
   "function stable() view returns (bool)",
 ]);
 
+const UNISWAP_V2_PAIR_ABI = parseAbi([
+  "function token0() view returns (address)",
+  "function token1() view returns (address)",
+]);
+
 const BALANCER_VAULT_ABI = parseAbi([
   "function getPoolTokens(bytes32 poolId) view returns (address[] tokens, uint256[] balances, uint256 lastChangeBlock)",
 ]);
@@ -167,11 +172,13 @@ function passesSingletonAllowlist(
         ? target.comet
         : target.kind === "solidly-lp"
           ? target.router
-          : target.kind === "balancer-lp"
-            ? target.vault
-            : target.kind === "router-call"
-              ? undefined // checked per-quote at build time (§6 guardrail 2)
-              : undefined;
+          : target.kind === "uniswap-v2"
+            ? target.router
+            : target.kind === "balancer-lp"
+              ? target.vault
+              : target.kind === "router-call"
+                ? undefined // checked per-quote at build time (§6 guardrail 2)
+                : undefined;
   if (target.kind === "router-call") return true;
   if (target.kind === "morpho-blue") return true; // `to` is the pinned singleton
   return pinned.some((a) => eqAddr(a, destination));
@@ -525,6 +532,38 @@ async function validateSolidlyLp(
   }
 }
 
+/**
+ * Uniswap v2: the pair must actually report these two legs. No `stable` check
+ * — unlike Solidly, a v2 pair has no invariant choice to confirm.
+ */
+async function validateUniswapV2(
+  target: Extract<DepositTarget, { kind: "uniswap-v2" }>,
+  pool: DeFiLlamaYieldPool,
+): Promise<boolean> {
+  const chainId = resolveEvmChainId(pool.chain);
+  const client = getPublicClientForChain(chainId);
+  if (!client) return false;
+  try {
+    if (!(await hasCode(client, target.pool))) return false;
+    if (!(await hasCode(client, target.router))) return false;
+    const [token0, token1] = await Promise.all([
+      client.readContract({
+        address: target.pool,
+        abi: UNISWAP_V2_PAIR_ABI,
+        functionName: "token0",
+      }),
+      client.readContract({
+        address: target.pool,
+        abi: UNISWAP_V2_PAIR_ABI,
+        functionName: "token1",
+      }),
+    ]);
+    return eqAddr(token0, target.token0) && eqAddr(token1, target.token1);
+  } catch {
+    return false;
+  }
+}
+
 /** Balancer: the Vault must know this poolId, and the pool must hold the asset. */
 async function validateBalancerLp(
   target: Extract<DepositTarget, { kind: "balancer-lp" }>,
@@ -673,6 +712,8 @@ export async function validateTarget(
       return await validateCurveLp(target, pool);
     case "solidly-lp":
       return await validateSolidlyLp(target, pool);
+    case "uniswap-v2":
+      return await validateUniswapV2(target, pool);
     case "balancer-lp":
       return await validateBalancerLp(target, pool);
     case "lst-stake":

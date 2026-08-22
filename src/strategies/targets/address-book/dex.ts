@@ -137,6 +137,29 @@ export const SOLIDLY_DEPLOYMENTS: Readonly<Record<number, SolidlyDeployment>> =
   };
 
 /**
+ * Uniswap v2 (§6.1-adjacent — the family Solidly forked FROM, minus the
+ * `stable` invariant choice: every v2 pool is constant-product).
+ *
+ * Router provenance is self-consistent rather than two separately memorized
+ * constants: `router.factory()` was read on chain 2026-08-22 and returns
+ * exactly this factory address, so pinning the router is enough — the factory
+ * is derived from it, not trusted independently.
+ */
+export interface UniswapV2Deployment {
+  readonly router: Address;
+  readonly factory: Address;
+}
+
+export const UNISWAP_V2_DEPLOYMENTS: Readonly<
+  Record<number, UniswapV2Deployment>
+> = {
+  1: {
+    router: "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+    factory: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+  },
+};
+
+/**
  * Balancer Vaults (§6.2). v3 introduced a new Vault + Router; v2 (which Beets
  * and most existing pools still use) keeps the long-standing singleton.
  */

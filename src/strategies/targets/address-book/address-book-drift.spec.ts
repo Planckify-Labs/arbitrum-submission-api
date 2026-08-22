@@ -60,6 +60,7 @@ import {
   PENDLE_ROUTER,
   PENDLE_ROUTER_CHAINS,
   SOLIDLY_DEPLOYMENTS,
+  UNISWAP_V2_DEPLOYMENTS,
   UNISWAP_V3_POSITION_MANAGERS,
   UNISWAP_V4_POSITION_MANAGERS,
 } from "./dex";
@@ -394,6 +395,21 @@ async function checkUniswap(): Promise<void> {
         fail(
           what,
           `${pm} does not expose poolManager() — not a v4 PositionManager`,
+        );
+      }
+    },
+  );
+  await forEachChain(
+    Object.keys(UNISWAP_V2_DEPLOYMENTS).map(Number),
+    async (client, chainId) => {
+      const dep = UNISWAP_V2_DEPLOYMENTS[chainId];
+      const what = `uniswap-v2 chain=${chainId}`;
+      if (!(await requireCode(client, chainId, dep.router, what))) return;
+      const reported = await read<string>(client, dep.router, "factory");
+      if (!sameAddress(reported, dep.factory)) {
+        fail(
+          what,
+          `router ${dep.router} reports factory ${reported ?? "<unreadable>"} but the book pins ${dep.factory}`,
         );
       }
     },

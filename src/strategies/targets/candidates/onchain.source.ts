@@ -24,11 +24,12 @@ import type { DeFiLlamaYieldPool } from "../../external/defillama.client";
 import {
   COMPOUND_V2_COMPTROLLERS,
   CURVE_ADDRESS_PROVIDER,
-  curveMetaRegistryId,
   EULER_VAULT_FACTORIES,
   FLUID_LENDING_RESOLVERS,
   MULTICALL3,
+  curveMetaRegistryId,
   solidlyDeployment,
+  uniswapV2Deployment,
 } from "../address-book";
 import type { Address, EvmReadClient, ResolverContext } from "../types";
 import { eqAddr, resolveEvmChainId, underlyingOf } from "../types";
@@ -95,6 +96,16 @@ const CURVE_ABI = [
   },
   {
     name: "find_pool_for_coins",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ type: "address" }, { type: "address" }],
+    outputs: [{ type: "address" }],
+  },
+] as const;
+
+const UNISWAP_V2_FACTORY_ABI = [
+  {
+    name: "getPair",
     type: "function",
     stateMutability: "view",
     inputs: [{ type: "address" }, { type: "address" }],
@@ -408,6 +419,40 @@ export const SolidlyPoolCandidateSource: CandidateSource = {
   },
 };
 
+// ── Uniswap v2 — the factory computes the pair deterministically ───────────
+
+/**
+ * A Uniswap v2 pair is a deterministic function of `(token0, token1)` — no
+ * stability choice, unlike Solidly, since every v2 pool is constant-product.
+ * `getPair` returning the zero address means the factory never deployed one
+ * for this token pair, which degrades to Manual rather than guessing.
+ */
+export const UniswapV2PairCandidateSource: CandidateSource = {
+  id: "uniswap-v2-factory",
+  projects: ["uniswap-v2"],
+  async candidate(pool, ctx) {
+    const chainId = resolveEvmChainId(pool.chain);
+    const deployment = uniswapV2Deployment(chainId);
+    const client = ctx.publicClient?.(chainId);
+    if (!deployment || !client) return null;
+
+    const tokens = (pool.underlyingTokens ?? []).filter(
+      (t): t is string => typeof t === "string" && t.startsWith("0x"),
+    );
+    if (tokens.length < 2) return null;
+
+    const address = await read<string>(
+      client,
+      deployment.factory,
+      UNISWAP_V2_FACTORY_ABI,
+      "getPair",
+      [tokens[0], tokens[1]],
+    );
+    if (!address || address.toLowerCase() === ZERO) return null;
+    return address.toLowerCase() as Address;
+  },
+};
+
 // ── Compound-v2 forks — Comptroller.getAllMarkets() ─────────────────────────
 
 const COMPTROLLER_ABI = [
@@ -514,4 +559,5 @@ export const ONCHAIN_CANDIDATE_SOURCES: readonly CandidateSource[] = [
   FluidVaultCandidateSource,
   CurvePoolCandidateSource,
   SolidlyPoolCandidateSource,
+  UniswapV2PairCandidateSource,
 ];

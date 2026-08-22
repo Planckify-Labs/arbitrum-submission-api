@@ -43,6 +43,7 @@ import { ScallopResolver } from "./scallop.resolver";
 import { TIER3_SOLIDLY_RESOLVERS } from "./solidly.resolver";
 import { SuiLstResolver } from "./suilst.resolver";
 import type { PoolTargetResolver } from "./types";
+import { TIER3_UNISWAP_V2_RESOLVERS } from "./uniswap-v2.resolver";
 // SuilendResolver is implemented but NOT registered: Suilend's deposit AND
 // withdraw both assert a fresh reserve price (abort code 1), which needs a Pyth
 // pull-oracle push in-tx — deferred (see suilend.resolver.ts / suilendSui.ts).
@@ -144,6 +145,7 @@ export function bootTargetResolvers(): void {
     TIER3_ROUTER_CALL_RESOLVERS.filter((r) => r.family === "pendle"),
   );
   registerGated("tier3", TIER3_SOLIDLY_RESOLVERS);
+  registerGated("tier3", TIER3_UNISWAP_V2_RESOLVERS);
   registerGated("tier3", [LstStakeResolver]);
   // Balancer v2 / Beets — `BalancerQueries` is now pinned per chain
   // (address-book/dex.ts, verified against `balancer/balancer-deployments`,

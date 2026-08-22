@@ -20,6 +20,7 @@ import {
   PENDLE_ROUTER,
   PENDLE_ROUTER_CHAINS,
   SOLIDLY_DEPLOYMENTS,
+  UNISWAP_V2_DEPLOYMENTS,
   UNISWAP_V3_POSITION_MANAGERS,
   UNISWAP_V4_POSITION_MANAGERS,
 } from "./dex";
@@ -88,6 +89,10 @@ export function morphoSingleton(chainId: number): Address | null {
 
 export function solidlyDeployment(chainId: number) {
   return SOLIDLY_DEPLOYMENTS[chainId] ?? null;
+}
+
+export function uniswapV2Deployment(chainId: number) {
+  return UNISWAP_V2_DEPLOYMENTS[chainId] ?? null;
 }
 
 /**
@@ -185,6 +190,10 @@ export function pinnedDestinationFor(
     }
     case "solidly-lp": {
       const dep = solidlyDeployment(chainId);
+      return dep ? [dep.router] : [];
+    }
+    case "uniswap-v2": {
+      const dep = uniswapV2Deployment(chainId);
       return dep ? [dep.router] : [];
     }
     case "balancer-lp":

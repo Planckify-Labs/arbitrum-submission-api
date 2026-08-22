@@ -102,6 +102,15 @@ export type DepositTarget =
       token1: Address;
       stable: boolean;
     }
+  // Uniswap v2 pairs (§6.1-adjacent). No `stable` field — every v2 pool is
+  // constant-product, unlike its Solidly descendants.
+  | {
+      kind: "uniswap-v2";
+      router: Address;
+      pool: Address;
+      token0: Address;
+      token1: Address;
+    }
   // Balancer v3 / Beets. `poolId` is the Vault registration id; `asset` is the
   // single token joined with (§6.2).
   | { kind: "balancer-lp"; vault: Address; poolId: Hex; asset: Address }
@@ -187,6 +196,7 @@ export const EVM_TARGET_KINDS = [
   "compound-v2",
   "curve-lp",
   "solidly-lp",
+  "uniswap-v2",
   "balancer-lp",
   "lst-stake",
   "router-call",
