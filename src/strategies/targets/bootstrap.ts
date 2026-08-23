@@ -37,6 +37,10 @@ import { MorphoResolver, YearnResolver } from "./erc4626.resolver";
 import { familyEnabled, isFamilyKilled } from "./feature-flags";
 import { JupiterLendResolver } from "./jupiter-lend.resolver";
 import { KaiResolver } from "./kai.resolver";
+import { KaminoKvaultResolver } from "./kamino-kvault.resolver";
+import { KaminoLendResolver } from "./kamino-lend.resolver";
+import { RaydiumAmmV4Resolver } from "./raydium-amm-v4.resolver";
+import { RaydiumCpmmResolver } from "./raydium-cpmm.resolver";
 import { LstStakeResolver } from "./lst.resolver";
 import { MorphoBlueResolver } from "./morpho-blue.resolver";
 import { NaviResolver } from "./navi.resolver";
@@ -176,6 +180,35 @@ export function bootTargetResolvers(): void {
   // refuses anything not tagged `poolMeta === "Earn"` before requesting a
   // candidate (jupiter-lend.resolver.ts's header has the measured counts).
   registerResolver(JupiterLendResolver);
+  // Solana — Kamino Lend (single-asset reserve deposits, obligation-based).
+  // Emits `{ kind: "solana-reserve" }` for the mobile KaminoLendAdapter.
+  // DeFiLlama's public `pool` field is a synthetic UUID, not the reserve
+  // address, so the resolver recovers it by joining Kamino's own API on
+  // market name + underlying mint — see kamino-lend.resolver.ts's header.
+  registerResolver(KaminoLendResolver);
+  // Solana — Kamino kvault ("Earn" share vaults). Emits
+  // `{ kind: "kamino-kvault" }` for the mobile KaminoKvaultAdapter.
+  // DeFiLlama surfaces both known instances under the multi-chain `sentora`
+  // project (not unique to Kamino) — see kamino-kvault.resolver.ts's header
+  // for why this is a pinned, poolMeta-matched venue table rather than a
+  // discovery join.
+  registerResolver(KaminoKvaultResolver);
+  // Solana — Raydium CPMM (self-contained constant-product AMM, no zap, MAX-
+  // only withdraw). Emits `{ kind: "raydium-cpmm-pool" }` for the mobile
+  // RaydiumCpmmAdapter. DeFiLlama's `raydium-amm` project also carries
+  // legacy AMM v4 and CLMM pools under the SAME slug — this resolver claims
+  // only the "Standard" CPMM ones (see raydium-cpmm.resolver.ts's header),
+  // recovering the real pool address by joining Raydium's own
+  // `/pools/info/mint` API on the pool's mint pair, same disambiguation
+  // discipline as KaminoLendResolver.
+  registerResolver(RaydiumCpmmResolver);
+  // Solana — Raydium legacy AMM v4 (OpenBook-linked, the majority of real
+  // "Standard" raydium-amm TVL). Claims the SAME `raydium-amm` alias as
+  // RaydiumCpmmResolver above — registered second on purpose, so a mint
+  // pair with BOTH a CPMM and an AMM v4 pool resolves through CPMM first
+  // (see raydium-amm-v4.resolver.ts's header for why the two don't
+  // actually compete in practice).
+  registerResolver(RaydiumAmmV4Resolver);
 
   // ── Tier 1 — widen the existing funnels. No new adapter, no new kind. ────
   // Family A (ERC-4626) first so a protocol that ships BOTH a 4626 wrapper and

@@ -325,7 +325,20 @@ export type DepositTarget =
   | { kind: "solana-lst-stake"; venue: string; poolMint: string }
   // Jupiter Lend Earn — single-asset vault family, mirrors "erc4626". Keep
   // in sync with the mobile twin in `services/defi/types.ts`.
-  | { kind: "jupiter-lend-vault"; asset: string };
+  | { kind: "jupiter-lend-vault"; asset: string }
+  // Kamino kvault ("Earn" share vaults) — the program behind DeFiLlama's
+  // `sentora` project on Solana (a multi-chain aggregator brand, NOT unique
+  // to Kamino; only its 2 Solana pools resolve here — see
+  // `kamino-kvault.resolver.ts`). `vault`/`mint` come from the pinned venue
+  // table in that resolver's config, since there is no public "list kvaults"
+  // API. Keep in sync with the mobile twin in `services/defi/types.ts`.
+  | { kind: "kamino-kvault"; vault: string; mint: string }
+  // Raydium CPMM — self-contained constant-product AMM (not legacy AMM v4,
+  // not CLMM). Keep in sync with the mobile twin in `services/defi/types.ts`.
+  | { kind: "raydium-cpmm-pool"; pool: string; mintA: string; mintB: string }
+  // Raydium legacy AMM v4 — OpenBook-market-linked constant-product. Keep in
+  // sync with the mobile twin in `services/defi/types.ts`.
+  | { kind: "raydium-amm-v4-pool"; pool: string; mintA: string; mintB: string };
 
 export type DepositTargetKind = DepositTarget["kind"];
 
