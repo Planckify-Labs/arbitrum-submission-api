@@ -338,7 +338,11 @@ export type DepositTarget =
   | { kind: "raydium-cpmm-pool"; pool: string; mintA: string; mintB: string }
   // Raydium legacy AMM v4 — OpenBook-market-linked constant-product. Keep in
   // sync with the mobile twin in `services/defi/types.ts`.
-  | { kind: "raydium-amm-v4-pool"; pool: string; mintA: string; mintB: string };
+  | { kind: "raydium-amm-v4-pool"; pool: string; mintA: string; mintB: string }
+  // Raydium legacy Stable Swap AMM (v5) — separate program from AMM v4, same
+  // instruction shape plus one extra account. Keep in sync with the mobile
+  // twin in `services/defi/types.ts`.
+  | { kind: "raydium-stable-pool"; pool: string; mintA: string; mintB: string };
 
 export type DepositTargetKind = DepositTarget["kind"];
 

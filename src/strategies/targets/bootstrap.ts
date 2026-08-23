@@ -39,12 +39,13 @@ import { JupiterLendResolver } from "./jupiter-lend.resolver";
 import { KaiResolver } from "./kai.resolver";
 import { KaminoKvaultResolver } from "./kamino-kvault.resolver";
 import { KaminoLendResolver } from "./kamino-lend.resolver";
-import { RaydiumAmmV4Resolver } from "./raydium-amm-v4.resolver";
-import { RaydiumCpmmResolver } from "./raydium-cpmm.resolver";
 import { LstStakeResolver } from "./lst.resolver";
 import { MorphoBlueResolver } from "./morpho-blue.resolver";
 import { NaviResolver } from "./navi.resolver";
 import { bootProtocolManifests } from "./protocol-manifest";
+import { RaydiumAmmV4Resolver } from "./raydium-amm-v4.resolver";
+import { RaydiumCpmmResolver } from "./raydium-cpmm.resolver";
+import { RaydiumStableResolver } from "./raydium-stable.resolver";
 import { TurbosResolver } from "./turbos.resolver";
 import "./protocols";
 import { TIER4_CENTRIFUGE_RESOLVERS } from "./centrifuge.resolver";
@@ -209,6 +210,11 @@ export function bootTargetResolvers(): void {
   // (see raydium-amm-v4.resolver.ts's header for why the two don't
   // actually compete in practice).
   registerResolver(RaydiumAmmV4Resolver);
+  // Solana — Raydium legacy Stable Swap AMM ("version 5", a program
+  // separate from AMM v4). Same `raydium-amm` alias set, registered third —
+  // the three resolvers never compete, each claims a different program id
+  // (see raydium-stable.resolver.ts's header).
+  registerResolver(RaydiumStableResolver);
 
   // ── Tier 1 — widen the existing funnels. No new adapter, no new kind. ────
   // Family A (ERC-4626) first so a protocol that ships BOTH a 4626 wrapper and
