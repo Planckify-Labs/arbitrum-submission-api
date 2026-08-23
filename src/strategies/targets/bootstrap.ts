@@ -35,6 +35,7 @@ import { EmberResolver } from "./ember.resolver";
 import { TIER1_ERC4626_RESOLVERS } from "./erc4626-family.resolver";
 import { MorphoResolver, YearnResolver } from "./erc4626.resolver";
 import { familyEnabled, isFamilyKilled } from "./feature-flags";
+import { JupiterLendResolver } from "./jupiter-lend.resolver";
 import { KaiResolver } from "./kai.resolver";
 import { LstStakeResolver } from "./lst.resolver";
 import { MorphoBlueResolver } from "./morpho-blue.resolver";
@@ -46,6 +47,7 @@ import { TIER4_CENTRIFUGE_RESOLVERS } from "./centrifuge.resolver";
 import { registerResolver } from "./registry";
 import { TIER3_ROUTER_CALL_RESOLVERS } from "./router-call.resolver";
 import { ScallopResolver } from "./scallop.resolver";
+import { SolanaLstResolver } from "./solana-lst.resolver";
 import { TIER3_SOLIDLY_RESOLVERS } from "./solidly.resolver";
 import { SuilendResolver } from "./suilend.resolver";
 import { SuiLstResolver } from "./suilst.resolver";
@@ -160,6 +162,20 @@ export function bootTargetResolvers(): void {
   // Same swap-split-zap deposit shape as Cetus/Turbos — see types.ts's
   // `bluefin-spot-pool` comment. WITHDRAW is not wired.
   registerResolver(BluefinSpotResolver);
+  // Solana — liquid staking (Jito / JupSOL / dSOL / Marinade). Emits
+  // `{ kind: "solana-lst-stake" }` for the mobile SolanaLstAdapter. These are
+  // real DeFiLlama `/pools` rows (unlike the synthesized Sui LST venues).
+  // Closes the exact Lido-shaped gap (§11.6a): Jito shipped a complete
+  // adapter since Phase 2 with no resolver ever claiming its slug, so it
+  // rendered as manual the entire time.
+  registerResolver(SolanaLstResolver);
+  // Solana — Jupiter Lend Earn (single-asset vault family, mirrors the
+  // `erc4626` shape). Emits `{ kind: "jupiter-lend-vault" }` for the mobile
+  // JupiterLendAdapter. `jupiter-lend`'s DeFiLlama rows mix Earn vaults with
+  // Borrow isolated-market rows sharing the same project slug — the resolver
+  // refuses anything not tagged `poolMeta === "Earn"` before requesting a
+  // candidate (jupiter-lend.resolver.ts's header has the measured counts).
+  registerResolver(JupiterLendResolver);
 
   // ── Tier 1 — widen the existing funnels. No new adapter, no new kind. ────
   // Family A (ERC-4626) first so a protocol that ships BOTH a 4626 wrapper and
