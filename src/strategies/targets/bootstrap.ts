@@ -39,6 +39,7 @@ import { JupiterLendResolver } from "./jupiter-lend.resolver";
 import { KaiResolver } from "./kai.resolver";
 import { KaminoKvaultResolver } from "./kamino-kvault.resolver";
 import { KaminoLendResolver } from "./kamino-lend.resolver";
+import { KaminoLiquidityResolver } from "./kamino-liquidity.resolver";
 import { LstStakeResolver } from "./lst.resolver";
 import { MorphoBlueResolver } from "./morpho-blue.resolver";
 import { NaviResolver } from "./navi.resolver";
@@ -194,6 +195,17 @@ export function bootTargetResolvers(): void {
   // for why this is a pinned, poolMeta-matched venue table rather than a
   // discovery join.
   registerResolver(KaminoKvaultResolver);
+  // Solana — Kamino kliquidity (managed CLMM vault). Emits
+  // `{ kind: "kamino-liquidity-strategy" }` for the mobile
+  // KaminoLiquidityAdapter. DeFiLlama's `poolMeta` is always null for this
+  // project, so the resolver recovers the strategy address by joining
+  // Kamino's own `/strategies` + `/strategies/metrics` APIs on the mint
+  // pair, disambiguating by nearest match to the pool's own `tvlUsd` — see
+  // kamino-liquidity.resolver.ts's header. Deliberately claims strategies on
+  // ALL underlying DEXes (Orca/Raydium/Meteora) and both share-calculation
+  // methods; the mobile adapter is what actually restricts to a verified
+  // subset, failing closed to Manual for the rest.
+  registerResolver(KaminoLiquidityResolver);
   // Solana — Raydium CPMM (self-contained constant-product AMM, no zap, MAX-
   // only withdraw). Emits `{ kind: "raydium-cpmm-pool" }` for the mobile
   // RaydiumCpmmAdapter. DeFiLlama's `raydium-amm` project also carries

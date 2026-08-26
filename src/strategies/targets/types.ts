@@ -342,7 +342,18 @@ export type DepositTarget =
   // Raydium legacy Stable Swap AMM (v5) — separate program from AMM v4, same
   // instruction shape plus one extra account. Keep in sync with the mobile
   // twin in `services/defi/types.ts`.
-  | { kind: "raydium-stable-pool"; pool: string; mintA: string; mintB: string };
+  | { kind: "raydium-stable-pool"; pool: string; mintA: string; mintB: string }
+  // Kamino kliquidity — managed CLMM vault ("yvaults" on-chain), wraps an
+  // Orca/Raydium/Meteora position. `strategy` is the on-chain
+  // WhirlpoolStrategy account; `mintA`/`mintB` mirror the strategy's own
+  // token ordering. Keep in sync with the mobile twin in
+  // `services/defi/types.ts`.
+  | {
+      kind: "kamino-liquidity-strategy";
+      strategy: string;
+      mintA: string;
+      mintB: string;
+    };
 
 export type DepositTargetKind = DepositTarget["kind"];
 
