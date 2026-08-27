@@ -18,8 +18,13 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { AssetPricesRequestDto } from "./dto/asset-prices.dto";
 import { CreateStrategyDto } from "./dto/create-strategy.dto";
 import { CrossChainQuoteDto } from "./dto/cross-chain-quote.dto";
+import {
+  CreateRecurringInvestPlanDto,
+  UpdateRecurringInvestPlanDto,
+} from "./dto/recurring-invest.dto";
 import { UpdateStrategyDto } from "./dto/update-strategy.dto";
 import { DefiError, DefiErrorFilter } from "./errors/defi-error";
+import { RecurringInvestService } from "./recurring-invest.service";
 import { RouterQuoteError, RouterQuoteService } from "./router-quote.service";
 import { StrategiesService } from "./strategies.service";
 
@@ -38,6 +43,7 @@ export class StrategiesController {
   constructor(
     private readonly strategiesService: StrategiesService,
     private readonly routerQuoteService: RouterQuoteService,
+    private readonly recurringInvestService: RecurringInvestService,
   ) {}
 
   private getWalletAddress(req: AuthedRequest): string {
@@ -141,6 +147,61 @@ export class StrategiesController {
   })
   getProtocols(@Query("tier") tier?: string) {
     return this.strategiesService.getProtocols(tier);
+  }
+
+  // ── Recurring investment plans (DCA v1, mobile-app
+  //    docs/defi-quick-invest-spec.md §12) ─────────────────────────────
+  //
+  // The plan's owner is NEVER a request field. It comes from the JWT via
+  // `getWalletAddress(req)`, exactly like every other wallet-scoped
+  // endpoint on this controller, so a caller cannot supply a wrongly-cased
+  // address because a caller cannot supply an address at all (§12.3a
+  // Rule 1). Grepping these DTOs for a wallet field is an automatic fail.
+
+  @Get("recurring-invest")
+  @ApiOperation({
+    summary:
+      "List the caller's recurring investment plans. Each row reports both the plan's tier and the tier that will actually be applied, so a saved risk profile can never override a plan silently.",
+  })
+  listRecurringInvestPlans(@Request() req: AuthedRequest) {
+    return this.recurringInvestService.listPlans(this.getWalletAddress(req));
+  }
+
+  @Post("recurring-invest")
+  @ApiOperation({
+    summary:
+      "Create or replace a recurring investment plan. Sets up a reminder only: on each cycle the server nudges, the user taps once, and the user's own key signs. No signing authority is created or stored.",
+  })
+  createRecurringInvestPlan(
+    @Request() req: AuthedRequest,
+    @Body() dto: CreateRecurringInvestPlanDto,
+  ) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new DefiError("unauthorized", "User ID missing from JWT");
+    }
+    return this.recurringInvestService.createPlan(
+      userId,
+      this.getWalletAddress(req),
+      dto,
+    );
+  }
+
+  @Patch("recurring-invest/:id")
+  @ApiOperation({
+    summary:
+      "Pause, resume, or cancel one of the caller's recurring plans. Cancelling is terminal.",
+  })
+  updateRecurringInvestPlan(
+    @Request() req: AuthedRequest,
+    @Param("id") id: string,
+    @Body() dto: UpdateRecurringInvestPlanDto,
+  ) {
+    return this.recurringInvestService.updateStatus(
+      this.getWalletAddress(req),
+      id,
+      dto,
+    );
   }
 
   @Post("asset-prices")

@@ -33,6 +33,16 @@ const CHAIN_ID_BY_ZERION_ID: Record<string, number> = {
   "binance-smart-chain": 56,
 };
 
+/**
+ * Risk tiers, safest first. Order is the whole point: a user's tier is the
+ * HIGHEST risk they accept, so everything at or below it is eligible.
+ */
+const TIER_LADDER: readonly string[] = [
+  "conservative",
+  "balanced",
+  "aggressive",
+];
+
 export interface AssetPriceQuery {
   chainId: number;
   assetSymbol: string;
@@ -288,8 +298,28 @@ export class StrategiesService {
       );
     }
 
+    // Risk tier is a CEILING, not an equality test.
+    //
+    // This used to be `where.tier = effectiveTier`, which excluded anything
+    // SAFER than the user asked for. An aggressive profile was therefore
+    // shown zero USDT options on Arbitrum while two `balanced` USDT pools
+    // sat in the cache — the user was blocked from lower-risk venues, which
+    // protects nobody. The rule the rest of the system states is "never
+    // propose protocols ABOVE the user's risk tier"; below is always fine.
+    const ceilingIndex = effectiveTier
+      ? TIER_LADDER.indexOf(effectiveTier)
+      : -1;
+    // An unrecognised tier string must not silently widen to "everything";
+    // fall back to the exact value so a typo narrows rather than opens up.
+    const allowedTiers =
+      ceilingIndex >= 0
+        ? TIER_LADDER.slice(0, ceilingIndex + 1)
+        : effectiveTier
+          ? [effectiveTier]
+          : [];
+
     const where: Record<string, unknown> = {};
-    if (effectiveTier) where.tier = effectiveTier;
+    if (allowedTiers.length > 0) where.tier = { in: allowedTiers };
     if (filter.assetSymbol) where.assetSymbol = filter.assetSymbol;
     if (filter.chainId !== undefined) where.chainId = filter.chainId;
     if (filter.namespace) where.namespace = filter.namespace;
@@ -301,7 +331,39 @@ export class StrategiesService {
     this.logger.log(
       `[getOpportunities] OpportunityCache returned ${opportunities.length} rows for where=${JSON.stringify(where)}`,
     );
-    return this.attachAppUrls(opportunities);
+    if (opportunities.length > 0 || !effectiveTier) {
+      return this.attachAppUrls(
+        opportunities.map((o) => ({ ...o, outsideTier: false })),
+      );
+    }
+
+    // Empty ONLY because of the risk-tier ceiling.
+    //
+    // A saved `UserStrategy.tier` outranks whatever the caller asked for
+    // (see `effectiveTier` above), and that is correct — it is the ceiling
+    // behind "never propose protocols above the user's risk tier". What is
+    // NOT acceptable is the client then telling the user "there are no USDT
+    // options on Arbitrum", which is false: there were two, both `balanced`,
+    // and the user's profile was `conservative`. Silence turned a policy
+    // into a lie, and left the user with no way forward.
+    //
+    // So: re-run without the tier and hand the rows back TAGGED. The client
+    // must not auto-allocate into them — mobile's `allocatableRows` drops
+    // them — but it can finally say what is true and let the user decide.
+    const { tier: _tierCeiling, ...withoutTier } = where;
+    const outside = await this.prisma.opportunityCache.findMany({
+      where: withoutTier,
+      orderBy: { score: "desc" },
+      take: 25,
+    });
+    if (outside.length > 0) {
+      this.logger.log(
+        `[getOpportunities] tier="${effectiveTier}" matched nothing; ${outside.length} rows exist at other tiers — returning them tagged outsideTier`,
+      );
+    }
+    return this.attachAppUrls(
+      outside.map((o) => ({ ...o, outsideTier: true })),
+    );
   }
 
   /**
@@ -872,7 +934,34 @@ export class StrategiesService {
    * into a protocol the user already used, in that same tier, via the
    * curated-whitelist default.
    */
-  private async ensureUserStrategy(
+  /**
+   * The saved risk tier for a wallet, or `null` when the user has never
+   * onboarded. Non-throwing twin of `getStrategy`.
+   *
+   * Public because `RecurringInvestService` needs it and must NOT reach the
+   * `UserStrategy` table itself: that table stores its `walletAddress`
+   * lowercased (a convention predating the per-encoding canonicalization
+   * rule), and a `.toLowerCase()` inside the DCA layer is exactly the smell
+   * quick-invest §12.3a Rule 2 warns about. Keeping the fold here means the
+   * legacy convention stays owned by the module that owns the table.
+   */
+  async getSavedTier(walletAddress: string): Promise<string | null> {
+    const strategy = await this.prisma.userStrategy.findFirst({
+      where: { walletAddress: walletAddress.toLowerCase() },
+      select: { tier: true },
+    });
+    return strategy?.tier ?? null;
+  }
+
+  /**
+   * Find-or-create the wallet's `UserStrategy`.
+   *
+   * Public since DCA v1: creating a recurring plan calls it with the plan's
+   * tier so plan and strategy agree from the start (quick-invest §12.6),
+   * the same way the deposit path already lazily creates a row rather than
+   * gating a first deposit behind onboarding.
+   */
+  async ensureUserStrategy(
     userId: string,
     walletAddress: string,
     namespace: string,

@@ -32,6 +32,8 @@ export class StrategiesScheduler implements OnApplicationBootstrap {
     private readonly autoCompoundQueue: Queue,
     @InjectQueue("async-claim-watcher")
     private readonly asyncClaimQueue: Queue,
+    @InjectQueue("recurring-invest-watcher")
+    private readonly recurringInvestQueue: Queue,
     private readonly configService: ConfigService,
   ) {
     this.enabled =
@@ -145,6 +147,38 @@ export class StrategiesScheduler implements OnApplicationBootstrap {
     } catch (err) {
       this.logger.error(
         `async-claim-watcher cron enqueue failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
+  /**
+   * Recurring-invest nudges (DCA v1, quick-invest spec §12.4).
+   *
+   * Daily is enough granularity for weekly/monthly plans, and the worker's
+   * own compare-and-swap on `nextDueAt` means a cron that fires more than
+   * once in a window still nudges exactly once.
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_9AM, {
+    name: "recurring-invest-watcher-cron",
+  })
+  async tickRecurringInvest(): Promise<void> {
+    if (!this.enabled) return;
+    try {
+      await this.recurringInvestQueue.add(
+        "scan",
+        { reason: "cron" },
+        {
+          jobId: `recurring-invest-cron-${Date.now()}`,
+          removeOnComplete: true,
+          removeOnFail: 100,
+        },
+      );
+      this.logger.log("Enqueued recurring-invest-watcher (daily cron tick)");
+    } catch (err) {
+      this.logger.error(
+        `recurring-invest-watcher cron enqueue failed: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );

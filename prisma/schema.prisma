@@ -97,37 +97,37 @@ model Vendor {
 }
 
 model User {
-  id                 String               @id @default(ulid())
+  id                String               @id @default(ulid())
   // Stored canonical per-chain (checksummed EVM / verbatim Solana+Stellar) via
   // canonicalizeWalletAddress, so this @unique is itself the case-insensitive
   // dedup key. Replaced the former walletAddressLower fold column.
-  walletAddress      String?              @unique
-  email              String?              @unique
-  username           String?              @unique
-  password           String?
-  name               String?
-  profileImage       String?
-  authProvider       AuthProvider
-  socialId           String?
-  role               UserRole             @default(USER)
-  status             UserStatus           @default(ACTIVE)
-  permissions        Json?
-  lastLoginAt        DateTime?
-  loginAttempts      Int                  @default(0)
-  lockedUntil        DateTime?
-  transactions       TransactionHistory[]
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
-  Region             Region?              @relation(fields: [regionId], references: [id])
-  regionId           String?
-  ApiKey             ApiKey[]
-  auditLogs          AdminAuditLog[]
-  dappFavorites      UserDappFavorite[]
-  addressBook        AddressBook[]
-  pointBalance       PointBalance?
-  pointTransactions  PointTransaction[]
-  pointRedemptions   PointRedemption[]
-  nftAssets          NftAsset[]
+  walletAddress     String?              @unique
+  email             String?              @unique
+  username          String?              @unique
+  password          String?
+  name              String?
+  profileImage      String?
+  authProvider      AuthProvider
+  socialId          String?
+  role              UserRole             @default(USER)
+  status            UserStatus           @default(ACTIVE)
+  permissions       Json?
+  lastLoginAt       DateTime?
+  loginAttempts     Int                  @default(0)
+  lockedUntil       DateTime?
+  transactions      TransactionHistory[]
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  Region            Region?              @relation(fields: [regionId], references: [id])
+  regionId          String?
+  ApiKey            ApiKey[]
+  auditLogs         AdminAuditLog[]
+  dappFavorites     UserDappFavorite[]
+  addressBook       AddressBook[]
+  pointBalance      PointBalance?
+  pointTransactions PointTransaction[]
+  pointRedemptions  PointRedemption[]
+  nftAssets         NftAsset[]
 
   // UMKM USDC payout rails (§6.6)
   merchant              Merchant?
@@ -1268,6 +1268,49 @@ model UserStrategy {
 
   @@index([userId])
   @@index([walletAddress])
+}
+
+/// Recurring investment plan — DCA v1 (mobile-app docs/defi-quick-invest-spec.md §12).
+///
+/// The server nudges on a cadence, the user taps once, and the user's own
+/// key signs. NO new signing authority exists anywhere: this table holds an
+/// intention and a due date, never a credential. §13's unattended variant is
+/// deliberately not built; `executionMode` is the forward-compat slot for it.
+model RecurringInvestPlan {
+  id            String    @id @default(cuid())
+  /// Owner. Sourced ONLY from the JWT (§12.3a Rule 1) — never from a request
+  /// field — so it arrives already canonical and is stored VERBATIM.
+  /// Never .toLowerCase(): Solana (base58) and Stellar (base32 StrKey) are
+  /// case-SIGNIFICANT, and a lowercased row would never be found for its own
+  /// owner, silently and with no error. Deliberately unlike the older
+  /// `UserStrategy.walletAddress`, which predates that rule.
+  walletAddress String
+  /// CAIP-2 chain id — "eip155:8453", "solana:5eykt4…", "stellar:pubnet".
+  /// NOT (namespace, chainId): a numeric chain id is EVM-shaped and
+  /// degenerates to 0 on every other family. The namespace is the prefix, so
+  /// it is derived on read rather than stored twice (no drift possible).
+  caip2Id       String
+  assetSymbol   String
+  /// USD (§6.2) — namespace-free by construction.
+  amountUsd     Float
+  /// "conservative" | "balanced" | "aggressive"
+  tier          String
+  /// 7 or 30 only at launch (§12.6). `Int` rather than an enum so a third
+  /// option later is a value change, not a migration.
+  cadenceDays   Int
+  /// "active" | "paused" | "cancelled"
+  status        String    @default("active")
+  /// "reminder" (v1) — nudge, user taps, user's key signs. Forward-compat
+  /// slot for "unattended" (§13) so v2 rows coexist with v1 rows instead of
+  /// needing a migration. See §12.7 Axis 2.
+  executionMode String    @default("reminder")
+  nextDueAt     DateTime
+  lastNudgedAt  DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([status, nextDueAt])
+  @@index([walletAddress, caip2Id])
 }
 
 model StrategyPosition {

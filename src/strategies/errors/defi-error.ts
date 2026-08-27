@@ -74,6 +74,8 @@ export const DEFI_ERROR_CODES = [
   "duplicate_submission",
   "velocity_exceeded",
   "pool_anomaly_flagged",
+  // ── DCA v1 (mobile-app docs/defi-quick-invest-spec.md §12)
+  "plan_not_found",
   "unknown",
 ] as const;
 

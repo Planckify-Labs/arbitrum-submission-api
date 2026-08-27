@@ -9,6 +9,7 @@ import { DeFiLlamaClient } from "./external/defillama.client";
 import { LifiClient } from "./external/lifi.client";
 import { SuiLstSource } from "./external/sui-lst.source";
 import { ZerionClient } from "./external/zerion.client";
+import { RecurringInvestService } from "./recurring-invest.service";
 import { RouterQuoteService } from "./router-quote.service";
 import { ScoringService } from "./scoring/scoring.service";
 import { StrategiesController } from "./strategies.controller";
@@ -20,6 +21,7 @@ import { AutoCompoundWatcherProcessor } from "./workers/auto-compound-watcher.pr
 import { DefiLlamaPollProcessor } from "./workers/defillama-poll.processor";
 import { GoalDeadlineWatcherProcessor } from "./workers/goal-deadline-watcher.processor";
 import { RebalanceTriggerProcessor } from "./workers/rebalance-trigger.processor";
+import { RecurringInvestWatcherProcessor } from "./workers/recurring-invest-watcher.processor";
 import { ScoreOpportunitiesProcessor } from "./workers/score-opportunities.processor";
 import { StablecoinDepegWatcherProcessor } from "./workers/stablecoin-depeg-watcher.processor";
 
@@ -37,6 +39,8 @@ import { StablecoinDepegWatcherProcessor } from "./workers/stablecoin-depeg-watc
       { name: "auto-compound-watcher" },
       // ERC-7540 pending-claims tracker (expansion spec §7).
       { name: "async-claim-watcher" },
+      // DCA v1 recurring-invest reminders (quick-invest spec §12.4).
+      { name: "recurring-invest-watcher" },
     ),
   ],
   controllers: [StrategiesController],
@@ -51,6 +55,7 @@ import { StablecoinDepegWatcherProcessor } from "./workers/stablecoin-depeg-watc
     AlchemyPricesClient,
     ScoringService,
     RouterQuoteService,
+    RecurringInvestService,
     TargetResolverService,
     DefiLlamaPollProcessor,
     ScoreOpportunitiesProcessor,
@@ -59,7 +64,8 @@ import { StablecoinDepegWatcherProcessor } from "./workers/stablecoin-depeg-watc
     GoalDeadlineWatcherProcessor,
     AutoCompoundWatcherProcessor,
     AsyncClaimWatcherProcessor,
+    RecurringInvestWatcherProcessor,
   ],
-  exports: [StrategiesService, ScoringService],
+  exports: [StrategiesService, ScoringService, RecurringInvestService],
 })
 export class StrategiesModule {}
