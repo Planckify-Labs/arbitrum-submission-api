@@ -7,6 +7,7 @@ const USELESS = "Dz9mQ9NzkBcCsuGPFJ3r1bS4wgqKMHBPiVuniW8Mbonk";
 const AMM_V4_ID = "GxoRF3A1iMXhHTGvxAnT8b3Bk8Qqen41fmG5k2pT7K3Y";
 const AMM_V4_PROGRAM = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
 const CPMM_PROGRAM = "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C";
+const STABLE_PROGRAM = "5quBtoiQqxF9Jv6KYKctB59NT3gtJD2Y65kdnB1Uev3h";
 
 function mintInfo(address: string) {
   return { address };
@@ -18,7 +19,6 @@ function raydiumApiResponse(
     id: string;
     programId: string;
     tvl: number;
-    pooltype?: string[];
   }>,
 ) {
   return {
@@ -29,7 +29,6 @@ function raydiumApiResponse(
         mintA: mintInfo(WSOL),
         mintB: mintInfo(USELESS),
         tvl: r.tvl,
-        pooltype: r.pooltype ?? ["Amm", "OpenBookMarket"],
       })),
     },
   };
@@ -65,7 +64,6 @@ describe("RaydiumAmmV4Resolver", () => {
           id: "Q2sPHPdUWFMg7M7wwrQKLrn619cAucfRsmhVJffodSp",
           programId: CPMM_PROGRAM,
           tvl: 2_286_105,
-          pooltype: ["Cpmm"],
         },
         { id: AMM_V4_ID, programId: AMM_V4_PROGRAM, tvl: 22.81 },
       ]),
@@ -79,32 +77,23 @@ describe("RaydiumAmmV4Resolver", () => {
     });
   });
 
-  it("fails closed for a StablePool AMM v4/v5 pool (different curve, not built)", async () => {
+  it("fails closed for a StablePool pool (genuinely separate program, not built)", async () => {
     const ctx = ctxWith(
-      raydiumApiResponse([
-        {
-          id: AMM_V4_ID,
-          programId: AMM_V4_PROGRAM,
-          tvl: 22.81,
-          pooltype: ["StablePool", "Stables"],
-        },
-      ]),
+      raydiumApiResponse([{ id: AMM_V4_ID, programId: STABLE_PROGRAM, tvl: 22.81 }]),
     );
     expect(await RaydiumAmmV4Resolver.resolve(pool(), ctx)).toBeNull();
   });
 
-  it("fails closed for an Amm-tagged pool with no live OpenBook link", async () => {
+  it("resolves an AMM v4 pool even when Raydium's API omits the 'OpenBookMarket' pooltype tag (real shape — fixed 2026-08-27, was a bug)", async () => {
     const ctx = ctxWith(
-      raydiumApiResponse([
-        {
-          id: AMM_V4_ID,
-          programId: AMM_V4_PROGRAM,
-          tvl: 22.81,
-          pooltype: ["Amm"],
-        },
-      ]),
+      raydiumApiResponse([{ id: AMM_V4_ID, programId: AMM_V4_PROGRAM, tvl: 22.81 }]),
     );
-    expect(await RaydiumAmmV4Resolver.resolve(pool(), ctx)).toBeNull();
+    expect(await RaydiumAmmV4Resolver.resolve(pool(), ctx)).toEqual({
+      kind: "raydium-amm-v4-pool",
+      pool: AMM_V4_ID,
+      mintA: WSOL,
+      mintB: USELESS,
+    });
   });
 
   it("fails closed for Concentrated poolMeta (CLMM, different program)", async () => {
@@ -139,7 +128,6 @@ describe("RaydiumAmmV4Resolver", () => {
           id: "Q2sPHPdUWFMg7M7wwrQKLrn619cAucfRsmhVJffodSp",
           programId: CPMM_PROGRAM,
           tvl: 2_286_105,
-          pooltype: ["Cpmm"],
         },
       ]),
     );

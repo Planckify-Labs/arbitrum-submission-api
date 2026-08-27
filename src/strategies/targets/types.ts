@@ -353,7 +353,14 @@ export type DepositTarget =
       strategy: string;
       mintA: string;
       mintB: string;
-    };
+    }
+  // Jito Restaking Vault deposit — the generic `MintTo` instruction on
+  // Jito's public Vault program, currently resolved only for Kyros's kySOL
+  // vault. `mint` is the vault's live `supported_mint` (JitoSOL, an SPL
+  // token — NOT native SOL). DEPOSIT ONLY: withdraw on this program is a
+  // two-step, epoch-cooldown ticket flow, not a single atomic action. Keep
+  // in sync with the mobile twin in `services/defi/types.ts`.
+  | { kind: "jito-vault-deposit"; vault: string; mint: string };
 
 export type DepositTargetKind = DepositTarget["kind"];
 

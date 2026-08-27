@@ -7,13 +7,27 @@
  * `raydium-amm` project needs splitting by program at all.
  *
  * Filters Raydium's own `GET /pools/info/mint` API to
- * `programId === AMM_V4_PROGRAM_ID` AND `pooltype` containing BOTH `"Amm"`
- * and `"OpenBookMarket"` — excluding the rarer `StablePool` variant (its
- * own curve, extra account, not built) and any pool without a live
- * OpenBook link, which the adapter's OpenBook-market read assumes exists.
- * Same TVL-disambiguation discipline as `raydium-cpmm.resolver.ts` /
- * `kamino-lend.resolver.ts` when a mint pair resolves to multiple AMM v4
- * pools (rare, but the same address-space allows it).
+ * `programId === AMM_V4_PROGRAM_ID` — the `StablePool` variant is a
+ * genuinely separate program (`5quBtoiQqxF9Jv6KYKctB59NT3gtJD2Y65kdnB1Uev3h`,
+ * `raydium-stable.resolver.ts`), so program-id filtering alone already
+ * excludes it with no extra check needed. Same TVL-disambiguation
+ * discipline as `raydium-cpmm.resolver.ts` / `kamino-lend.resolver.ts` when
+ * a mint pair resolves to multiple AMM v4 pools (rare, but the same
+ * address-space allows it).
+ *
+ * **Fixed 2026-08-27 (was a real bug, not a design choice):** this used to
+ * additionally require `pooltype` to contain both `"Amm"` and
+ * `"OpenBookMarket"`. Live-checked against Raydium's API: `pooltype` is
+ * `["Amm"]`-only on some real, live AMM v4 pools that DO have a populated
+ * `marketId` (confirmed on pool `AVs9TA4nWDzfPJE9gGVNJMVhcQy3V9PGazuz33BfG2RA`,
+ * $3.16M TVL, matching its DeFiLlama-reported `tvlUsd` almost exactly) —
+ * `"OpenBookMarket"` appears to be Raydium's own "actively market-made"
+ * classification, not "has an OpenBook market account at all". The mobile
+ * adapter never reads this tag anyway: it reads `marketId` LIVE off the
+ * pool's own account (`raydiumAmmV4.ts`'s `A_MARKET_ID` offset) and
+ * validates it there, so the resolver's only job is finding the right pool
+ * ADDRESS — the extra tag check was silently dropping real, resolvable,
+ * sometimes high-TVL pools to Manual for no benefit.
  */
 
 import type { DeFiLlamaYieldPool } from "../external/defillama.client";
@@ -33,7 +47,6 @@ interface RaydiumAmmV4Candidate {
   mintA: string;
   mintB: string;
   tvlUsd: number;
-  pooltype: string[];
 }
 
 function str(v: unknown): string | null {
@@ -69,13 +82,8 @@ async function loadCandidates(
     const mintB = str(
       (r.mintB as Record<string, unknown> | undefined)?.address,
     );
-    const pooltype = Array.isArray(r.pooltype)
-      ? (r.pooltype as unknown[]).filter(
-          (x): x is string => typeof x === "string",
-        )
-      : [];
     if (!id || !programId || !mintA || !mintB) return [];
-    return [{ id, programId, mintA, mintB, tvlUsd: num(r.tvl), pooltype }];
+    return [{ id, programId, mintA, mintB, tvlUsd: num(r.tvl) }];
   });
 }
 
@@ -120,10 +128,7 @@ export const RaydiumAmmV4Resolver: PoolTargetResolver = {
 
     const candidates = await loadCandidates(ctx, mint1, mint2);
     const ammV4Only = candidates.filter(
-      (c) =>
-        c.programId === RAYDIUM_AMM_V4_PROGRAM_ID &&
-        c.pooltype.includes("Amm") &&
-        c.pooltype.includes("OpenBookMarket"),
+      (c) => c.programId === RAYDIUM_AMM_V4_PROGRAM_ID,
     );
     const winner =
       ammV4Only.length === 1

@@ -1,6 +1,8 @@
 /**
- * Async-claim watcher — the pending-claims tracker for ERC-7540 vaults
- * (docs/defi-evm-protocol-expansion-spec.md §7, requirement 2).
+ * Async-claim watcher — the pending-claims tracker for two-phase
+ * request/claim vaults (docs/defi-evm-protocol-expansion-spec.md §7,
+ * requirement 2 — originally ERC-7540-only, widened 2026-08-27 to Solana's
+ * Jito Restaking Vault ticket flow, same shape: request now, claim later).
  *
  * An async vault settles as `request → (off-chain fulfil) → claim`. The claim
  * is a SECOND transaction the user has to send, potentially days later, and
@@ -10,17 +12,33 @@
  * unregistered until this loop is proven.
  *
  * The worker scans positions parked in a `*_requested` phase, reads the
- * vault's own `claimableDepositRequest` / `claimableRedeemRequest`, and flips
- * them to `*_claimable` once fulfilment lands. The flip is what the app renders
- * as "ready to claim" and what the notification hangs off.
+ * vault's own claimable state, and flips them to `*_claimable` once
+ * fulfilment lands. The flip is what the app renders as "ready to claim" and
+ * what the notification hangs off.
  *
  * Fail-safe in one direction only: an unreadable vault leaves the position
  * pending. We never mark something claimable we could not confirm — a false
  * "ready" shows a claim button that reverts.
+ *
+ * **Solana branch (`jito-vault-deposit`, mobile's
+ * `services/defi/adapters/jitoVaultDeposit.ts`)**: unlike ERC-7540 there is
+ * no `claimableRedeemRequest`-style counter — Jito's tickets are individual
+ * `VaultStakerWithdrawalTicket` PDAs found via `getProgramAccounts`, and
+ * "claimable" is `is_withdrawable`: strictly more than one full epoch has
+ * elapsed since `slot_unstaked`. Program id, ticket layout
+ * (`dataSize=384`, `staker`@40, `vrtAmount`@104, `slotUnstaked`@112) and
+ * `Config`'s `epoch_length`@72 are the SAME constants the mobile adapter
+ * already verified live (see that file's header for the full verification
+ * story — not re-derived here, only mirrored, since this is a separate
+ * repo/runtime that can't import the mobile adapter directly). Only the
+ * REDEEM side of this kind is ever async (deposit is a single synchronous
+ * `MintTo`, never sets `asyncPhase`), so this branch only needs to answer
+ * "is the wallet's outstanding ticket withdrawable yet."
  */
 
 import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
 import { Logger } from "@nestjs/common";
+import { Connection, PublicKey } from "@solana/web3.js";
 import type { Job } from "bullmq";
 import { parseAbi } from "viem";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -40,6 +58,33 @@ const ERC7540_VIEW_ABI = parseAbi([
   "function claimableDepositRequest(uint256 requestId, address controller) view returns (uint256)",
   "function claimableRedeemRequest(uint256 requestId, address controller) view returns (uint256)",
 ]);
+
+// ── Jito Restaking Vault constants (mirrors
+// mobile-app/services/defi/adapters/jitoVaultDeposit.ts exactly — see that
+// file's header for the live verification story behind every value here). ──
+const JITO_VAULT_PROGRAM_ID = new PublicKey(
+  "Vau1t6sLNxnzB7ZDsef8TLbPLfyZMYXH8WTNqUdm9g8",
+);
+const [JITO_CONFIG_PDA] = PublicKey.findProgramAddressSync(
+  [Buffer.from("config")],
+  JITO_VAULT_PROGRAM_ID,
+);
+const JITO_C_EPOCH_LENGTH = 72; // u64
+const JITO_TICKET_SIZE = 384;
+const JITO_T_STAKER = 40;
+const JITO_T_VRT_AMOUNT = 104; // u64
+const JITO_T_SLOT_UNSTAKED = 112; // u64
+
+let solanaConnection: Connection | null = null;
+function getSolanaConnection(): Connection {
+  if (!solanaConnection) {
+    solanaConnection = new Connection(
+      process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com",
+      "confirmed",
+    );
+  }
+  return solanaConnection;
+}
 
 @Processor("async-claim-watcher")
 export class AsyncClaimWatcherProcessor extends WorkerHost {
@@ -161,7 +206,13 @@ export class AsyncClaimWatcherProcessor extends WorkerHost {
       select: { depositTarget: true },
     });
     const target = row?.depositTarget as DepositTarget | null;
-    if (!target || target.kind !== "async-vault") return null;
+    if (!target) return null;
+
+    if (target.kind === "jito-vault-deposit") {
+      return this.readJitoClaimable(target.vault, position.walletAddress);
+    }
+
+    if (target.kind !== "async-vault") return null;
 
     const chainId = resolveEvmChainId(position.chainName);
     const client = getPublicClientForChain(chainId);
@@ -179,6 +230,60 @@ export class AsyncClaimWatcherProcessor extends WorkerHost {
         functionName: fn,
         args: [requestId, position.walletAddress as `0x${string}`],
       });
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Find the wallet's outstanding `VaultStakerWithdrawalTicket` for this
+   * vault (there is no counter to read, unlike ERC-7540 — see file header)
+   * and report its VRT amount if `is_withdrawable`, else `0n`. `null` only
+   * on a genuine read failure (RPC error, ambiguous multi-ticket state) —
+   * never on "no ticket yet" or "not withdrawable yet", both of which are
+   * legitimate "checked, not ready" answers matching the ERC-7540 branch's
+   * own `0n` convention.
+   */
+  private async readJitoClaimable(
+    vault: string,
+    staker: string,
+  ): Promise<bigint | null> {
+    try {
+      const connection = getSolanaConnection();
+      const vaultPk = new PublicKey(vault);
+      const stakerPk = new PublicKey(staker);
+      const accounts = await connection.getProgramAccounts(
+        JITO_VAULT_PROGRAM_ID,
+        {
+          filters: [
+            { dataSize: JITO_TICKET_SIZE },
+            { memcmp: { offset: 8, bytes: vaultPk.toBase58() } },
+            { memcmp: { offset: JITO_T_STAKER, bytes: stakerPk.toBase58() } },
+          ],
+        },
+      );
+      if (accounts.length === 0) return 0n;
+      // Same posture as the mobile adapter's `findOutstandingTicket`: more
+      // than one ticket for this (vault, staker) means one was opened
+      // outside this app's own `buildRequestRedeem` (which refuses a second
+      // enqueue while one is pending) — ambiguous, not "checked, not ready".
+      if (accounts.length > 1) return null;
+
+      const data = accounts[0].account.data;
+      const vrtAmount = data.readBigUInt64LE(JITO_T_VRT_AMOUNT);
+      const slotUnstaked = data.readBigUInt64LE(JITO_T_SLOT_UNSTAKED);
+
+      const configInfo = await connection.getAccountInfo(JITO_CONFIG_PDA);
+      if (!configInfo) return null;
+      const epochLength = configInfo.data.readBigUInt64LE(
+        JITO_C_EPOCH_LENGTH,
+      );
+      const slot = BigInt(await connection.getSlot("confirmed"));
+
+      const currentEpoch = slot / epochLength;
+      const epochUnstaked = slotUnstaked / epochLength;
+      const withdrawable = currentEpoch > epochUnstaked + 1n;
+      return withdrawable ? vrtAmount : 0n;
     } catch {
       return null;
     }

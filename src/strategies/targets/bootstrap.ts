@@ -35,6 +35,7 @@ import { EmberResolver } from "./ember.resolver";
 import { TIER1_ERC4626_RESOLVERS } from "./erc4626-family.resolver";
 import { MorphoResolver, YearnResolver } from "./erc4626.resolver";
 import { familyEnabled, isFamilyKilled } from "./feature-flags";
+import { JitoVaultResolver } from "./jito-vault.resolver";
 import { JupiterLendResolver } from "./jupiter-lend.resolver";
 import { KaiResolver } from "./kai.resolver";
 import { KaminoKvaultResolver } from "./kamino-kvault.resolver";
@@ -227,6 +228,12 @@ export function bootTargetResolvers(): void {
   // the three resolvers never compete, each claims a different program id
   // (see raydium-stable.resolver.ts's header).
   registerResolver(RaydiumStableResolver);
+  // Solana — Jito Restaking Vault deposit (Kyros's kySOL vault). Emits
+  // `{ kind: "jito-vault-deposit" }` for the mobile JitoVaultDepositAdapter.
+  // Deposit only — see jito-vault.resolver.ts's header and the mobile
+  // adapter's header for why withdraw (a two-step, epoch-cooldown ticket
+  // flow on this program) is not wired.
+  registerResolver(JitoVaultResolver);
 
   // ── Tier 1 — widen the existing funnels. No new adapter, no new kind. ────
   // Family A (ERC-4626) first so a protocol that ships BOTH a 4626 wrapper and
