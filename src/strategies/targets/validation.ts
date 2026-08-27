@@ -690,12 +690,59 @@ async function validateAsyncVault(
 }
 
 /**
+ * Non-EVM kinds whose resolver does its own identity work, each with WHERE
+ * that happens. This is a declaration, not a courtesy list: the `default`
+ * branch below rejects anything absent from it, so a new Sui/Solana kind is
+ * refused until someone states what validates it — the same ratchet §8.1
+ * installed for EVM, which until now stopped at the EVM boundary.
+ *
+ * "Resolver-internal" is a weaker claim than an EVM Layer-1 validator and is
+ * recorded as such: none of these resolvers reads the chain (measured
+ * 2026-08-27 — zero `getObject`/`getAccountInfo` calls across all of them).
+ * What they do is join a protocol's own API on an identity the DeFiLlama row
+ * already carries (mint pair, market name, coinType) and refuse an ambiguous
+ * match. The on-chain half of the check lives on the DEVICE, where the
+ * `ChainSafetyProvider` verifies the account's owning program (Solana) or the
+ * object's type origin (Sui) before anything is signed. Two anchors, §11.1 —
+ * but both halves of the Solana/Sui pair are thinner than the EVM equivalent,
+ * and the runbook's §12.3 sign-off is what covers the difference.
+ */
+const RESOLVER_VALIDATED_KINDS: Readonly<Record<string, string>> = {
+  // ── Sui ───────────────────────────────────────────────────────────────
+  "scallop-market": "scallop.resolver.ts — coinType matched against the venue's own market list",
+  "navi-pool": "navi.resolver.ts — coinType matched against NAVI's pools API",
+  "ember-vault": "ember.resolver.ts — poolMeta ↔ vault name, refuses ambiguity",
+  "kai-vault": "kai.resolver.ts — vault matched on its own API by coinType",
+  "suilend-market": "suilend.resolver.ts — pinned lending market + reserve index",
+  "current-market": "current.resolver.ts — market matched on the app's own API",
+  "sui-lst": "suilst.resolver.ts — pinned venue table (sui-lst.config.ts), inAppDeposit gated",
+  "cetus-clmm-pool": "cetus.resolver.ts — pool recovered from Cetus's API by mint pair + tick spacing",
+  "turbos-clmm-pool": "turbos.resolver.ts — pool recovered from Turbos's /pools stats API",
+  "bluefin-spot-pool": "bluefin.resolver.ts — pool recovered from Bluefin's /pools/info API",
+  // ── Solana ────────────────────────────────────────────────────────────
+  "solana-reserve": "kamino-lend.resolver.ts — reserve joined on market name + mint, 10x TVL disambiguation",
+  "solana-lst-stake": "solana-lst.resolver.ts — pinned venue table (solana-lst.config.ts)",
+  "jupiter-lend-vault": "jupiter-lend.resolver.ts — Earn-only poolMeta gate, asset from the row",
+  "kamino-kvault": "kamino-kvault.resolver.ts — pinned venue table, poolMeta matched",
+  "kamino-liquidity-strategy": "kamino-liquidity.resolver.ts — strategy joined on mint pair, TVL disambiguation",
+  "raydium-cpmm-pool": "raydium-cpmm.resolver.ts — programId-filtered, 10x TVL disambiguation",
+  "raydium-amm-v4-pool": "raydium-amm-v4.resolver.ts — programId-filtered, same discipline",
+  "raydium-stable-pool": "raydium-stable.resolver.ts — programId-filtered, same discipline",
+  "jito-vault-deposit": "jito-vault.resolver.ts — pinned vault table",
+};
+
+/** Exported so `validation.spec.ts` can assert the union stays covered. */
+export function isResolverValidatedKind(kind: string): boolean {
+  return Object.hasOwn(RESOLVER_VALIDATED_KINDS, kind);
+}
+
+/**
  * Validate a resolved target on-chain.
  *
  * EVM kinds are exhaustive by construction: `isEvmTargetKind` drives a
  * `false` default so a new EVM kind without a validator here is REJECTED, per
- * §8.1. Non-EVM kinds (Sui/Solana) validate inside their own resolver and pass
- * through.
+ * §8.1. Non-EVM kinds must name their resolver-internal validation in
+ * `RESOLVER_VALIDATED_KINDS`; an unlisted kind is refused rather than trusted.
  */
 export async function validateTarget(
   target: DepositTarget,
@@ -737,10 +784,16 @@ export async function validateTarget(
     case "async-vault":
       return await validateAsyncVault(target, pool);
     default:
-      // Non-EVM / bespoke families validate within their resolver (§3.2). An
-      // EVM kind never reaches here — `isEvmTargetKind` above proves the switch
-      // is exhaustive for them, so a missing validator fails closed.
-      return !isEvmTargetKind(target.kind);
+      // Non-EVM / bespoke families validate within their resolver (§3.2) —
+      // but only the ones that have SAID SO. An EVM kind never reaches here
+      // (`isEvmTargetKind` above proves the switch is exhaustive for them), so
+      // this is the non-EVM ratchet: unlisted ⇒ refused ⇒ the pool degrades to
+      // Manual, which is the same fail-closed direction every other layer
+      // takes.
+      return (
+        !isEvmTargetKind(target.kind) &&
+        isResolverValidatedKind(target.kind)
+      );
   }
 }
 

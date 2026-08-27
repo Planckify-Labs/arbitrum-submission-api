@@ -388,6 +388,63 @@ export const EVM_TARGET_KINDS = [
 
 export type EvmTargetKind = (typeof EVM_TARGET_KINDS)[number];
 
+/**
+ * Every NON-EVM kind, in the same spirit as `EVM_TARGET_KINDS` but with a
+ * stronger guarantee: the assertion below makes `tsc` fail if a kind is added
+ * to `DepositTarget` and to neither list. The EVM list is kept honest by a
+ * spec test; this one cannot be forgotten, because forgetting it does not
+ * compile.
+ *
+ * The point of naming these at all is `validation.ts`: a non-EVM kind used to
+ * pass validation BY BEING non-EVM, which made "we never checked this" and
+ * "this resolver checked it" the same answer.
+ */
+export const NON_EVM_TARGET_KINDS = [
+  // Sui
+  "scallop-market",
+  "ember-vault",
+  "navi-pool",
+  "suilend-market",
+  "sui-lst",
+  "kai-vault",
+  "current-market",
+  "cetus-clmm-pool",
+  "turbos-clmm-pool",
+  "bluefin-spot-pool",
+  // Solana
+  "solana-reserve",
+  "solana-lst-stake",
+  "jupiter-lend-vault",
+  "kamino-kvault",
+  "raydium-cpmm-pool",
+  "raydium-amm-v4-pool",
+  "raydium-stable-pool",
+  "kamino-liquidity-strategy",
+  "jito-vault-deposit",
+] as const satisfies readonly DepositTargetKind[];
+
+export type NonEvmTargetKind = (typeof NON_EVM_TARGET_KINDS)[number];
+
+/**
+ * Compile-time exhaustiveness. A new `DepositTarget` member that lands in
+ * neither list makes the constant below an error, naming the kind that was
+ * forgotten.
+ *
+ * The tuple wrapper is load-bearing: `T extends never ? …` DISTRIBUTES over a
+ * naked type parameter, so the obvious spelling silently evaluates to `never`
+ * and asserts nothing. (The first version of this guard was written as
+ * `const _: Unclassified[] = []` and proved worthless for the same family of
+ * reason — an empty array satisfies every array type. Verified by adding a
+ * junk kind and watching `tsc` stay green.)
+ */
+type IsNever<T> = [T] extends [never] ? true : false;
+type UnclassifiedTargetKind = Exclude<
+  DepositTargetKind,
+  EvmTargetKind | NonEvmTargetKind
+>;
+export const _everyTargetKindIsClassified: IsNever<UnclassifiedTargetKind> =
+  true;
+
 export function isEvmTargetKind(
   kind: DepositTargetKind,
 ): kind is EvmTargetKind {

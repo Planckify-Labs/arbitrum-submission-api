@@ -34,7 +34,11 @@ import {
 import { EmberResolver } from "./ember.resolver";
 import { TIER1_ERC4626_RESOLVERS } from "./erc4626-family.resolver";
 import { MorphoResolver, YearnResolver } from "./erc4626.resolver";
-import { familyEnabled, isFamilyKilled } from "./feature-flags";
+import {
+  familyEnabled,
+  isFamilyKilled,
+  nonEvmFamilyEnabled,
+} from "./feature-flags";
 import { JitoVaultResolver } from "./jito-vault.resolver";
 import { JupiterLendResolver } from "./jupiter-lend.resolver";
 import { KaiResolver } from "./kai.resolver";
@@ -109,6 +113,24 @@ function registerGated(
   }
 }
 
+/**
+ * Register a Sui/Solana family, subject to its own sub-flag and the SAME
+ * `isFamilyKilled` kill-switch every EVM family answers to.
+ *
+ * Non-EVM families are live rather than staged, so there is no tier gate here
+ * and the sub-flag defaults ON — the value is having a switch at all. Before
+ * this, a Sui or Solana protocol could only be disabled by shipping a release,
+ * which is the wrong tool for an exploit disclosed at 3am.
+ */
+function registerNonEvm(
+  namespace: "sui" | "solana",
+  resolver: PoolTargetResolver,
+): void {
+  if (!nonEvmFamilyEnabled(namespace, resolver.family)) return;
+  if (isFamilyKilled(resolver.family)) return;
+  registerResolver(resolver);
+}
+
 export function bootTargetResolvers(): void {
   if (booted) return;
   bootCandidateSources();
@@ -118,18 +140,18 @@ export function bootTargetResolvers(): void {
   // Sui — Ember Vaults (generic tokenized-vault family; multi-vault, so the
   // resolver disambiguates siblings by poolMeta ↔ vault name). Emits
   // `{ kind: "ember-vault" }` for the mobile EmberSuiAdapter (Phase 3).
-  registerResolver(EmberResolver);
+  registerNonEvm("sui", EmberResolver);
   // Sui — Scallop (single-market-per-asset). Emits `{ kind: "scallop-market" }`
   // for the existing ScallopSuiAdapter, so scallop-lend pools badge "Deposit
   // in-app" instead of resolving to nothing (Phase 3).
-  registerResolver(ScallopResolver);
+  registerNonEvm("sui", ScallopResolver);
   // Sui — NAVI (single-market-per-asset, coinType-matched via its pools API).
   // Emits `{ kind: "navi-pool" }` for the mobile NaviSuiAdapter (Phase 3).
-  registerResolver(NaviResolver);
+  registerNonEvm("sui", NaviResolver);
   // Sui — liquid staking (Haedal / Volo / SpringSui / Aftermath). Emits
   // `{ kind: "sui-lst" }` for the mobile SuiLstAdapter. The pools these match
   // are synthesized by `SuiLstSource` (absent from DeFiLlama's Sui feed).
-  registerResolver(SuiLstResolver);
+  registerNonEvm("sui", SuiLstResolver);
   // Sui — Suilend (single-market-per-asset). Emits `{ kind: "suilend-market" }`
   // for the mobile SuilendSuiAdapter. Was withheld for a reason that turned out
   // to be wrong ("Pyth-gated" — corrected 2026-08-22, see suilendSui.ts's file
@@ -138,13 +160,13 @@ export function bootTargetResolvers(): void {
   // (suilend.config.ts, mobile). Deposit is device-verified via
   // sui_devInspectTransactionBlock against live mainnet; withdraw stays
   // deferred pending its own verification, independent of this resolver.
-  registerResolver(SuilendResolver);
+  registerNonEvm("sui", SuilendResolver);
   // Sui — Kai Finance Single Asset Vaults (generic tokenized vault, own
   // package — not Ember's or Suilend's). Emits `{ kind: "kai-vault" }` for
   // the mobile KaiSuiAdapter. Deposit AND withdraw both device-verified via
   // sui_devInspectTransactionBlock chained atomically in one PTB against live
   // mainnet 2026-08-22, no oracle either direction (kai.resolver.ts).
-  registerResolver(KaiResolver);
+  registerNonEvm("sui", KaiResolver);
   // Sui — Current Finance (isolated-market money market, 5 markets). Emits
   // `{ kind: "current-market" }` for the mobile CurrentSuiAdapter.
   // DEPOSIT-ONLY: withdraw needs a live Pyth push in-tx (a real, new
@@ -152,50 +174,50 @@ export function bootTargetResolvers(): void {
   // same false alarm Suilend had). Deposit device-verified via
   // sui_devInspectTransactionBlock against live mainnet 2026-08-22 —
   // creating the obligation and depositing chain atomically in one PTB.
-  registerResolver(CurrentResolver);
+  registerNonEvm("sui", CurrentResolver);
   // Sui — Cetus CLMM (concentrated liquidity, full-range only). Emits
   // `{ kind: "cetus-clmm-pool" }` for the mobile CetusSuiAdapter. Deposit is
   // a swap-split zap into both legs (own-pool swap, never external) — see
   // types.ts's `cetus-clmm-pool` comment. WITHDRAW is not wired.
-  registerResolver(CetusResolver);
+  registerNonEvm("sui", CetusResolver);
   // Sui — Turbos Finance CLMM (concentrated liquidity, full-range only).
   // Emits `{ kind: "turbos-clmm-pool" }` for the mobile TurbosSuiAdapter.
   // Same swap-split-zap deposit shape as Cetus, simpler on-chain interface
   // (explicit amountA/amountB, no hot-potato receipt) — see types.ts's
   // `turbos-clmm-pool` comment. WITHDRAW is not wired.
-  registerResolver(TurbosResolver);
+  registerNonEvm("sui", TurbosResolver);
   // Sui — Bluefin Spot CLMM (concentrated liquidity, full-range only).
   // Emits `{ kind: "bluefin-spot-pool" }` for the mobile BluefinSpotSuiAdapter.
   // Same swap-split-zap deposit shape as Cetus/Turbos — see types.ts's
   // `bluefin-spot-pool` comment. WITHDRAW is not wired.
-  registerResolver(BluefinSpotResolver);
+  registerNonEvm("sui", BluefinSpotResolver);
   // Solana — liquid staking (Jito / JupSOL / dSOL / Marinade). Emits
   // `{ kind: "solana-lst-stake" }` for the mobile SolanaLstAdapter. These are
   // real DeFiLlama `/pools` rows (unlike the synthesized Sui LST venues).
   // Closes the exact Lido-shaped gap (§11.6a): Jito shipped a complete
   // adapter since Phase 2 with no resolver ever claiming its slug, so it
   // rendered as manual the entire time.
-  registerResolver(SolanaLstResolver);
+  registerNonEvm("solana", SolanaLstResolver);
   // Solana — Jupiter Lend Earn (single-asset vault family, mirrors the
   // `erc4626` shape). Emits `{ kind: "jupiter-lend-vault" }` for the mobile
   // JupiterLendAdapter. `jupiter-lend`'s DeFiLlama rows mix Earn vaults with
   // Borrow isolated-market rows sharing the same project slug — the resolver
   // refuses anything not tagged `poolMeta === "Earn"` before requesting a
   // candidate (jupiter-lend.resolver.ts's header has the measured counts).
-  registerResolver(JupiterLendResolver);
+  registerNonEvm("solana", JupiterLendResolver);
   // Solana — Kamino Lend (single-asset reserve deposits, obligation-based).
   // Emits `{ kind: "solana-reserve" }` for the mobile KaminoLendAdapter.
   // DeFiLlama's public `pool` field is a synthetic UUID, not the reserve
   // address, so the resolver recovers it by joining Kamino's own API on
   // market name + underlying mint — see kamino-lend.resolver.ts's header.
-  registerResolver(KaminoLendResolver);
+  registerNonEvm("solana", KaminoLendResolver);
   // Solana — Kamino kvault ("Earn" share vaults). Emits
   // `{ kind: "kamino-kvault" }` for the mobile KaminoKvaultAdapter.
   // DeFiLlama surfaces both known instances under the multi-chain `sentora`
   // project (not unique to Kamino) — see kamino-kvault.resolver.ts's header
   // for why this is a pinned, poolMeta-matched venue table rather than a
   // discovery join.
-  registerResolver(KaminoKvaultResolver);
+  registerNonEvm("solana", KaminoKvaultResolver);
   // Solana — Kamino kliquidity (managed CLMM vault). Emits
   // `{ kind: "kamino-liquidity-strategy" }` for the mobile
   // KaminoLiquidityAdapter. DeFiLlama's `poolMeta` is always null for this
@@ -206,7 +228,7 @@ export function bootTargetResolvers(): void {
   // ALL underlying DEXes (Orca/Raydium/Meteora) and both share-calculation
   // methods; the mobile adapter is what actually restricts to a verified
   // subset, failing closed to Manual for the rest.
-  registerResolver(KaminoLiquidityResolver);
+  registerNonEvm("solana", KaminoLiquidityResolver);
   // Solana — Raydium CPMM (self-contained constant-product AMM, no zap, MAX-
   // only withdraw). Emits `{ kind: "raydium-cpmm-pool" }` for the mobile
   // RaydiumCpmmAdapter. DeFiLlama's `raydium-amm` project also carries
@@ -215,25 +237,25 @@ export function bootTargetResolvers(): void {
   // recovering the real pool address by joining Raydium's own
   // `/pools/info/mint` API on the pool's mint pair, same disambiguation
   // discipline as KaminoLendResolver.
-  registerResolver(RaydiumCpmmResolver);
+  registerNonEvm("solana", RaydiumCpmmResolver);
   // Solana — Raydium legacy AMM v4 (OpenBook-linked, the majority of real
   // "Standard" raydium-amm TVL). Claims the SAME `raydium-amm` alias as
   // RaydiumCpmmResolver above — registered second on purpose, so a mint
   // pair with BOTH a CPMM and an AMM v4 pool resolves through CPMM first
   // (see raydium-amm-v4.resolver.ts's header for why the two don't
   // actually compete in practice).
-  registerResolver(RaydiumAmmV4Resolver);
+  registerNonEvm("solana", RaydiumAmmV4Resolver);
   // Solana — Raydium legacy Stable Swap AMM ("version 5", a program
   // separate from AMM v4). Same `raydium-amm` alias set, registered third —
   // the three resolvers never compete, each claims a different program id
   // (see raydium-stable.resolver.ts's header).
-  registerResolver(RaydiumStableResolver);
+  registerNonEvm("solana", RaydiumStableResolver);
   // Solana — Jito Restaking Vault deposit (Kyros's kySOL vault). Emits
   // `{ kind: "jito-vault-deposit" }` for the mobile JitoVaultDepositAdapter.
   // Deposit only — see jito-vault.resolver.ts's header and the mobile
   // adapter's header for why withdraw (a two-step, epoch-cooldown ticket
   // flow on this program) is not wired.
-  registerResolver(JitoVaultResolver);
+  registerNonEvm("solana", JitoVaultResolver);
 
   // ── Tier 1 — widen the existing funnels. No new adapter, no new kind. ────
   // Family A (ERC-4626) first so a protocol that ships BOTH a 4626 wrapper and

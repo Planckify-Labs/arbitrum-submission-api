@@ -40,9 +40,13 @@
  * shaped by one example is the wrong abstraction.
  *
  * The safety layer already docks correctly and is the reference: a chain
- * implements `ChainSafetyProvider`, optional capabilities like `readExitTerms?`
- * are presence-checked, and a namespace with no provider no-ops rather than
- * blocking (§11.4).
+ * implements `ChainSafetyProvider` and optional capabilities like
+ * `readExitTerms?` are presence-checked (§11.4). One correction to what this
+ * comment used to claim: a namespace with no provider does NOT no-op — Layer
+ * 1's `target-has-code` refuses it outright with `unsupported_chain`, which is
+ * the §11.3 posture (a chain we cannot verify is Manual-only, never "in-app").
+ * Presence-checking applies to a docked provider's OPTIONAL capabilities, not
+ * to the provider itself.
  *
  * ## What this is NOT
  *

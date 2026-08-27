@@ -59,6 +59,27 @@ export function familyEnabled(tier: TierKey, family: string): boolean {
 }
 
 /**
+ * The same per-family switch for the non-EVM namespaces.
+ *
+ * Every Sui and Solana resolver used to be a bare `registerResolver(...)` in
+ * `bootstrap.ts`: no tier, no sub-flag, and — the part that matters during an
+ * incident — no way for `isFamilyKilled` to reach them. A protocol going bad
+ * on Sui or Solana meant shipping a release, while the same protocol on EVM
+ * was one env var away.
+ *
+ * **Default ON**, unlike the EVM tiers. These families are LIVE today, so a
+ * default-off flag would not be a review gate, it would be an outage
+ * disguised as caution. What the flag buys is the ability to turn one off.
+ */
+export function nonEvmFamilyEnabled(
+  namespace: "sui" | "solana",
+  family: string,
+): boolean {
+  const key = family.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+  return flag(`FEATURE_DEFI_${namespace.toUpperCase()}_FAMILY_${key}`, true);
+}
+
+/**
  * Layer-3 per-family global kill-switch (§11 Layer-3). Distinct from the
  * rollout flag: ops flips this on an exploit disclosure to stop an ALREADY
  * live family instantly, without touching user state or redeploying the

@@ -13,7 +13,11 @@
 
 import type { DeFiLlamaYieldPool } from "../external/defillama.client";
 import { loadChainDirectory } from "./chain-directory";
-import { EVM_TARGET_KINDS, isEvmTargetKind } from "./types";
+import {
+  EVM_TARGET_KINDS,
+  isEvmTargetKind,
+  NON_EVM_TARGET_KINDS,
+} from "./types";
 import type { DepositTarget } from "./types";
 
 // Stub the RPC layer. Each test sets `reads` to the answers it wants; anything
@@ -32,7 +36,7 @@ jest.mock("./rpc", () => ({
 }));
 
 // Imported after the mock so the module picks up the stub.
-const { deriveMorphoMarketId, validateTarget } =
+const { deriveMorphoMarketId, isResolverValidatedKind, validateTarget } =
   require("./validation") as typeof import("./validation");
 
 const UNDERLYING = "0x1111111111111111111111111111111111111111";
@@ -91,6 +95,26 @@ describe("§8.1 — no EVM kind is trusted without a validator", () => {
       lstType: "0x2::haSUI",
     };
     expect(await validateTarget(target, pool({ chain: "Sui" }))).toBe(true);
+  });
+});
+
+describe("no NON-EVM kind is trusted without naming what validates it", () => {
+  it("declares resolver-internal validation for every non-EVM kind", () => {
+    // The ratchet §8.1 installed for EVM, extended past the EVM boundary: a
+    // Sui/Solana kind used to validate BY BEING non-EVM, so "nobody checked
+    // this" and "its resolver checked it" were the same answer.
+    const undeclared = NON_EVM_TARGET_KINDS.filter(
+      (kind) => !isResolverValidatedKind(kind),
+    );
+    expect(undeclared).toEqual([]);
+  });
+
+  it("refuses a non-EVM kind nobody has declared", async () => {
+    const target = {
+      kind: "some-new-sui-family",
+      pool: "0x1",
+    } as unknown as DepositTarget;
+    expect(await validateTarget(target, pool({ chain: "Sui" }))).toBe(false);
   });
 });
 
