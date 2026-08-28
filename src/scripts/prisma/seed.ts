@@ -765,21 +765,6 @@ async function main() {
       },
     }),
     prisma.blockchain.upsert({
-      where: { chainId: 17000 },
-      update: {
-        rpcUrl: "/evm/17000",
-      },
-      create: {
-        name: "Ethereum Holesky",
-        chainId: 17000,
-        rpcUrl: "/evm/17000",
-        blockExplorer: "https://holesky.etherscan.io",
-        type: "EVM",
-        isActive: true,
-        isTestnet: true,
-      },
-    }),
-    prisma.blockchain.upsert({
       where: { chainId: 42161 },
       update: {
         rpcUrl: "/evm/42161",
@@ -1459,43 +1444,6 @@ async function main() {
         isActive: true,
       },
     }),
-    // Lido on Holesky (testnet)
-    prisma.smartContract.upsert({
-      where: { id: "lido-steth-holesky" },
-      update: {},
-      create: {
-        id: "lido-steth-holesky",
-        name: "lido_steth",
-        type: "protocol",
-        blockchainId: evmChain(17000).id, // Ethereum Holesky
-        address: "0x3F1c547b21f65e10480dE3ad8E19fAAC46C95034",
-        isActive: true,
-      },
-    }),
-    prisma.smartContract.upsert({
-      where: { id: "lido-wsteth-holesky" },
-      update: {},
-      create: {
-        id: "lido-wsteth-holesky",
-        name: "lido_wsteth",
-        type: "protocol",
-        blockchainId: evmChain(17000).id,
-        address: "0x8d09a4502Cc8Cf1547aD300E066060D043f6982D",
-        isActive: true,
-      },
-    }),
-    prisma.smartContract.upsert({
-      where: { id: "lido-withdrawal-queue-holesky" },
-      update: {},
-      create: {
-        id: "lido-withdrawal-queue-holesky",
-        name: "lido_withdrawal_queue",
-        type: "protocol",
-        blockchainId: evmChain(17000).id,
-        address: "0xc7cc160b58F8Bb0baC94b80847E2CF2800565C50",
-        isActive: true,
-      },
-    }),
     // ─────────────────────── Curve 3pool ───────────────────────────────
     prisma.smartContract.upsert({
       where: { id: "curve-3pool-ethereum" },
@@ -1610,30 +1558,6 @@ async function main() {
         type: "protocol",
         blockchainId: evmChain(1).id,
         address: "0x93c4b944D05dfe6df7645A86cd2206016c51564D",
-        isActive: true,
-      },
-    }),
-    prisma.smartContract.upsert({
-      where: { id: "eigenlayer-strategy-manager-holesky" },
-      update: {},
-      create: {
-        id: "eigenlayer-strategy-manager-holesky",
-        name: "eigenlayer_strategy_manager",
-        type: "protocol",
-        blockchainId: evmChain(17000).id, // Holesky
-        address: "0xdfB5f6CE42aAA7830E94ECFCcAd411beF4d4D5b6",
-        isActive: true,
-      },
-    }),
-    prisma.smartContract.upsert({
-      where: { id: "eigenlayer-delegation-manager-holesky" },
-      update: {},
-      create: {
-        id: "eigenlayer-delegation-manager-holesky",
-        name: "eigenlayer_delegation_manager",
-        type: "protocol",
-        blockchainId: evmChain(17000).id,
-        address: "0xA44151489861Fe9e3055d95adC98FbD462B948e7",
         isActive: true,
       },
     }),
@@ -2138,39 +2062,6 @@ async function main() {
         blockchainId: evmChain(42161).id, // Arbitrum mainnet
         contractAddress: "0x0000000000000000000000000000000000000004",
         logoUrl: "https://cryptologos.cc/logos/arbitrum-arb-logo.png?v=040",
-        isStablecoin: false,
-        isNativeCurrency: true,
-        isActive: true,
-      },
-    }),
-    // ETH on Ethereum Holesky (testnet). Previously missing — Holesky was
-    // inserted at blockchains[6] after the token refs were written, so it
-    // never got a native row. logoUrl is the Ethereum mark.
-    prisma.token.upsert({
-      where: {
-        blockchainId_contractAddress: {
-          blockchainId: evmChain(17000).id,
-          contractAddress: "0x0000000000000000000000000000000000000000",
-        },
-      },
-      update: {
-        name: "Ethereum Holesky",
-        symbol: "ETH",
-        decimals: 18,
-        logoUrl:
-          "https://assets.coingecko.com/coins/images/279/small/ethereum.png",
-        isStablecoin: false,
-        isNativeCurrency: true,
-        isActive: true,
-      },
-      create: {
-        name: "Ethereum Holesky",
-        symbol: "ETH",
-        decimals: 18,
-        blockchainId: evmChain(17000).id, // Ethereum Holesky
-        contractAddress: "0x0000000000000000000000000000000000000000",
-        logoUrl:
-          "https://assets.coingecko.com/coins/images/279/small/ethereum.png",
         isStablecoin: false,
         isNativeCurrency: true,
         isActive: true,
