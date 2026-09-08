@@ -1094,16 +1094,27 @@ async function main() {
         isActive: true,
       },
     }),
-    // takumi_pay on Base Sepolia
+    // takumi_pay on Base Sepolia — TakumiPay 2.1.0 behind a UUPS proxy, see
+    // ../contract/evm/deployments/84532.json. USDC allowlisted as a payment
+    // token and a 1000 USDC sweep cap applied on-chain; matches the
+    // Arc-testnet row below in converging `address` on re-seed rather than
+    // using `update: {}`, since the previous address here
+    // (0x479B0843C3e0627f36551660506dEd5b349Fa968) was a stale copy-paste of
+    // the Arbitrum One mainnet proxy, not a real Base Sepolia deployment.
     prisma.smartContract.upsert({
       where: { id: "smart-contract-payment-base" },
-      update: {},
+      update: {
+        name: "takumi_pay",
+        type: "payment",
+        address: "0x999887c7365E6a344600Ea8Ba360ff7Df581aCF5",
+        isActive: true,
+      },
       create: {
         id: "smart-contract-payment-base",
         name: "takumi_pay",
         type: "payment",
-        blockchainId: evmChain(84532).id, // Base (Sepolia)
-        address: "0x479B0843C3e0627f36551660506dEd5b349Fa968",
+        blockchainId: evmChain(84532).id, // Base Sepolia
+        address: "0x999887c7365E6a344600Ea8Ba360ff7Df581aCF5",
         isActive: true,
       },
     }),
@@ -1808,6 +1819,39 @@ async function main() {
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "IDR",
+      },
+    }),
+    // USDC on Base Sepolia — Circle's official testnet USDC, confirmed
+    // on-chain (symbol/decimals read via cast, not assumed). Allowlisted as
+    // a payment token on the takumi_pay proxy above.
+    prisma.token.upsert({
+      where: {
+        blockchainId_contractAddress: {
+          blockchainId: evmChain(84532).id,
+          contractAddress: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        },
+      },
+      update: {
+        name: "USD Coin",
+        symbol: "USDC",
+        decimals: 6,
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/6319/small/usdc.png",
+        isStablecoin: true,
+        isActive: true,
+        peggedCurrency: "USD",
+      },
+      create: {
+        name: "USD Coin",
+        symbol: "USDC",
+        decimals: 6,
+        blockchainId: evmChain(84532).id, // Base Sepolia
+        contractAddress: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        logoUrl:
+          "https://assets.coingecko.com/coins/images/6319/small/usdc.png",
+        isStablecoin: true,
+        isActive: true,
+        peggedCurrency: "USD",
       },
     }),
     // USDT on Arbitrum (mainnet) — contract `0xFd08…` is Arbitrum One USDT.
