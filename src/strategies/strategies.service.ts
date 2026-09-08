@@ -10,7 +10,11 @@ import {
   alchemyNetworkForChainId,
 } from "./external/alchemy-prices.client";
 import { LifiClient, LifiQuote } from "./external/lifi.client";
-import { ZerionClient, type ZerionPosition } from "./external/zerion.client";
+import {
+  CHAIN_ID_BY_ZERION_ID,
+  ZerionClient,
+  type ZerionPosition,
+} from "../external/zerion";
 import { COMET_MARKETS, cometMarkets } from "./targets/address-book";
 import { OPP_ROW_CACHE_TTL_SEC, oppRowCacheKey } from "./targets/cache-keys";
 import { findChainById } from "./targets/chain-directory";
@@ -21,17 +25,6 @@ const COMET_DISCOVERY_ABI = parseAbi([
   "function balanceOf(address account) view returns (uint256)",
   "function baseToken() view returns (address)",
 ]);
-
-/** Zerion's chain-id vocabulary -> our numeric EVM chainId. Third-party
- *  naming, same "address-book posture" as Alchemy's network-slug map. */
-const CHAIN_ID_BY_ZERION_ID: Record<string, number> = {
-  ethereum: 1,
-  base: 8453,
-  arbitrum: 42161,
-  optimism: 10,
-  polygon: 137,
-  "binance-smart-chain": 56,
-};
 
 /**
  * Risk tiers, safest first. Order is the whole point: a user's tier is the

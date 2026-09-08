@@ -38,6 +38,7 @@ import { AdminPaymentIntentsModule } from "./admin/payment-intents/admin-payment
 import { AuditLogsModule } from "./admin/audit-logs/audit-logs.module";
 import { UserOpModule } from "./userop/userop.module";
 import { StrategiesModule } from "./strategies/strategies.module";
+import { PortfolioModule } from "./portfolio/portfolio.module";
 import { BridgeModule } from "./bridge/bridge.module";
 import { PushModule } from "./push/push.module";
 import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
@@ -87,6 +88,7 @@ import { InvalidateCacheInterceptor } from "./valkey/interceptors/invalidate-cac
     AuditLogsModule,
     UserOpModule,
     StrategiesModule,
+    PortfolioModule,
     BridgeModule,
     PushModule,
   ],

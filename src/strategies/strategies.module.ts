@@ -8,7 +8,7 @@ import { DeBankClient } from "./external/debank.client";
 import { DeFiLlamaClient } from "./external/defillama.client";
 import { LifiClient } from "./external/lifi.client";
 import { SuiLstSource } from "./external/sui-lst.source";
-import { ZerionClient } from "./external/zerion.client";
+import { ZerionModule } from "../external/zerion";
 import { RecurringInvestService } from "./recurring-invest.service";
 import { RouterQuoteService } from "./router-quote.service";
 import { ScoringService } from "./scoring/scoring.service";
@@ -30,6 +30,7 @@ import { StablecoinDepegWatcherProcessor } from "./workers/stablecoin-depeg-watc
     PrismaModule,
     ValkeyModule,
     PushModule,
+    ZerionModule,
     BullModule.registerQueue(
       { name: "defillama-poll" },
       { name: "score-opportunities" },
@@ -49,7 +50,6 @@ import { StablecoinDepegWatcherProcessor } from "./workers/stablecoin-depeg-watc
     StrategiesScheduler,
     DeFiLlamaClient,
     SuiLstSource,
-    ZerionClient,
     LifiClient,
     DeBankClient,
     AlchemyPricesClient,

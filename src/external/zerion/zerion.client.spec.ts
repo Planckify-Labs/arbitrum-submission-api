@@ -126,6 +126,12 @@ describe("ZerionClient.getPositions", () => {
       quantityRaw: "914281587",
       decimals: 6,
       valueUsd: 914.0474654511663,
+      // Widened normalizer: the raw position_type is carried through instead
+      // of being flattened away, so borrowed/locked/reward rows can reach the
+      // UI while reconciliation keeps filtering down to deposit/staked.
+      status: "deposit",
+      chainId: 8453,
+      logoUrl: null,
     });
   });
 
