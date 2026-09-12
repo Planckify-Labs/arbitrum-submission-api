@@ -14,7 +14,10 @@ import { getAppConfig } from "./config/app.config";
 import { setupSwagger } from "./config/swagger.config";
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // `rawBody`: the WalletConnect push endpoint verifies the relay's
+  // Ed25519 signature over the exact request bytes (see
+  // walletconnect-push/relay-signature.service.ts).
+  const app = await NestFactory.create(AppModule, { rawBody: true });
   const configService = app.get(ConfigService);
   const appConfig = getAppConfig(configService);
 

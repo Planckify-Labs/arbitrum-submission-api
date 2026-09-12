@@ -192,6 +192,23 @@ model DevicePushToken {
   @@index([userId])
 }
 
+/// WalletConnect push-server registration (specs/servers/push): the relay
+/// client id of a wallet install, mapped to the device's Expo push token.
+/// WalletConnect calls this API's push endpoints (the project's Dashboard
+/// "Push URL") when a session request arrives for a client whose relay
+/// socket is closed; we look the token up here and deliver through Expo.
+model WalletConnectPushClient {
+  clientId  String   @id
+  token     String
+  /// "fcm" | "apns" | "apns-sandbox" | "noop" (informational; delivery is Expo).
+  type      String
+  alwaysRaw Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([token])
+}
+
 /// Links a device to a wallet address it should receive notifications for.
 /// walletAddress is a plain string — any chain format, no namespace lock-in.
 /// The replace-on-register strategy keeps this table authoritative from the

@@ -183,6 +183,22 @@ export class PushService {
     });
   }
 
+  /**
+   * Send a push to specific Expo tokens (the WalletConnect push server
+   * maps relay client ids to tokens itself). Unknown tokens are skipped:
+   * delivery bookkeeping (receipts, pruning) hangs off DevicePushToken.
+   */
+  async sendToTokens(
+    tokens: string[],
+    args: SendPushArgs,
+  ): Promise<SendPushResult> {
+    const devices = await this.prisma.devicePushToken.findMany({
+      where: { token: { in: tokens } },
+      select: { id: true, token: true },
+    });
+    return this.dispatch(devices, args, {});
+  }
+
   /** Send a push to every device subscribed to a wallet address. */
   async sendToWallet(args: SendToWalletArgs): Promise<SendPushResult> {
     const subs = await this.prisma.walletPushSubscription.findMany({

@@ -1,51 +1,52 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
+import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 import { ScheduleModule } from "@nestjs/schedule";
-import { AppController } from "./app.controller";
-import { AppService } from "./app.service";
-import { PrismaModule } from "./prisma/prisma.module";
-import { ProductsModule } from "./products/products.module";
-import { UsersModule } from "./users/users.module";
-import { VendorsModule } from "./vendors/vendors.module";
-import { TransactionsModule } from "./transactions/transactions.module";
-import { TokensModule } from "./tokens/tokens.module";
-import { RegionsModule } from "./regions/regions.module";
-import { BlockchainsModule } from "./blockchains/blockchains.module";
-import { SmartContractsModule } from "./smart-contracts/smart-contracts.module";
-import { PurchasesModule } from "./purchases/purchases.module";
-import { BookingModule } from "./booking/booking.module";
-import { ExchangeRateModule } from "./exchange-rate/exchange-rate.module";
-import { VendorAPIModule } from "./providers/vendor-api/vendor-api.module";
-import { AuthModule } from "./auth/auth.module";
-import { ApiKeysModule } from "./api-keys/api-keys.module";
-import { ValkeyModule } from "./valkey/valkey.module";
-import { QueueModule } from "./queue/queue.module";
-import { DappsModule } from "./dapps/dapps.module";
 import { AddressBookModule } from "./address-book/address-book.module";
-import { PointsModule } from "./points/points.module";
-import { RedeemModule } from "./redeem/redeem.module";
-import { FlashSalesModule } from "./flash-sales/flash-sales.module";
-import { NftModule } from "./nft/nft.module";
-import { NatsModule } from "./nats/nats.module";
-import { StatsModule } from "./stats/stats.module";
-import { X402Module } from "./x402/x402.module";
-import { PayModule } from "./pay/pay.module";
-import { PayoutModule } from "./payout/payout.module";
-import { MerchantsModule } from "./merchants/merchants.module";
-import { QrisDisputesModule } from "./admin/qris-disputes/qris-disputes.module";
+import { AuditLogsModule } from "./admin/audit-logs/audit-logs.module";
 import { AdminMerchantsModule } from "./admin/merchants/admin-merchants.module";
 import { AdminPaymentIntentsModule } from "./admin/payment-intents/admin-payment-intents.module";
-import { AuditLogsModule } from "./admin/audit-logs/audit-logs.module";
-import { UserOpModule } from "./userop/userop.module";
-import { StrategiesModule } from "./strategies/strategies.module";
-import { PortfolioModule } from "./portfolio/portfolio.module";
-import { BridgeModule } from "./bridge/bridge.module";
-import { PushModule } from "./push/push.module";
-import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
-import { JwtAuthGuard } from "./auth/guards/jwt-auth.guard";
+import { QrisDisputesModule } from "./admin/qris-disputes/qris-disputes.module";
+import { ApiKeysModule } from "./api-keys/api-keys.module";
+import { AppController } from "./app.controller";
+import { AppService } from "./app.service";
+import { AuthModule } from "./auth/auth.module";
 import { ApiKeyGuard } from "./auth/guards/api-key.guard";
+import { JwtAuthGuard } from "./auth/guards/jwt-auth.guard";
+import { BlockchainsModule } from "./blockchains/blockchains.module";
+import { BookingModule } from "./booking/booking.module";
+import { BridgeModule } from "./bridge/bridge.module";
+import { DappsModule } from "./dapps/dapps.module";
+import { ExchangeRateModule } from "./exchange-rate/exchange-rate.module";
+import { FlashSalesModule } from "./flash-sales/flash-sales.module";
+import { MerchantsModule } from "./merchants/merchants.module";
+import { NatsModule } from "./nats/nats.module";
+import { NftModule } from "./nft/nft.module";
+import { PayModule } from "./pay/pay.module";
+import { PayoutModule } from "./payout/payout.module";
+import { PointsModule } from "./points/points.module";
+import { PortfolioModule } from "./portfolio/portfolio.module";
+import { PrismaModule } from "./prisma/prisma.module";
+import { ProductsModule } from "./products/products.module";
+import { VendorAPIModule } from "./providers/vendor-api/vendor-api.module";
+import { PurchasesModule } from "./purchases/purchases.module";
+import { PushModule } from "./push/push.module";
+import { QueueModule } from "./queue/queue.module";
+import { RedeemModule } from "./redeem/redeem.module";
+import { RegionsModule } from "./regions/regions.module";
+import { SmartContractsModule } from "./smart-contracts/smart-contracts.module";
+import { StatsModule } from "./stats/stats.module";
+import { StrategiesModule } from "./strategies/strategies.module";
+import { TokensModule } from "./tokens/tokens.module";
+import { TransactionsModule } from "./transactions/transactions.module";
+import { UserOpModule } from "./userop/userop.module";
+import { UsersModule } from "./users/users.module";
 import { CacheInterceptor } from "./valkey/interceptors/cache.interceptor";
 import { InvalidateCacheInterceptor } from "./valkey/interceptors/invalidate-cache.interceptor";
+import { ValkeyModule } from "./valkey/valkey.module";
+import { VendorsModule } from "./vendors/vendors.module";
+import { WalletConnectPushModule } from "./walletconnect-push/walletconnect-push.module";
+import { X402Module } from "./x402/x402.module";
 
 @Module({
   imports: [
@@ -91,6 +92,7 @@ import { InvalidateCacheInterceptor } from "./valkey/interceptors/invalidate-cac
     PortfolioModule,
     BridgeModule,
     PushModule,
+    WalletConnectPushModule,
   ],
   controllers: [AppController],
   providers: [
