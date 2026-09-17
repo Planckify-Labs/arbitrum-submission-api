@@ -1,6 +1,20 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { QuoteCommitmentResponseDto } from "./quote-commitment-response.dto";
 
+export class SourceTokenResponseDto {
+  @ApiProperty()
+  id!: string;
+
+  @ApiProperty({ example: "AUSD" })
+  symbol!: string;
+
+  @ApiProperty({ example: 6 })
+  decimals!: number;
+
+  @ApiPropertyOptional({ description: "null for a chain's native asset" })
+  contractAddress?: string | null;
+}
+
 /**
  * Wire shape of the Nanopay authorization block inside
  * `PaymentIntentResponse`. Mirrors the mobile-side `NanopayPayload` in
@@ -57,7 +71,10 @@ export class NanopayPayloadResponseDto {
   })
   usdc?: `0x${string}`;
 
-  @ApiProperty({ description: "Source chain the payer debits USDC from (EVM chainId or sentinel for SVM)." })
+  @ApiProperty({
+    description:
+      "Source chain the payer debits USDC from (EVM chainId or sentinel for SVM).",
+  })
   sourceChainId!: number;
 
   @ApiPropertyOptional({
@@ -76,16 +93,20 @@ export class NanopayPayloadResponseDto {
   from?: `0x${string}`;
 
   @ApiPropertyOptional({
-    description: "Platform treasury EOA (`to` field of the EIP-3009 struct). EVM-only.",
+    description:
+      "Platform treasury EOA (`to` field of the EIP-3009 struct). EVM-only.",
   })
   to?: `0x${string}`;
 
   @ApiProperty({
-    description: "USDC atomic (6-decimal) amount as a decimal string to preserve bigint precision.",
+    description:
+      "USDC atomic (6-decimal) amount as a decimal string to preserve bigint precision.",
   })
   value!: string;
 
-  @ApiProperty({ description: "Unix seconds; authorization is invalid before this time." })
+  @ApiProperty({
+    description: "Unix seconds; authorization is invalid before this time.",
+  })
   validAfter!: number;
 
   @ApiProperty({
@@ -110,10 +131,26 @@ export class PaymentIntentResponseDto {
   id!: string;
 
   @ApiProperty({
-    description: "Mobile-facing status string. Lowercase per the mobile type contract.",
-    enum: ["pending", "submitting", "settling", "paid", "paid_out", "failed", "expired"],
+    description:
+      "Mobile-facing status string. Lowercase per the mobile type contract.",
+    enum: [
+      "pending",
+      "submitting",
+      "settling",
+      "paid",
+      "paid_out",
+      "failed",
+      "expired",
+    ],
   })
-  status!: "pending" | "submitting" | "settling" | "paid" | "paid_out" | "failed" | "expired";
+  status!:
+    | "pending"
+    | "submitting"
+    | "settling"
+    | "paid"
+    | "paid_out"
+    | "failed"
+    | "expired";
 
   @ApiPropertyOptional({
     description: "Settlement path. Drives the mobile pay-path selector.",
@@ -122,9 +159,28 @@ export class PaymentIntentResponseDto {
   path?: string;
 
   @ApiProperty({
-    description: "USDC atomic (6-decimal) amount. Decimal string to survive JSON bigint precision loss.",
+    description:
+      "Settlement amount in 6-decimal micros of the settlement token (USDC on the nanopay rail; the selected token on the on-chain rail — the name predates multi-token settlement). Decimal string to survive JSON bigint precision loss.",
   })
   nanopayUsdcAmountMicros!: string;
+
+  @ApiPropertyOptional({
+    description:
+      "On-chain rail only: the settlement amount in the selected token's own minor units (`nanopayUsdcAmountMicros` scaled to `sourceToken.decimals`). Display this with `sourceToken`, never as USDC.",
+  })
+  tokenAmountMinor?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "On-chain rail only: id of the token the payer settles in (`Token.id`).",
+  })
+  sourceTokenId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "On-chain rail only: the settlement token, so the client can label the amount without a second fetch.",
+  })
+  sourceToken?: SourceTokenResponseDto;
 
   @ApiProperty({
     description:
@@ -147,7 +203,8 @@ export class PaymentIntentResponseDto {
   nanopay!: NanopayPayloadResponseDto | null;
 
   @ApiProperty({
-    description: "Unix milliseconds the intent expires at (nanopay validBefore + 60s buffer).",
+    description:
+      "Unix milliseconds the intent expires at (nanopay validBefore + 60s buffer).",
   })
   expiresAt!: number;
 

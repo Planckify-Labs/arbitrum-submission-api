@@ -535,10 +535,73 @@ describe("IntentsService.getIntent", () => {
       },
       merchant: { findUnique: jest.fn() },
       exchangeRate: { findFirst: jest.fn() },
+      smartContract: { findFirst: jest.fn(async () => null) },
     };
     const { svc } = buildService({ prisma: prisma as unknown as FakePrisma });
     return { svc, prisma };
   }
+
+  it("on the on-chain rail, names the settlement token and its own-unit amount so the client never labels it USDC", async () => {
+    const { svc } = buildGetService(
+      intentRow({
+        path: "takumipay",
+        onchainSettlements: [],
+        sourceToken: {
+          id: "ausd-monad-testnet-token",
+          symbol: "AUSD",
+          decimals: 6,
+          contractAddress: "0x1aC593085Fa34c651E805085da4b2cabAC676F99",
+          blockchain: { id: "monad-testnet", type: "EVM", chainId: 10143 },
+        },
+      }),
+    );
+    const result = await svc.getIntent({
+      intentId: "pi_01HXYZ",
+      userId: "user_payer",
+      walletAddress: null,
+    });
+    expect(result.sourceTokenId).toBe("ausd-monad-testnet-token");
+    expect(result.sourceToken).toEqual({
+      id: "ausd-monad-testnet-token",
+      symbol: "AUSD",
+      decimals: 6,
+      contractAddress: "0x1aC593085Fa34c651E805085da4b2cabAC676F99",
+    });
+    expect(result.tokenAmountMinor).toBe("941294");
+  });
+
+  it("scales tokenAmountMinor to the token's decimals (18-dec token: micros × 10^12)", async () => {
+    const { svc } = buildGetService(
+      intentRow({
+        path: "takumipay",
+        onchainSettlements: [],
+        sourceToken: {
+          id: "tok18",
+          symbol: "X18",
+          decimals: 18,
+          contractAddress: "0x2222222222222222222222222222222222222222",
+          blockchain: { id: "chain", type: "EVM", chainId: 1 },
+        },
+      }),
+    );
+    const result = await svc.getIntent({
+      intentId: "pi_01HXYZ",
+      userId: "user_payer",
+      walletAddress: null,
+    });
+    expect(result.tokenAmountMinor).toBe("941294000000000000");
+  });
+
+  it("omits the token fields on the nanopay rail (USDC is implied there)", async () => {
+    const { svc } = buildGetService(intentRow({ path: "nanopay" }));
+    const result = await svc.getIntent({
+      intentId: "pi_01HXYZ",
+      userId: "user_payer",
+      walletAddress: null,
+    });
+    expect(result.sourceToken).toBeUndefined();
+    expect(result.tokenAmountMinor).toBeUndefined();
+  });
 
   it("returns the intent on the happy path when the caller is the payer by userId", async () => {
     const { svc } = buildGetService(intentRow());

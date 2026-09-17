@@ -192,6 +192,39 @@ export interface OnchainSettlementJobData {
   blockchainId: string;
 }
 
+/**
+ * The on-chain rail settles in whatever token the payer selected, but the
+ * intent stores the amount as 6-decimal micros of that token (the column
+ * name predates multi-token settlement). Give the client the token and
+ * the amount in its own minor units so it never has to guess — a Monad
+ * AUSD quote must read "2.97 AUSD", not "2.97 USDC".
+ */
+function sourceTokenFields(
+  token: {
+    id: string;
+    symbol: string;
+    decimals: number;
+    contractAddress: string | null;
+  } | null,
+  amountMicros: bigint | null,
+): Pick<
+  PaymentIntentResponseDto,
+  "sourceTokenId" | "sourceToken" | "tokenAmountMinor"
+> {
+  if (!token) return {};
+  const scale = 10n ** BigInt(Math.max(token.decimals - 6, 0));
+  return {
+    sourceTokenId: token.id,
+    sourceToken: {
+      id: token.id,
+      symbol: token.symbol,
+      decimals: token.decimals,
+      contractAddress: token.contractAddress,
+    },
+    tokenAmountMinor: ((amountMicros ?? 0n) * scale).toString(),
+  };
+}
+
 const DB_TO_MOBILE_STATUS: Record<
   PaymentIntentStatus,
   PaymentIntentResponseDto["status"]
@@ -1149,6 +1182,7 @@ export class IntentsService {
       currency: dto.currency,
       fxRate: fx.fxRate,
       nanopayUsdcAmountMicros: totalAmount.toString(),
+      ...sourceTokenFields(tokenRow, totalAmount),
       nanopayUsdcSourceChainId: sourceChainId,
       nanopayUsdcTreasuryAddress: "",
       nanopay: null,
@@ -1405,6 +1439,9 @@ export class IntentsService {
       createdAt: intent.createdAt.getTime(),
       payoutReferenceId,
       settledAt,
+      ...(intent.path === "takumipay"
+        ? sourceTokenFields(intent.sourceToken, intent.nanopayUsdcAmountMicros)
+        : {}),
       // Prefer the contract the quote was actually signed against — the
       // signature binds `verifyingContract`, so submitting to a different
       // address (the `findFirst` below is not filtered by name) would fail
