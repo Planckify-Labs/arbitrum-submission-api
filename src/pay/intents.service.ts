@@ -19,10 +19,10 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import * as nacl from "tweetnacl";
 import { type Hash, type Hex, stringToHex } from "viem";
 import { BlockchainVerificationService } from "../blockchain-verification/blockchain-verification.service";
 import { StellarVerificationService } from "../blockchain-verification/stellar-verification.service";
-import * as nacl from "tweetnacl";
 import { QrSigningService } from "../merchants/qr-signing.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TransactionsService } from "../transactions/transactions.service";
@@ -30,17 +30,16 @@ import { BlockchainCacheService } from "../valkey/services/blockchain-cache.serv
 import { ValkeyService } from "../valkey/valkey.service";
 import { X402SupportedService } from "../x402/x402-supported.service";
 import {
-  CIRCLE_SETTLE_CLIENT,
-  type CircleSettleOutcome,
-  type ICircleSettleClient,
-} from "./circle-settle.client";
-import {
   CIRCLE_SETTLE_SVM_CLIENT,
   type CircleSettleSvmOutcome,
   type ICircleSettleSvmClient,
 } from "./circle-settle-svm.client";
+import {
+  CIRCLE_SETTLE_CLIENT,
+  type CircleSettleOutcome,
+  type ICircleSettleClient,
+} from "./circle-settle.client";
 import type { CreateIntentDto } from "./dto/create-intent.dto";
-import { computePlatformFee } from "./platform-fee.util";
 import type { DepositReceiptResponseDto } from "./dto/deposit-receipt.dto";
 import type {
   NanopayFailureCode,
@@ -51,6 +50,7 @@ import type {
   PaymentIntentResponseDto,
 } from "./dto/payment-intent-response.dto";
 import type { QuoteCommitmentResponseDto } from "./dto/quote-commitment-response.dto";
+import { computePlatformFee } from "./platform-fee.util";
 import { QuoteSignerService } from "./quote-signer.service";
 
 /**
@@ -122,7 +122,8 @@ const STELLAR_TESTNET_SENTINEL_CHAIN_ID = -202;
  * USDC SPL mint fallback — only used if the Token table lookup fails.
  * Prefer {@link IntentsService.resolveSvmUsdcMint} which reads from the DB.
  */
-const USDC_SPL_MINT_MAINNET_FALLBACK = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+const USDC_SPL_MINT_MAINNET_FALLBACK =
+  "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 /**
  * Return true iff the chain-id is a SVM sentinel. Single predicate so
@@ -213,7 +214,11 @@ interface ResolvedFx {
 @Injectable()
 export class IntentsService {
   private readonly logger = new Logger(IntentsService.name);
-  private svmSignerKeypair: { secretKey: Uint8Array; publicKey: Uint8Array; publicKeyBase58: string } | null = null;
+  private svmSignerKeypair: {
+    secretKey: Uint8Array;
+    publicKey: Uint8Array;
+    publicKeyBase58: string;
+  } | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -246,19 +251,34 @@ export class IntentsService {
       try {
         const decoded = new Uint8Array(JSON.parse(raw));
         const pubBytes = decoded.slice(32);
-        const bs58Chars = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+        const bs58Chars =
+          "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
         let num = BigInt(0);
         for (const b of pubBytes) num = num * 256n + BigInt(b);
         let b58 = "";
-        while (num > 0n) { b58 = bs58Chars[Number(num % 58n)] + b58; num /= 58n; }
-        for (const b of pubBytes) { if (b === 0) b58 = "1" + b58; else break; }
-        this.svmSignerKeypair = { secretKey: decoded, publicKey: pubBytes, publicKeyBase58: b58 };
+        while (num > 0n) {
+          b58 = bs58Chars[Number(num % 58n)] + b58;
+          num /= 58n;
+        }
+        for (const b of pubBytes) {
+          if (b === 0) b58 = "1" + b58;
+          else break;
+        }
+        this.svmSignerKeypair = {
+          secretKey: decoded,
+          publicKey: pubBytes,
+          publicKeyBase58: b58,
+        };
         this.logger.log(`[quote-signer] SVM loaded: ${b58}`);
       } catch {
-        this.logger.warn("[quote-signer] Failed to parse SOLANA_QUOTE_SIGNER_PRIVATE_KEY");
+        this.logger.warn(
+          "[quote-signer] Failed to parse SOLANA_QUOTE_SIGNER_PRIVATE_KEY",
+        );
       }
     } else {
-      this.logger.warn("[quote-signer] SOLANA_QUOTE_SIGNER_PRIVATE_KEY not set");
+      this.logger.warn(
+        "[quote-signer] SOLANA_QUOTE_SIGNER_PRIVATE_KEY not set",
+      );
     }
   }
 
@@ -323,9 +343,8 @@ export class IntentsService {
       );
     }
 
-    let merchant: Awaited<
-      ReturnType<typeof this.prisma.merchant.findUnique>
-    > = null;
+    let merchant: Awaited<ReturnType<typeof this.prisma.merchant.findUnique>> =
+      null;
 
     if (dto.merchantId) {
       merchant = await this.prisma.merchant.findUnique({
@@ -333,8 +352,9 @@ export class IntentsService {
       });
     } else if (dto.scannedPayload) {
       if (dto.scannedPayload.startsWith("takumipay:v1:")) {
-        const resolvedId =
-          await this.qrSigning.verifyAndExtractMerchantId(dto.scannedPayload);
+        const resolvedId = await this.qrSigning.verifyAndExtractMerchantId(
+          dto.scannedPayload,
+        );
         merchant = await this.prisma.merchant.findUnique({
           where: { id: resolvedId },
         });
@@ -361,32 +381,47 @@ export class IntentsService {
       });
     }
 
-    this.logger.log(`[createIntent] merchant resolved id=${merchant.id} name="${merchant.displayName}"`);
-
-    // FX snapshot — the spec directs us at USDC→IDR (region=ID). If no row
-    // exists yet (task 26 seeds them in M3), we degrade gracefully with a
-    // 503 rather than guess a rate or block forever. Mobile surfaces this
-    // as "FX temporarily unavailable".
-    const fx = await this.snapshotLatestFx(dto.currency);
-    if (!fx) {
-      throw new ServiceUnavailableException({
-        message: `FX rate unavailable for USDC→${dto.currency}.`,
-        code: "FX_UNAVAILABLE",
-      });
-    }
-
-    this.logger.log(`[createIntent] FX snapshot rate=${fx.fxRate} markup=${fx.fxMarkup} from=${fx.fxFromCurrency} to=${fx.fxToCurrency} provider=${fx.fxProvider}`);
+    this.logger.log(
+      `[createIntent] merchant resolved id=${merchant.id} name="${merchant.displayName}"`,
+    );
 
     const settlementRail = this.config.get<string>(
       "PAYMENT_SETTLEMENT_RAIL",
       "nanopay",
     );
+    const isOnchainRail =
+      settlementRail === "takumipay" || settlementRail === "direct_arc";
 
-    if (settlementRail === "takumipay" || settlementRail === "direct_arc") {
+    // On the on-chain rail the payer picks the token (`sourceTokenId`), so
+    // the FX row must be keyed on THAT token's symbol (USDC→IDR, AUSD→IDR,
+    // …), not a fixed USDC. Resolve it before the snapshot. The nanopay
+    // rail is USDC-only by construction and keeps the fixed symbol.
+    const onchainToken = isOnchainRail
+      ? await this.resolveSourceToken(dto.sourceTokenId)
+      : null;
+    const fxFromCurrency = onchainToken?.symbol ?? "USDC";
+
+    // FX snapshot — `<token>→<currency>` in region=ID. If no row exists yet
+    // we degrade gracefully with a 503 rather than guess a rate or block
+    // forever. Mobile surfaces this as "FX temporarily unavailable".
+    const fx = await this.snapshotLatestFx(fxFromCurrency, dto.currency);
+    if (!fx) {
+      throw new ServiceUnavailableException({
+        message: `FX rate unavailable for ${fxFromCurrency}→${dto.currency}.`,
+        code: "FX_UNAVAILABLE",
+      });
+    }
+
+    this.logger.log(
+      `[createIntent] FX snapshot rate=${fx.fxRate} markup=${fx.fxMarkup} from=${fx.fxFromCurrency} to=${fx.fxToCurrency} provider=${fx.fxProvider}`,
+    );
+
+    if (isOnchainRail && onchainToken) {
       return this.createOnchainIntent({
         dto,
         merchant,
         fx,
+        tokenRow: onchainToken,
         idempotencyKey,
         bodyHash,
         payerUserId,
@@ -407,9 +442,15 @@ export class IntentsService {
 
     let sourceChainId: number;
     let treasuryAddress: string;
-    let x402Entry: ReturnType<X402SupportedService["getSupportedForChain"]> | null;
+    let x402Entry: ReturnType<
+      X402SupportedService["getSupportedForChain"]
+    > | null;
     let payerAddressForPersistence: string;
-    let svmBlockchainRow: { id: string; chainSlug: string; x402FacilitatorUrl: string | null } | null = null;
+    let svmBlockchainRow: {
+      id: string;
+      chainSlug: string;
+      x402FacilitatorUrl: string | null;
+    } | null = null;
 
     if (namespace === "solana") {
       // SVM intent (task 43). Treasury comes from the SVM env; x402 domain
@@ -421,7 +462,9 @@ export class IntentsService {
         "",
       );
       if (!treasuryAddress || treasuryAddress.trim().length === 0) {
-        this.logger.error("[createIntent] PLATFORM_TREASURY_ADDRESS_SVM is not set or empty — SVM intents disabled");
+        this.logger.error(
+          "[createIntent] PLATFORM_TREASURY_ADDRESS_SVM is not set or empty — SVM intents disabled",
+        );
         throw new ServiceUnavailableException({
           message: "SVM payment rail is not available on this deployment.",
           code: "SVM_TREASURY_NOT_CONFIGURED",
@@ -435,7 +478,9 @@ export class IntentsService {
         SVM_MAINNET_SENTINEL_CHAIN_ID,
       );
       if (!svmBlockchainRow?.x402FacilitatorUrl) {
-        this.logger.error("[createIntent] x402FacilitatorUrl not set on SVM blockchain row (chainId=SVM_MAINNET_SENTINEL) — SVM intents disabled");
+        this.logger.error(
+          "[createIntent] x402FacilitatorUrl not set on SVM blockchain row (chainId=SVM_MAINNET_SENTINEL) — SVM intents disabled",
+        );
         throw new ServiceUnavailableException({
           message: "SVM payment rail is not available on this deployment.",
           code: "SVM_FACILITATOR_NOT_CONFIGURED",
@@ -471,7 +516,9 @@ export class IntentsService {
         !x402Entry.verifyingContract ||
         !x402Entry.asset
       ) {
-        this.logger.error(`[createIntent] x402 domain not available for chainId=${ARC_TESTNET_CHAIN_ID} — check CIRCLE_X402_SUPPORTED_URL and boot-time fetch`);
+        this.logger.error(
+          `[createIntent] x402 domain not available for chainId=${ARC_TESTNET_CHAIN_ID} — check CIRCLE_X402_SUPPORTED_URL and boot-time fetch`,
+        );
         throw new ServiceUnavailableException({
           message: "EVM payment rail is not available on this deployment.",
           code: "X402_DOMAIN_UNAVAILABLE",
@@ -482,7 +529,9 @@ export class IntentsService {
         "PLATFORM_TREASURY_ADDRESS_EVM",
       );
       if (!evmTreasury || !/^0x[0-9a-fA-F]{40}$/.test(evmTreasury)) {
-        this.logger.error("[createIntent] PLATFORM_TREASURY_ADDRESS_EVM is not set or invalid — EVM intents disabled");
+        this.logger.error(
+          "[createIntent] PLATFORM_TREASURY_ADDRESS_EVM is not set or invalid — EVM intents disabled",
+        );
         throw new ServiceUnavailableException({
           message: "EVM payment rail is not available on this deployment.",
           code: "TREASURY_NOT_CONFIGURED",
@@ -537,7 +586,9 @@ export class IntentsService {
       nanopayBlock = {
         kind: "svm_partial_tx",
         cluster: "mainnet-beta",
-        usdcMint: x402Entry?.asset ?? await this.resolveSvmUsdcMint(svmBlockchainRow!.id),
+        usdcMint:
+          x402Entry?.asset ??
+          (await this.resolveSvmUsdcMint(svmBlockchainRow!.id)),
         // Backend does NOT pre-build the Solana tx here (task 43 Constraints:
         // "if @solana/web3.js isn't in backend, skip parsing the signed tx
         // on backend"). Mobile's task-42 signer builds + signs; we forward
@@ -654,15 +705,13 @@ export class IntentsService {
     fiatCurrency: string;
     exchangeRateId: number;
     expiresAtSec: number;
-  }): Promise<
-    | {
-        commitment: QuoteCommitmentResponseDto;
-        signature: string;
-        contractAddress: string;
-      }
-    | null
-  > {
-    if (p.blockchain.type !== "EVM" || p.blockchain.chainId == null) return null;
+  }): Promise<{
+    commitment: QuoteCommitmentResponseDto;
+    signature: string;
+    contractAddress: string;
+  } | null> {
+    if (p.blockchain.type !== "EVM" || p.blockchain.chainId == null)
+      return null;
     if (!this.quoteSigner) return null;
 
     const contract = await this.prisma.smartContract.findFirst({
@@ -750,9 +799,21 @@ export class IntentsService {
   }): Uint8Array {
     const parts: Uint8Array[] = [];
     const enc = new TextEncoder();
-    const u32le = (n: number) => { const b = new ArrayBuffer(4); new DataView(b).setUint32(0, n, true); return new Uint8Array(b); };
-    const u64le = (n: bigint) => { const b = new ArrayBuffer(8); new DataView(b).setBigUint64(0, n, true); return new Uint8Array(b); };
-    const i64le = (n: bigint) => { const b = new ArrayBuffer(8); new DataView(b).setBigInt64(0, n, true); return new Uint8Array(b); };
+    const u32le = (n: number) => {
+      const b = new ArrayBuffer(4);
+      new DataView(b).setUint32(0, n, true);
+      return new Uint8Array(b);
+    };
+    const u64le = (n: bigint) => {
+      const b = new ArrayBuffer(8);
+      new DataView(b).setBigUint64(0, n, true);
+      return new Uint8Array(b);
+    };
+    const i64le = (n: bigint) => {
+      const b = new ArrayBuffer(8);
+      new DataView(b).setBigInt64(0, n, true);
+      return new Uint8Array(b);
+    };
 
     const refIdBytes = enc.encode(p.refId);
     parts.push(u32le(refIdBytes.length), refIdBytes);
@@ -766,9 +827,16 @@ export class IntentsService {
     } else {
       const bs58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
       let num = BigInt(0);
-      for (const ch of p.tokenMint) { const i = bs58.indexOf(ch); if (i < 0) break; num = num * 58n + BigInt(i); }
+      for (const ch of p.tokenMint) {
+        const i = bs58.indexOf(ch);
+        if (i < 0) break;
+        num = num * 58n + BigInt(i);
+      }
       const bytes = new Uint8Array(32);
-      for (let i = 31; i >= 0 && num > 0n; i--) { bytes[i] = Number(num & 0xffn); num >>= 8n; }
+      for (let i = 31; i >= 0 && num > 0n; i--) {
+        bytes[i] = Number(num & 0xffn);
+        num >>= 8n;
+      }
       parts.push(bytes);
     }
 
@@ -777,7 +845,8 @@ export class IntentsService {
     parts.push(u64le(p.fiatAmountMinor));
 
     const currBytes = new Uint8Array(3);
-    for (let i = 0; i < Math.min(p.fiatCurrency.length, 3); i++) currBytes[i] = p.fiatCurrency.charCodeAt(i);
+    for (let i = 0; i < Math.min(p.fiatCurrency.length, 3); i++)
+      currBytes[i] = p.fiatCurrency.charCodeAt(i);
     parts.push(currBytes);
 
     parts.push(u64le(p.exchangeRateId));
@@ -786,40 +855,24 @@ export class IntentsService {
     const totalLen = parts.reduce((a, b) => a + b.length, 0);
     const msg = new Uint8Array(totalLen);
     let off = 0;
-    for (const p of parts) { msg.set(p, off); off += p.length; }
+    for (const p of parts) {
+      msg.set(p, off);
+      off += p.length;
+    }
     return msg;
   }
 
-  private async createOnchainIntent(args: {
-    dto: CreateIntentDto;
-    merchant: { id: string; displayName: string; isActive: boolean };
-    fx: ResolvedFx;
-    idempotencyKey: string;
-    bodyHash: string;
-    payerUserId: string | null;
-  }): Promise<PaymentIntentResponseDto> {
-    const { dto, merchant, fx, idempotencyKey, bodyHash, payerUserId } = args;
-
-    this.logger.log(
-      `[createOnchainIntent] merchant=${merchant.id} fiatAmount=${dto.fiatAmountMinor} currency=${dto.currency} userId=${payerUserId ?? "anonymous"}`,
-    );
-
-    const markupMultiplier = addMarkup(fx.fxMarkup);
-    const usdcMicros = computeUsdcMicros({
-      fiatAmountMinor: BigInt(dto.fiatAmountMinor),
-      fxRate: fx.fxRate,
-      markupMultiplier,
-    });
-    if (usdcMicros <= 0n) {
-      throw new BadRequestException({
-        message: "Computed USDC amount is zero — fiat amount too small for current rate.",
-        code: "USDC_AMOUNT_TOO_SMALL",
-      });
-    }
-
-    const tokenRow = dto.sourceTokenId
+  /**
+   * Resolve the token the payer settles with on the on-chain rail: the
+   * explicit `sourceTokenId`, else the first payment-enabled stablecoin.
+   * Throws 400 `SOURCE_TOKEN_INVALID` when nothing usable is found. Runs
+   * BEFORE the FX snapshot so the rate row can be keyed on the token's
+   * own symbol.
+   */
+  private async resolveSourceToken(sourceTokenId: string | undefined) {
+    const tokenRow = sourceTokenId
       ? await this.prisma.token.findUnique({
-          where: { id: dto.sourceTokenId },
+          where: { id: sourceTokenId },
           include: { blockchain: true },
         })
       : await this.prisma.token.findFirst({
@@ -836,6 +889,46 @@ export class IntentsService {
         code: "SOURCE_TOKEN_INVALID",
       });
     }
+    return tokenRow;
+  }
+
+  private async createOnchainIntent(args: {
+    dto: CreateIntentDto;
+    merchant: { id: string; displayName: string; isActive: boolean };
+    fx: ResolvedFx;
+    tokenRow: Awaited<ReturnType<IntentsService["resolveSourceToken"]>>;
+    idempotencyKey: string;
+    bodyHash: string;
+    payerUserId: string | null;
+  }): Promise<PaymentIntentResponseDto> {
+    const {
+      dto,
+      merchant,
+      fx,
+      tokenRow,
+      idempotencyKey,
+      bodyHash,
+      payerUserId,
+    } = args;
+
+    this.logger.log(
+      `[createOnchainIntent] merchant=${merchant.id} fiatAmount=${dto.fiatAmountMinor} currency=${dto.currency} userId=${payerUserId ?? "anonymous"}`,
+    );
+
+    const markupMultiplier = addMarkup(fx.fxMarkup);
+    const usdcMicros = computeUsdcMicros({
+      fiatAmountMinor: BigInt(dto.fiatAmountMinor),
+      fxRate: fx.fxRate,
+      markupMultiplier,
+    });
+    if (usdcMicros <= 0n) {
+      throw new BadRequestException({
+        message:
+          "Computed USDC amount is zero — fiat amount too small for current rate.",
+        code: "USDC_AMOUNT_TOO_SMALL",
+      });
+    }
+
     const bc = tokenRow.blockchain;
     let sourceChainId: number;
     if (bc.chainId != null) {
@@ -844,7 +937,10 @@ export class IntentsService {
       sourceChainId = bc.chainSlug?.includes("mainnet")
         ? STELLAR_MAINNET_SENTINEL_CHAIN_ID
         : STELLAR_TESTNET_SENTINEL_CHAIN_ID;
-    } else if (bc.solanaCluster === "mainnet-beta" || bc.chainSlug?.includes("mainnet")) {
+    } else if (
+      bc.solanaCluster === "mainnet-beta" ||
+      bc.chainSlug?.includes("mainnet")
+    ) {
       sourceChainId = SVM_MAINNET_SENTINEL_CHAIN_ID;
     } else {
       sourceChainId = SVM_DEVNET_SENTINEL_CHAIN_ID;
@@ -926,7 +1022,10 @@ export class IntentsService {
         expiresAt: BigInt(expiresAtSec),
       });
 
-      const sigBytes = nacl.sign.detached(message, this.svmSignerKeypair.secretKey);
+      const sigBytes = nacl.sign.detached(
+        message,
+        this.svmSignerKeypair.secretKey,
+      );
 
       quoteCommitmentSvm = {
         refId,
@@ -947,7 +1046,9 @@ export class IntentsService {
         data: { quoteSignature: Buffer.from(sigBytes) },
       });
     } else if (isSvm) {
-      this.logger.warn("[createOnchainIntent] SVM intent but no signer keypair — quote unsigned");
+      this.logger.warn(
+        "[createOnchainIntent] SVM intent but no signer keypair — quote unsigned",
+      );
     }
 
     // Stellar `takumi_pay` quote — mirrors the SVM block. Delegates all
@@ -1143,7 +1244,11 @@ export class IntentsService {
           sourceChainId === SVM_DEVNET_SENTINEL_CHAIN_ID
             ? "devnet"
             : "mainnet-beta",
-        usdcMint: svmEntry?.asset ?? (svmRow ? await this.resolveSvmUsdcMint(svmRow.id) : USDC_SPL_MINT_MAINNET_FALLBACK),
+        usdcMint:
+          svmEntry?.asset ??
+          (svmRow
+            ? await this.resolveSvmUsdcMint(svmRow.id)
+            : USDC_SPL_MINT_MAINNET_FALLBACK),
         feePayer: svmEntry?.authorizedSigners?.[0],
         sourceChainId,
         value: (intent.nanopayUsdcAmountMicros ?? 0n).toString(),
@@ -1247,7 +1352,9 @@ export class IntentsService {
       fiatAmountMinor: intent.fiatAmountMinor,
       currency: intent.fiatCurrency,
       fxRate: intent.fxRateSnapshot.toString(),
-      nanopayUsdcAmountMicros: (intent.nanopayUsdcAmountMicros ?? 0n).toString(),
+      nanopayUsdcAmountMicros: (
+        intent.nanopayUsdcAmountMicros ?? 0n
+      ).toString(),
       nanopayUsdcSourceChainId: sourceChainId,
       nanopayUsdcTreasuryAddress: intent.nanopayUsdcTreasuryAddress ?? "",
       nanopay,
@@ -1264,7 +1371,10 @@ export class IntentsService {
       // `smartContract.address` lookup (name unfiltered here, so this
       // inherits that pre-existing looseness on chains with >1 active
       // SmartContract row; unchanged from before this field repoint).
-      programId: blockchain && blockchain.type !== "EVM" ? smartContract?.address : undefined,
+      programId:
+        blockchain && blockchain.type !== "EVM"
+          ? smartContract?.address
+          : undefined,
       blockchainId: blockchain?.id,
       ...(isSvm && intent.quoteSignature && intent.sourceToken
         ? {
@@ -1273,13 +1383,19 @@ export class IntentsService {
               merchantId: intent.merchantId,
               tokenMint: intent.sourceToken.contractAddress ?? "native",
               amount: (intent.nanopayUsdcAmountMicros ?? 0n).toString(),
-              platformFeeAmount: (intent.platformFeeAmountMinor ?? 0n).toString(),
+              platformFeeAmount: (
+                intent.platformFeeAmountMinor ?? 0n
+              ).toString(),
               fiatAmountMinor: intent.fiatAmountMinor.toString(),
               fiatCurrency: intent.fiatCurrency,
               exchangeRateId: intent.exchangeRateId.toString(),
-              expiresAt: Math.floor(intent.expiresAt.getTime() / 1000).toString(),
+              expiresAt: Math.floor(
+                intent.expiresAt.getTime() / 1000,
+              ).toString(),
             },
-            quoteSignatureSvm: Buffer.from(intent.quoteSignature).toString("base64"),
+            quoteSignatureSvm: Buffer.from(intent.quoteSignature).toString(
+              "base64",
+            ),
             backendSignerPubkey: this.svmSignerKeypair?.publicKeyBase58,
           }
         : {}),
@@ -1298,11 +1414,16 @@ export class IntentsService {
       // response's quote fields with `undefined`, and `pay-merchant.tsx`
       // throws `MISSING_QUOTE` the moment the user confirms after the first
       // poll lands.
-      ...((() => {
-        if (blockchain?.type !== "STELLAR" || !this.stellarVerification || !intent.sourceToken) {
+      ...(() => {
+        if (
+          blockchain?.type !== "STELLAR" ||
+          !this.stellarVerification ||
+          !intent.sourceToken
+        ) {
           return {};
         }
-        const scale = 10n ** BigInt(Math.max(intent.sourceToken.decimals - 6, 0));
+        const scale =
+          10n ** BigInt(Math.max(intent.sourceToken.decimals - 6, 0));
         const signed = this.stellarVerification.buildMerchantQuoteSignature({
           blockchainId: blockchain.id,
           refId: intent.id,
@@ -1322,7 +1443,7 @@ export class IntentsService {
           backendSignerPubkeyStellar: signed.backendSignerPubkeyHex,
           takumiPayContractId: signed.contractId,
         };
-      })()),
+      })(),
     };
   }
 
@@ -1429,7 +1550,9 @@ export class IntentsService {
       intent.nanopayUsdcSourceChainId,
     );
     if (!x402Entry || !x402Entry.asset) {
-      this.logger.error(`[submitNanopay] x402 domain not available for chainId=${intent.nanopayUsdcSourceChainId} — check CIRCLE_X402_SUPPORTED_URL and boot-time fetch`);
+      this.logger.error(
+        `[submitNanopay] x402 domain not available for chainId=${intent.nanopayUsdcSourceChainId} — check CIRCLE_X402_SUPPORTED_URL and boot-time fetch`,
+      );
       throw new ServiceUnavailableException({
         message: "Payment rail is not available on this deployment.",
         code: "X402_DOMAIN_UNAVAILABLE",
@@ -1506,7 +1629,9 @@ export class IntentsService {
       `[submitNanopay] calling Circle settle for intent=${intentId} usdcMicros=${valueMicros} from=${fromAddress} facilitatorUrl=${facilitatorUrl}`,
     );
     const outcome = await this.circleSettle.settle(facilitatorUrl, settleBody);
-    this.logger.log(`[submitNanopay] Circle settle returned kind=${outcome.kind} for intent=${intentId}`);
+    this.logger.log(
+      `[submitNanopay] Circle settle returned kind=${outcome.kind} for intent=${intentId}`,
+    );
 
     return await this.persistOutcome({
       intent,
@@ -1546,12 +1671,16 @@ export class IntentsService {
   }): Promise<NanopaySubmitResponseDto> {
     const { intentId, signedTransaction } = args;
 
-    this.logger.log(`[submitNanopaySvm] intentId=${intentId} txLen=${signedTransaction.length}`);
+    this.logger.log(
+      `[submitNanopaySvm] intentId=${intentId} txLen=${signedTransaction.length}`,
+    );
 
     if (!this.circleSettleSvm) {
       // Pre-M6 posture — the client is `@Optional()` so the module boots
       // without it, and in that case the SVM rail is simply off.
-      this.logger.error("[submitNanopaySvm] circleSettleSvm client not injected — SVM_SETTLER_PRIVATE_KEY or facilitator URL likely missing");
+      this.logger.error(
+        "[submitNanopaySvm] circleSettleSvm client not injected — SVM_SETTLER_PRIVATE_KEY or facilitator URL likely missing",
+      );
       throw new ServiceUnavailableException({
         message: "SVM payment rail is not available on this deployment.",
         code: "SVM_FACILITATOR_NOT_CONFIGURED",
@@ -1621,7 +1750,9 @@ export class IntentsService {
       intent.nanopayUsdcSourceChainId,
     );
     if (!chainRow) {
-      this.logger.error(`[submitNanopaySvm] SVM blockchain row missing for sentinel chainId=${intent.nanopayUsdcSourceChainId} — seed the Blockchain table`);
+      this.logger.error(
+        `[submitNanopaySvm] SVM blockchain row missing for sentinel chainId=${intent.nanopayUsdcSourceChainId} — seed the Blockchain table`,
+      );
       throw new ServiceUnavailableException({
         message: "SVM payment rail is not available on this deployment.",
         code: "SVM_CHAIN_NOT_CONFIGURED",
@@ -1629,7 +1760,9 @@ export class IntentsService {
     }
 
     if (!chainRow.x402FacilitatorUrl) {
-      this.logger.error(`[submitNanopaySvm] x402FacilitatorUrl not set on Blockchain row chainSlug=${chainRow.chainSlug} — update the DB seed`);
+      this.logger.error(
+        `[submitNanopaySvm] x402FacilitatorUrl not set on Blockchain row chainSlug=${chainRow.chainSlug} — update the DB seed`,
+      );
       throw new ServiceUnavailableException({
         message: "SVM payment rail is not available on this deployment.",
         code: "SVM_FACILITATOR_NOT_CONFIGURED",
@@ -1655,7 +1788,7 @@ export class IntentsService {
     // on every call because the overhead is a few hundred bytes.
     const payTo = intent.nanopayUsdcTreasuryAddress;
     const usdcMint =
-      x402Entry?.asset ?? await this.resolveSvmUsdcMint(chainRow.id);
+      x402Entry?.asset ?? (await this.resolveSvmUsdcMint(chainRow.id));
 
     const paymentRequirements = {
       scheme: "exact",
@@ -1684,7 +1817,9 @@ export class IntentsService {
       chainRow.x402FacilitatorUrl,
       { signedTransaction, paymentRequirements },
     );
-    this.logger.log(`[submitNanopaySvm] SVM facilitator returned kind=${outcome.kind} for intent=${intentId}`);
+    this.logger.log(
+      `[submitNanopaySvm] SVM facilitator returned kind=${outcome.kind} for intent=${intentId}`,
+    );
 
     return await this.persistSvmOutcome({
       intent,
@@ -1709,7 +1844,9 @@ export class IntentsService {
   }): Promise<NanopaySubmitResponseDto> {
     const { intentId, txHash, blockchainId } = args;
 
-    this.logger.log(`[submitOnchain] intentId=${intentId} txHash=${txHash} blockchainId=${blockchainId}`);
+    this.logger.log(
+      `[submitOnchain] intentId=${intentId} txHash=${txHash} blockchainId=${blockchainId}`,
+    );
 
     const intent = await this.prisma.paymentIntent.findUnique({
       where: { id: intentId },
@@ -1755,26 +1892,69 @@ export class IntentsService {
     }
 
     // Verify the on-chain payment actually landed with matching merchant /
-    // amount / token before recording — closes the blind-trust gap for
-    // Stellar. (EVM/Solana settlements via this endpoint remain blind-trusted;
-    // that's a pre-existing gap, out of scope here.) The backend-signed quote
-    // already binds the record to this exact intent, so the payer's G-address
-    // is not re-checked (see StellarVerificationService.verifyMerchantPayment).
-    if (blockchain.type === "STELLAR" && this.blockchainVerification) {
+    // amount / token before recording. Used to only run for Stellar — EVM
+    // and Solana settlements via this endpoint were blind-trusted (any
+    // caller could POST an arbitrary txHash and get an unconditional
+    // SETTLED), a gap surfaced 2026-09-17 while standing up Monad Testnet
+    // and closed for all three chain families here. The verification logic
+    // itself (`verifyMerchantPaymentInContract` / Solana's
+    // `verifyMerchantPayment`) already existed and was already wired for
+    // Stellar — this was a dispatch gap, not missing verification code.
+    //
+    // `expectedPayer` is left empty for EVM/Solana the same way it already
+    // was for Stellar: a user may pay from any of their linked wallets, so
+    // `intent.payer.walletAddress` (their PRIMARY wallet) isn't reliably
+    // the address that actually signed this specific payment. The real
+    // forgery guard is refId + merchantId + amount + fiatAmount +
+    // exchangeRateId matching the backend-signed quote this exact intent
+    // produced — `verifyMerchantPaymentInContract` and Solana's
+    // `verifyMerchantPayment` both skip the payer check when it's empty.
+    if (
+      this.blockchainVerification &&
+      (blockchain.type === "STELLAR" ||
+        blockchain.type === "EVM" ||
+        blockchain.type === "SVM")
+    ) {
       const token = intent.sourceTokenId
-        ? await this.prisma.token.findUnique({ where: { id: intent.sourceTokenId } })
+        ? await this.prisma.token.findUnique({
+            where: { id: intent.sourceTokenId },
+          })
         : null;
       const scale = 10n ** BigInt(Math.max((token?.decimals ?? 6) - 6, 0));
+      const expectedAmount = (
+        BigInt(String(intent.nanopayUsdcAmountMicros)) * scale
+      ).toString();
+
+      let contractAddress = "";
+      let chainId = 0;
+      if (blockchain.type === "EVM") {
+        if (blockchain.chainId == null) {
+          throw new BadRequestException({
+            message: `Blockchain ${blockchain.name} is missing chainId`,
+            code: "ONCHAIN_BLOCKCHAIN_MISCONFIGURED",
+          });
+        }
+        chainId = blockchain.chainId;
+        const contract = await this.prisma.smartContract.findFirst({
+          where: { blockchainId, name: "takumi_pay", isActive: true },
+        });
+        if (!contract) {
+          throw new BadRequestException({
+            message: `Blockchain ${blockchain.name} has no active "takumi_pay" SmartContract row configured`,
+            code: "ONCHAIN_CONTRACT_NOT_FOUND",
+          });
+        }
+        contractAddress = contract.address;
+      }
+
       await this.blockchainVerification.verifyMerchantPaymentInContract({
-        contractAddress: "", // unused in the Stellar dispatch branch
-        chainId: 0, // unused in the Stellar dispatch branch
+        contractAddress, // unused in the Stellar/Solana dispatch branches
+        chainId, // unused in the Stellar/Solana dispatch branches
         refId: intentId,
-        expectedPayer: "", // payer G-address unknown server-side; check skipped
+        expectedPayer: "",
         expectedMerchantId: intent.merchantId,
         expectedTokenAddress: token?.contractAddress ?? "",
-        expectedAmount: (
-          BigInt(String(intent.nanopayUsdcAmountMicros)) * scale
-        ).toString(),
+        expectedAmount,
         expectedFiatAmountMinor: intent.fiatAmountMinor,
         expectedFiatCurrency: intent.fiatCurrency,
         expectedExchangeRateId: intent.exchangeRateId,
@@ -1782,7 +1962,9 @@ export class IntentsService {
       });
     }
 
-    this.logger.log(`[submitOnchain] verifying and settling intent=${intentId} txHash=${txHash}`);
+    this.logger.log(
+      `[submitOnchain] verifying and settling intent=${intentId} txHash=${txHash}`,
+    );
     // Record the onchain settlement and flip the intent status.
     await this.prisma.$transaction(async (tx) => {
       await tx.onchainSettlement.create({
@@ -1800,7 +1982,9 @@ export class IntentsService {
       });
     });
 
-    this.logger.log(`[submitOnchain] intent=${intentId} SETTLED txHash=${txHash}`);
+    this.logger.log(
+      `[submitOnchain] intent=${intentId} SETTLED txHash=${txHash}`,
+    );
 
     // Fire-and-forget payout trigger (same pattern as submitNanopay).
     if (this.payoutProvider) {
@@ -1845,9 +2029,7 @@ export class IntentsService {
    * Solana rows have `chainId = null` in the chain-agnostic schema
    * (migration 20260417000001).
    */
-  private async resolveSvmBlockchainRow(
-    sentinelChainId: number,
-  ): Promise<{
+  private async resolveSvmBlockchainRow(sentinelChainId: number): Promise<{
     id: string;
     chainSlug: string;
     x402FacilitatorUrl: string | null;
@@ -1871,7 +2053,8 @@ export class IntentsService {
       id: row.id,
       chainSlug: row.chainSlug ?? slug,
       x402FacilitatorUrl:
-        (row.metadata as { x402FacilitatorUrl?: string } | null)?.x402FacilitatorUrl ?? null,
+        (row.metadata as { x402FacilitatorUrl?: string } | null)
+          ?.x402FacilitatorUrl ?? null,
     };
   }
 
@@ -2268,7 +2451,9 @@ export class IntentsService {
       }),
     );
     if (!row || !row.isActive) {
-      this.logger.error(`[resolveGatewayWalletContract] chainId=${chainId} not found or inactive in Blockchain table`);
+      this.logger.error(
+        `[resolveGatewayWalletContract] chainId=${chainId} not found or inactive in Blockchain table`,
+      );
       throw new ServiceUnavailableException({
         message: "Payment rail is not available on this deployment.",
         code: "CHAIN_NOT_CONFIGURED",
@@ -2280,7 +2465,9 @@ export class IntentsService {
       where: { blockchainId: row.id, name: "gateway_wallet", isActive: true },
     });
     if (!contract) {
-      this.logger.error(`[resolveGatewayWalletContract] no active "gateway_wallet" SmartContract row for chainId=${chainId} — update DB seed`);
+      this.logger.error(
+        `[resolveGatewayWalletContract] no active "gateway_wallet" SmartContract row for chainId=${chainId} — update DB seed`,
+      );
       throw new ServiceUnavailableException({
         message: "Payment rail is not available on this deployment.",
         code: "GATEWAY_WALLET_NOT_CONFIGURED",
@@ -2297,15 +2484,21 @@ export class IntentsService {
       }),
     );
     if (!row || !row.isActive) {
-      this.logger.error(`[resolveFacilitatorUrl] chainId=${chainId} not found or inactive in Blockchain table`);
+      this.logger.error(
+        `[resolveFacilitatorUrl] chainId=${chainId} not found or inactive in Blockchain table`,
+      );
       throw new ServiceUnavailableException({
         message: "Payment rail is not available on this deployment.",
         code: "CHAIN_NOT_CONFIGURED",
       });
     }
-    const facilitatorUrl = (row.metadata as { x402FacilitatorUrl?: string } | null)?.x402FacilitatorUrl;
+    const facilitatorUrl = (
+      row.metadata as { x402FacilitatorUrl?: string } | null
+    )?.x402FacilitatorUrl;
     if (!facilitatorUrl) {
-      this.logger.error(`[resolveFacilitatorUrl] x402FacilitatorUrl not set in metadata for chainId=${chainId} — update DB seed`);
+      this.logger.error(
+        `[resolveFacilitatorUrl] x402FacilitatorUrl not set in metadata for chainId=${chainId} — update DB seed`,
+      );
       throw new ServiceUnavailableException({
         message: "Payment rail is not available on this deployment.",
         code: "FACILITATOR_URL_NOT_CONFIGURED",
@@ -2609,17 +2802,20 @@ export class IntentsService {
    * a missing history row is recoverable via backfill, a rolled-back
    * settlement is not.
    */
-  private recordMerchantPayment(intent: {
-    id: string;
-    payerUserId: string | null;
-    sourceTokenId: string | null;
-    nanopayUsdcAmountMicros: bigint | null;
-    fiatAmountMinor: number;
-    fiatCurrency: string;
-    merchant: { displayName: string };
-    payer: { walletAddress: string | null } | null;
-    nanopayUsdcTreasuryAddress: string | null;
-  }, txHash?: string): void {
+  private recordMerchantPayment(
+    intent: {
+      id: string;
+      payerUserId: string | null;
+      sourceTokenId: string | null;
+      nanopayUsdcAmountMicros: bigint | null;
+      fiatAmountMinor: number;
+      fiatCurrency: string;
+      merchant: { displayName: string };
+      payer: { walletAddress: string | null } | null;
+      nanopayUsdcTreasuryAddress: string | null;
+    },
+    txHash?: string,
+  ): void {
     if (!intent.payerUserId || !intent.sourceTokenId) {
       this.logger.warn(
         `[recordMerchantPayment] skipping intent=${intent.id} — missing payerUserId=${intent.payerUserId ?? "null"} or sourceTokenId=${intent.sourceTokenId ?? "null"}`,
@@ -2699,13 +2895,17 @@ export class IntentsService {
   }
 
   /**
-   * Look up the most recent active FX row for `USDC → currency` in region
-   * `ID`. Returns null if no row matches — caller turns that into 503.
+   * Look up the most recent active FX row for `fromCurrency → currency` in
+   * region `ID`. `fromCurrency` is the settlement token's symbol (USDC,
+   * AUSD, …). Returns null if no row matches — caller turns that into 503.
    */
-  private async snapshotLatestFx(currency: "IDR"): Promise<ResolvedFx | null> {
+  private async snapshotLatestFx(
+    fromCurrency: string,
+    currency: "IDR",
+  ): Promise<ResolvedFx | null> {
     const row = await this.prisma.exchangeRate.findFirst({
       where: {
-        fromCurrency: "USDC",
+        fromCurrency,
         toCurrency: currency,
         region: "ID",
         isActive: true,
@@ -2762,7 +2962,6 @@ export class IntentsService {
       );
     }
   }
-
 }
 
 /**

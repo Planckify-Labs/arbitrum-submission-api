@@ -1,28 +1,28 @@
+import { AnchorProvider, BN, Program } from "@coral-xyz/anchor";
+import type { Idl, Wallet } from "@coral-xyz/anchor";
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { Connection, PublicKey, Commitment, Keypair } from "@solana/web3.js";
-import { Program, AnchorProvider, BN } from "@coral-xyz/anchor";
-import type { Idl, Wallet } from "@coral-xyz/anchor";
+import { Commitment, Connection, Keypair, PublicKey } from "@solana/web3.js";
+import * as nacl from "tweetnacl";
+import { resolveRpcEndpoint } from "../blockchains/rpc-endpoint";
 import { PrismaService } from "../prisma/prisma.service";
 import { TAKUMI_PAY_IDL } from "./solana/takumi-pay/idl";
 import {
   deriveConfigPda,
-  deriveTxRecordPda,
-  deriveRefRecordPda,
   deriveMerchantPaymentPda,
   derivePointDepositPda,
   derivePointRefRecordPda,
+  deriveRefRecordPda,
+  deriveTxRecordPda,
 } from "./solana/takumi-pay/pda";
 import { computeRefIdHash } from "./solana/takumi-pay/ref-id-hash";
 import type {
-  TakumiPayTransactionRecord,
+  MerchantQuoteParams,
   TakumiPayMerchantPayment,
   TakumiPayPointDepositRecord,
-  MerchantQuoteParams,
+  TakumiPayTransactionRecord,
 } from "./solana/takumi-pay/types";
 import type { TTransactionVerificationResult } from "./types/blockchain-verification.types";
-import { resolveRpcEndpoint } from "../blockchains/rpc-endpoint";
-import * as nacl from "tweetnacl";
 
 interface SolanaClient {
   connection: Connection;
@@ -181,7 +181,7 @@ export class SolanaVerificationService implements OnModuleInit {
     return {
       isValid: true,
       transactionHash: args.transactionSignature,
-      blockNumber: (txResponse.slot).toString(),
+      blockNumber: txResponse.slot.toString(),
       confirmations: 1,
       from: txRecord.walletAddress.toBase58(),
       to: args.programId.toBase58(),
@@ -216,8 +216,7 @@ export class SolanaVerificationService implements OnModuleInit {
     const refRecord = await program.account.refRecord.fetch(refRecordPda);
     const txId = refRecord.recordId;
     const [txRecordPda] = deriveTxRecordPda(args.programId, configPda, txId);
-    const txRecord =
-      await program.account.transactionRecord.fetch(txRecordPda);
+    const txRecord = await program.account.transactionRecord.fetch(txRecordPda);
 
     if (txRecord.walletAddress.toBase58() !== args.expectedWalletAddress) {
       throw new Error(
@@ -263,10 +262,14 @@ export class SolanaVerificationService implements OnModuleInit {
       configPda,
       args.refIdHash,
     );
-    const mp =
-      await program.account.merchantPayment.fetch(merchantPaymentPda);
+    const mp = await program.account.merchantPayment.fetch(merchantPaymentPda);
 
-    if (mp.payer.toBase58() !== args.expectedPayer)
+    // Empty `expectedPayer` means the caller doesn't reliably know which of
+    // the user's linked wallets signed this specific payment — same
+    // convention as the Stellar/EVM branches; refId + merchantId + amount +
+    // fiatAmount + exchangeRateId matching the backend-signed quote is the
+    // real forgery guard.
+    if (args.expectedPayer && mp.payer.toBase58() !== args.expectedPayer)
       throw new Error("Payer mismatch");
     if (mp.merchantId !== args.expectedMerchantId)
       throw new Error("Merchant ID mismatch");
@@ -298,16 +301,14 @@ export class SolanaVerificationService implements OnModuleInit {
       configPda,
       args.refIdHash,
     );
-    const refRecord =
-      await program.account.refRecord.fetch(pointRefPda);
+    const refRecord = await program.account.refRecord.fetch(pointRefPda);
     const depositId = refRecord.recordId;
     const [depositPda] = derivePointDepositPda(
       args.programId,
       configPda,
       depositId,
     );
-    const deposit =
-      await program.account.pointDepositRecord.fetch(depositPda);
+    const deposit = await program.account.pointDepositRecord.fetch(depositPda);
 
     if (deposit.walletAddress.toBase58() !== args.expectedWalletAddress)
       throw new Error("Wallet address mismatch");

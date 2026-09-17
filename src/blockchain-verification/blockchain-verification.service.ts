@@ -737,7 +737,17 @@ export class BlockchainVerificationService {
         );
       }
 
-      if (!addressesEqual(payment.payer, args.expectedPayer)) {
+      // A user may pay from any of their linked wallets, so the caller
+      // (`IntentsService.submitOnchain`) intentionally passes an empty
+      // `expectedPayer` when it doesn't reliably know which one signed
+      // this specific payment — same convention as the Stellar branch's
+      // `verifyMerchantPayment`. refId + merchantId + amount + fiatAmount
+      // + exchangeRateId matching the backend-signed quote is the real
+      // forgery guard; skip this check rather than false-reject.
+      if (
+        args.expectedPayer &&
+        !addressesEqual(payment.payer, args.expectedPayer)
+      ) {
         throw new BadRequestException(
           `Merchant payment payer mismatch: expected ${args.expectedPayer}, got ${payment.payer}`,
         );

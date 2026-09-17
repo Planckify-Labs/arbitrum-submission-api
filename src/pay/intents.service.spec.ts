@@ -272,6 +272,70 @@ describe("IntentsService", () => {
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 
+  it("keys the FX snapshot on the nanopay rail's fixed USDC", async () => {
+    const { svc, prisma } = buildService();
+    await svc.createIntent({ dto: defaultDto, ...defaultArgs });
+    expect(prisma.exchangeRate.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ fromCurrency: "USDC", toCurrency: "IDR" }),
+      }),
+    );
+  });
+
+  it("keys the FX snapshot on the selected token's symbol on the on-chain rail", async () => {
+    const prisma = prismaStub({
+      fxRow: {
+        id: 5,
+        createdAt: new Date("2026-09-16T00:00:00Z"),
+        rate: { toString: () => "17690" },
+        markup: { toString: () => "1.5" },
+        fromCurrency: "AUSD",
+        toCurrency: "IDR",
+        provider: "CoinGecko",
+        sourceProvider: { name: "CoinGecko" },
+      },
+    });
+    const ausdToken = {
+      id: "tok_ausd",
+      symbol: "AUSD",
+      decimals: 6,
+      isPaymentEnabled: true,
+      isStablecoin: true,
+      isActive: true,
+      blockchain: { id: "01MONAD", chainId: 10143, type: "EVM" },
+    };
+    (prisma as unknown as { token: unknown }).token = {
+      findUnique: jest.fn(async () => ausdToken),
+      findFirst: jest.fn(async () => ausdToken),
+    };
+    // getIntent re-reads the row to serialize; give it the shape it needs.
+    prisma.paymentIntent.findUnique = jest.fn(async () => null);
+    const config = {
+      get: jest.fn((k: string, fallback?: unknown) =>
+        k === "PAYMENT_SETTLEMENT_RAIL" ? "takumipay" : fallback,
+      ),
+    } as unknown as ConfigService;
+    const { svc } = buildService({ prisma, config });
+
+    await svc
+      .createIntent({
+        dto: { ...defaultDto, sourceTokenId: "tok_ausd" },
+        ...defaultArgs,
+      })
+      .catch(() => undefined); // downstream serialization is not under test here
+
+    expect(prisma.exchangeRate.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ fromCurrency: "AUSD", toCurrency: "IDR" }),
+      }),
+    );
+    expect(prisma.exchangeRate.findFirst).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ fromCurrency: "USDC" }),
+      }),
+    );
+  });
+
   it("503s when the x402 domain cache has no entry for Arc", async () => {
     const x402: Pick<X402SupportedService, "getSupportedForChain"> = {
       getSupportedForChain: jest.fn().mockReturnValue(null),
