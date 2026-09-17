@@ -1,7 +1,12 @@
 import type { ConfigService } from "@nestjs/config";
 import type { Queue } from "bullmq";
 import type { PrismaService } from "../prisma/prisma.service";
-import { type PushReceiptEntry, PushService } from "./push.service";
+import {
+  type PushReceiptEntry,
+  PushService,
+  formatFiatMinor,
+  formatTokenMicros,
+} from "./push.service";
 
 jest.mock("expo-server-sdk", () => {
   class FakeExpo {
@@ -31,6 +36,7 @@ function buildHarness(
     directDevices?: Device[];
     user?: { walletAddress: string | null } | null;
     walletSubs?: { deviceToken: Device }[];
+    intent?: Record<string, unknown> | null;
   } = {},
 ) {
   const notificationLogCreate = jest.fn(
@@ -50,6 +56,9 @@ function buildHarness(
     },
     walletPushSubscription: {
       findMany: jest.fn(async () => opts.walletSubs ?? []),
+    },
+    paymentIntent: {
+      findUnique: jest.fn(async () => opts.intent ?? null),
     },
     $transaction: jest.fn(async (cb: (tx: unknown) => unknown) =>
       cb({
@@ -164,5 +173,95 @@ describe("PushService.sendToUser", () => {
 
     expect(result.attempted).toBe(0);
     expect(prisma.walletPushSubscription.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("payment pushes — one per payment, amount first, money language", () => {
+  const device = { id: "dev_1", token: "ExponentPushToken[abc]" };
+  const monadIntent = {
+    payerUserId: "user_1",
+    fiatAmountMinor: 48_888,
+    fiatCurrency: "IDR",
+    nanopayUsdcAmountMicros: 2_966_861n,
+    path: "takumipay",
+    merchant: { displayName: "GTron, SELONG" },
+    sourceToken: { symbol: "AUSD" },
+  };
+
+  it("settled push: 'Paid Rp 48.888' / '2.97 AUSD to GTron, SELONG. Tap for your receipt.' with the receipt deep-link", async () => {
+    const { service, notificationLogCreate } = buildHarness({
+      directDevices: [device],
+      user: { walletAddress: "0xabc" },
+      intent: monadIntent,
+    });
+    const spy = jest.spyOn(service, "sendToUser");
+
+    await service.sendSettledPush("pi_1");
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user_1",
+        title: "Paid Rp 48.888",
+        body: "2.97 AUSD to GTron, SELONG. Tap for your receipt.",
+        data: expect.objectContaining({ intentId: "pi_1" }),
+      }),
+    );
+    expect(notificationLogCreate).toHaveBeenCalled();
+    const sent = spy.mock.calls[0][0];
+    for (const word of [
+      "on-chain",
+      "settled",
+      "verified",
+      "network",
+      "chain",
+    ]) {
+      expect(`${sent.title} ${sent.body}`.toLowerCase()).not.toContain(word);
+    }
+  });
+
+  it("settled push without a named token still leads with the fiat amount", async () => {
+    const { service } = buildHarness({
+      directDevices: [device],
+      user: { walletAddress: "0xabc" },
+      intent: { ...monadIntent, sourceToken: null },
+    });
+    const spy = jest.spyOn(service, "sendToUser");
+
+    await service.sendSettledPush("pi_1");
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Paid Rp 48.888",
+        body: "to GTron, SELONG. Tap for your receipt.",
+      }),
+    );
+  });
+
+  it("paid-out push is skipped on the on-chain rail (the payer already got 'Paid') but still sent for nanopay", async () => {
+    const onchain = buildHarness({
+      directDevices: [device],
+      user: { walletAddress: "0xabc" },
+      intent: monadIntent,
+    });
+    const spyA = jest.spyOn(onchain.service, "sendToUser");
+    await onchain.service.sendPaidOutPush("pi_1");
+    expect(spyA).not.toHaveBeenCalled();
+
+    const nanopay = buildHarness({
+      directDevices: [device],
+      user: { walletAddress: "0xabc" },
+      intent: { ...monadIntent, path: "nanopay", sourceToken: null },
+    });
+    const spyB = jest.spyOn(nanopay.service, "sendToUser");
+    await nanopay.service.sendPaidOutPush("pi_1");
+    expect(spyB).toHaveBeenCalledTimes(1);
+  });
+
+  it("formats IDR the way the app does and token micros without chain precision noise", () => {
+    expect(formatFiatMinor(48_888, "IDR")).toBe("Rp 48.888");
+    expect(formatFiatMinor(1_250_000, "IDR")).toBe("Rp 1.250.000");
+    expect(formatFiatMinor(1050, "PHP")).toBe("PHP 10.50");
+    expect(formatTokenMicros(2_966_861n)).toBe("2.97");
+    expect(formatTokenMicros(941_294n)).toBe("0.9413");
   });
 });

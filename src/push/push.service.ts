@@ -52,6 +52,29 @@ export interface SendPushResult {
   pruned: number;
 }
 
+/**
+ * "Rp 48.888" — the grouping mobile already uses for IDR (dots, no
+ * decimals). Other currencies fall back to a plain `CODE amount`; minor
+ * units are assumed to be 2-decimal there.
+ */
+export function formatFiatMinor(minor: number, currency: string): string {
+  const whole = Math.max(0, Math.floor(minor));
+  if (currency === "IDR") {
+    return `Rp ${whole.toLocaleString("en-US").replace(/,/g, ".")}`;
+  }
+  return `${currency} ${(whole / 100).toFixed(2)}`;
+}
+
+/**
+ * Settlement micros → "2.97". Intents store the amount as 6-decimal micros
+ * of the settlement token regardless of its symbol or on-chain decimals.
+ */
+export function formatTokenMicros(micros: bigint): string {
+  const n = Number(micros) / 1_000_000;
+  if (!Number.isFinite(n)) return micros.toString();
+  return n.toFixed(n < 1 ? 4 : 2);
+}
+
 @Injectable()
 export class PushService {
   private readonly logger = new Logger(PushService.name);
@@ -221,11 +244,22 @@ export class PushService {
         payerUserId: true,
         fiatAmountMinor: true,
         fiatCurrency: true,
+        path: true,
         merchant: { select: { displayName: true } },
       },
     });
     if (!intent?.payerUserId) {
       this.logger.debug(`[sendPaidOutPush] no payer for intentId=${intentId}`);
+      return;
+    }
+    // One notification per payment. On the on-chain rail the payer already
+    // got "Paid Rp X" when the settlement verified (`sendSettledPush`); the
+    // merchant's fiat payout landing later is our bookkeeping, not news to
+    // them. Nanopay has no settled push, so it keeps this one.
+    if (intent.path === "takumipay") {
+      this.logger.debug(
+        `[sendPaidOutPush] skipped for on-chain intentId=${intentId}; payer was notified at settlement`,
+      );
       return;
     }
     await this.sendToUser({
@@ -244,24 +278,47 @@ export class PushService {
   }
 
   /**
-   * On-chain merchant settlement verified. Carries `intentId` so the
-   * mobile tap handler deep-links to the receipt (same contract as
-   * `sendPaidOutPush`). Distinct copy from the later "Payment Confirmed"
-   * payout push: this one says the payment went through, that one says
-   * the merchant has the money.
+   * On-chain merchant settlement verified — the payer's one notification
+   * for this payment. Reads like a spend, not a transfer: the amount is
+   * the headline, in the currency the purchase was made in, and the body
+   * says what it cost from the balance they paid with and to whom:
+   *
+   *   Paid Rp 48.888
+   *   2.97 AUSD to GTron, SELONG. Tap for your receipt.
+   *
+   * Carries `intentId` so the mobile tap handler deep-links to the
+   * receipt. The later payout webhook does NOT push again for this rail.
    */
   async sendSettledPush(intentId: string): Promise<void> {
-    const intent = await this.loadIntentForPush(intentId);
-    if (!intent) return;
+    const intent = await this.prisma.paymentIntent.findUnique({
+      where: { id: intentId },
+      select: {
+        payerUserId: true,
+        fiatAmountMinor: true,
+        fiatCurrency: true,
+        nanopayUsdcAmountMicros: true,
+        merchant: { select: { displayName: true } },
+        sourceToken: { select: { symbol: true } },
+      },
+    });
+    if (!intent?.payerUserId) {
+      this.logger.debug(`[sendSettledPush] no payer for intentId=${intentId}`);
+      return;
+    }
+    const merchant = intent.merchant.displayName;
+    const fiat = formatFiatMinor(intent.fiatAmountMinor, intent.fiatCurrency);
+    const spent = intent.sourceToken
+      ? `${formatTokenMicros(intent.nanopayUsdcAmountMicros ?? 0n)} ${intent.sourceToken.symbol} to ${merchant}`
+      : `to ${merchant}`;
     await this.sendToUser({
       userId: intent.payerUserId,
-      title: "Payment sent",
-      body: `Your payment to ${intent.merchant.displayName} went through.`,
+      title: `Paid ${fiat}`,
+      body: `${spent}. Tap for your receipt.`,
       source: "onchain_settlement",
       channelId: "payouts",
       data: {
         intentId,
-        merchantDisplayName: intent.merchant.displayName,
+        merchantDisplayName: merchant,
         fiatAmountMinor: intent.fiatAmountMinor,
         fiatCurrency: intent.fiatCurrency,
       },
