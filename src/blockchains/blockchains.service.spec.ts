@@ -1,8 +1,9 @@
-import { BlockchainsService } from "./blockchains.service";
 import type { ConfigService } from "@nestjs/config";
+import type { BlockchainVerificationService } from "../blockchain-verification/blockchain-verification.service";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { BlockchainCacheService } from "../valkey/services/blockchain-cache.service";
 import type { X402SupportedService } from "../x402/x402-supported.service";
+import { BlockchainsService } from "./blockchains.service";
 
 /**
  * Unit tests for the enriched `GET /blockchains` path (task 21).
@@ -69,14 +70,22 @@ describe("BlockchainsService - enriched config", () => {
     } as unknown as ConfigService;
 
     const x402 = {
-      getSupportedForChain: jest.fn(
-        () => opts.x402Snapshot ?? null,
-      ),
+      getSupportedForChain: jest.fn(() => opts.x402Snapshot ?? null),
       getLastRefreshAt: jest.fn(() => 1700000000000),
     } as unknown as X402SupportedService;
 
-    const svc = new BlockchainsService(prisma, cache, configService, x402);
-    return { svc, prisma, cache, configService, x402 };
+    const blockchainVerification = {
+      refreshClients: jest.fn(async () => undefined),
+    } as unknown as BlockchainVerificationService;
+
+    const svc = new BlockchainsService(
+      prisma,
+      cache,
+      configService,
+      x402,
+      blockchainVerification,
+    );
+    return { svc, prisma, cache, configService, x402, blockchainVerification };
   }
 
   it("returns enriched Arc row with populated gateway/x402, null paymaster", async () => {
@@ -147,10 +156,11 @@ describe("BlockchainsService - enriched config", () => {
     const { svc, prisma } = makeService({ rows: [makeArcRow()] });
     await svc.getEnrichedConfig("ID");
 
-    const findManyArgs = (prisma.blockchain.findMany as jest.Mock).mock.calls[0][0];
+    const findManyArgs = (prisma.blockchain.findMany as jest.Mock).mock
+      .calls[0][0];
     expect(findManyArgs.where).toMatchObject({
       isActive: true,
-      chainId: { in: [5042002] },
+      chainId: { in: [5042002, 10143] },
     });
   });
 
@@ -167,7 +177,8 @@ describe("BlockchainsService - enriched config", () => {
     });
     await svc.getEnrichedConfig("ID");
 
-    const findManyArgs = (prisma.blockchain.findMany as jest.Mock).mock.calls[0][0];
+    const findManyArgs = (prisma.blockchain.findMany as jest.Mock).mock
+      .calls[0][0];
     expect(findManyArgs.where.chainId).toEqual({ in: [1, 5042002, 42161] });
   });
 
@@ -187,7 +198,8 @@ describe("BlockchainsService - enriched config", () => {
   it("filters by active status (where.isActive = true)", async () => {
     const { svc, prisma } = makeService({ rows: [makeArcRow()] });
     await svc.getEnrichedConfig();
-    const findManyArgs = (prisma.blockchain.findMany as jest.Mock).mock.calls[0][0];
+    const findManyArgs = (prisma.blockchain.findMany as jest.Mock).mock
+      .calls[0][0];
     expect(findManyArgs.where.isActive).toBe(true);
   });
 });

@@ -1,38 +1,39 @@
-import { Injectable, BadRequestException, Logger } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { Cron, CronExpression } from "@nestjs/schedule";
+import { PublicKey } from "@solana/web3.js";
 import {
-  createPublicClient,
   http,
-  PublicClient,
-  Hash,
   Chain,
+  Hash,
+  PublicClient,
   Transaction,
   TransactionReceipt,
+  createPublicClient,
 } from "viem";
 import { readContract } from "viem/actions";
-import { ConfigService } from "@nestjs/config";
-import { PublicKey } from "@solana/web3.js";
-import { PrismaService } from "../prisma/prisma.service";
 import { addressesEqual } from "../auth/address-compare";
-import { TakumiPayAbi } from "./abis/takumi-pay.abi";
-import {
-  TTakumiWalletTransaction,
-  TTransactionVerificationResult,
-  TTransactionVerificationRequest,
-} from "./types/blockchain-verification.types";
-import { VerifyContractTransactionDto } from "./dto/verify-contract-transaction.dto";
-import { getBlockchainConfig } from "../config/app.config";
+import { assertChainFamily } from "../blockchains/chain-family";
 import { resolveRpcEndpoint } from "../blockchains/rpc-endpoint";
+import { getBlockchainConfig } from "../config/app.config";
+import { PrismaService } from "../prisma/prisma.service";
+import { TakumiPayAbi } from "./abis/takumi-pay.abi";
+import { VerifyContractTransactionDto } from "./dto/verify-contract-transaction.dto";
 import { SolanaVerificationService } from "./solana-verification.service";
 import { computeRefIdHash } from "./solana/takumi-pay/ref-id-hash";
 import { StellarVerificationService } from "./stellar-verification.service";
-import { assertChainFamily } from "../blockchains/chain-family";
+import {
+  TTakumiWalletTransaction,
+  TTransactionVerificationRequest,
+  TTransactionVerificationResult,
+} from "./types/blockchain-verification.types";
 
 const TAKUMI_PAY_CONTRACT_NAME = "takumi_pay";
 
 @Injectable()
 export class BlockchainVerificationService {
   private readonly logger = new Logger(BlockchainVerificationService.name);
-  private readonly clients: Map<number, PublicClient> = new Map();
+  private clients: Map<number, PublicClient> = new Map();
   private readonly minConfirmations: number;
 
   constructor(
@@ -44,6 +45,27 @@ export class BlockchainVerificationService {
     const blockchainConfig = getBlockchainConfig(this.configService);
     this.minConfirmations = blockchainConfig.minConfirmations;
     this.initializeClients();
+  }
+
+  /**
+   * Rebuilds the viem client map from the DB. Public + idempotent so it
+   * can be called both by the 5-minute safety-net cron below (same TTL
+   * convention as `BlockchainCacheService`) and explicitly by
+   * `BlockchainsService` right after a create/update/delete, instead of
+   * requiring a process restart every time a chain is added — the exact
+   * gap that let the Monad Testnet row sit invisible to point-deposit
+   * verification after being seeded directly against the DB (Monad
+   * Metropolis 2026 hackathon, 2026-09-17).
+   */
+  async refreshClients(): Promise<void> {
+    await this.initializeClients();
+  }
+
+  @Cron(CronExpression.EVERY_5_MINUTES, {
+    name: "blockchain-verification-client-refresh",
+  })
+  private async refreshClientsCron() {
+    await this.initializeClients();
   }
 
   private async initializeClients() {
@@ -59,6 +81,11 @@ export class BlockchainVerificationService {
           },
         },
       });
+
+      // Rebuilt from scratch each call (not mutated in place) so a chain
+      // that was deactivated or deleted since the last build also drops
+      // out of the map here, not just newly-added ones.
+      const nextClients: Map<number, PublicClient> = new Map();
 
       for (const blockchain of blockchains) {
         try {
@@ -120,10 +147,12 @@ export class BlockchainVerificationService {
 
           const client = createPublicClient({
             chain: dynamicChain,
-            transport: http(rpc.url, { fetchOptions: { headers: rpc.headers } }),
+            transport: http(rpc.url, {
+              fetchOptions: { headers: rpc.headers },
+            }),
           }) as PublicClient;
 
-          this.clients.set(blockchain.chainId, client);
+          nextClients.set(blockchain.chainId, client);
 
           this.logger.log(
             `Initialized dynamic client for chain ${blockchain.chainId} (${blockchain.name}) with native currency ${nativeToken.symbol} (decimals=${nativeToken.decimals})`,
@@ -134,10 +163,15 @@ export class BlockchainVerificationService {
           );
         }
       }
+
+      this.clients = nextClients;
     } catch (error) {
       this.logger.error(
         `Failed to initialize blockchain clients from database: ${error.message}`,
       );
+      // Leave the previous (possibly stale but working) `this.clients` in
+      // place on a failed refresh — e.g. a transient DB hiccup during the
+      // 5-minute cron tick — rather than wiping every chain's client out.
     }
   }
 
@@ -161,9 +195,16 @@ export class BlockchainVerificationService {
    * `takumiPayProgramId` field for why: a dedicated column duplicated this
    * row with no sync guarantee.
    */
-  private async requireTakumiPayContractAddress(blockchain: { id: string; name: string }): Promise<string> {
+  private async requireTakumiPayContractAddress(blockchain: {
+    id: string;
+    name: string;
+  }): Promise<string> {
     const contract = await this.prisma.smartContract.findFirst({
-      where: { blockchainId: blockchain.id, name: TAKUMI_PAY_CONTRACT_NAME, isActive: true },
+      where: {
+        blockchainId: blockchain.id,
+        name: TAKUMI_PAY_CONTRACT_NAME,
+        isActive: true,
+      },
     });
     if (!contract) {
       throw new BadRequestException(
@@ -173,11 +214,13 @@ export class BlockchainVerificationService {
     return contract.address;
   }
 
-  private async requireProgramId(blockchain: { id: string; name: string }): Promise<PublicKey> {
+  private async requireProgramId(blockchain: {
+    id: string;
+    name: string;
+  }): Promise<PublicKey> {
     const address = await this.requireTakumiPayContractAddress(blockchain);
     return new PublicKey(address);
   }
-
 
   /**
    * Phase A — tx-receipt-level verification only.
@@ -197,7 +240,11 @@ export class BlockchainVerificationService {
     expectedRecipient: string;
     expectedChainId: number;
     minimumConfirmations?: number;
-  }): Promise<{ receipt: TransactionReceipt; transaction: Transaction; confirmations: number }> {
+  }): Promise<{
+    receipt: TransactionReceipt;
+    transaction: Transaction;
+    confirmations: number;
+  }> {
     const {
       transactionHash,
       expectedSender,
@@ -208,12 +255,11 @@ export class BlockchainVerificationService {
 
     const client = this.getClient(expectedChainId);
 
-    const receipt: TransactionReceipt =
-      await client.waitForTransactionReceipt({
-        hash: transactionHash as Hash,
-        confirmations: minimumConfirmations,
-        timeout: 60_000,
-      });
+    const receipt: TransactionReceipt = await client.waitForTransactionReceipt({
+      hash: transactionHash as Hash,
+      confirmations: minimumConfirmations,
+      timeout: 60_000,
+    });
 
     const transaction: Transaction = await client.getTransaction({
       hash: transactionHash as Hash,
@@ -705,12 +751,15 @@ export class BlockchainVerificationService {
 
       // Handle native token sentinel: address(0) represents native currency
       const isNativeToken =
-        args.expectedTokenAddress === "0x0000000000000000000000000000000000000000" ||
-        args.expectedTokenAddress.toLowerCase() === args.contractAddress.toLowerCase();
+        args.expectedTokenAddress ===
+          "0x0000000000000000000000000000000000000000" ||
+        args.expectedTokenAddress.toLowerCase() ===
+          args.contractAddress.toLowerCase();
 
       if (
         !isNativeToken &&
-        payment.tokenAddress.toLowerCase() !== args.expectedTokenAddress.toLowerCase()
+        payment.tokenAddress.toLowerCase() !==
+          args.expectedTokenAddress.toLowerCase()
       ) {
         throw new BadRequestException(
           `Merchant payment tokenAddress mismatch: expected ${args.expectedTokenAddress}, got ${payment.tokenAddress}`,
@@ -862,7 +911,10 @@ export class BlockchainVerificationService {
         );
       }
 
-      if (contractTx.tokenAddress.toLowerCase() !== expectedTokenAddress.toLowerCase()) {
+      if (
+        contractTx.tokenAddress.toLowerCase() !==
+        expectedTokenAddress.toLowerCase()
+      ) {
         throw new BadRequestException(
           `Point deposit token mismatch: expected ${expectedTokenAddress}, got ${contractTx.tokenAddress}`,
         );

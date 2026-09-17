@@ -1,20 +1,18 @@
+import { createHash } from "node:crypto";
+import { Prisma } from "@generated/prisma";
 import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { PrismaService } from "../prisma/prisma.service";
-import { CreateBlockchainDto } from "./dto/create-blockchain.dto";
-import { UpdateBlockchainDto } from "./dto/update-blockchain.dto";
-import { SearchBlockchainDto } from "./dto/search-blockchain.dto";
-import { Prisma } from "@generated/prisma";
+import { BlockchainVerificationService } from "../blockchain-verification/blockchain-verification.service";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
+import { PrismaService } from "../prisma/prisma.service";
 import { BlockchainCacheService } from "../valkey/services/blockchain-cache.service";
 import { X402SupportedService } from "../x402/x402-supported.service";
-import {
-  enrichBlockchain,
-  type TBlockchainRow,
-} from "./blockchain-enricher";
-import { resolveRpcUrl, withResolvedRpcUrl } from "./rpc-endpoint";
+import { type TBlockchainRow, enrichBlockchain } from "./blockchain-enricher";
+import { CreateBlockchainDto } from "./dto/create-blockchain.dto";
 import type { EnrichedBlockchainResponseDto } from "./dto/enriched-blockchain-response.dto";
-import { createHash } from "node:crypto";
+import { SearchBlockchainDto } from "./dto/search-blockchain.dto";
+import { UpdateBlockchainDto } from "./dto/update-blockchain.dto";
+import { resolveRpcUrl, withResolvedRpcUrl } from "./rpc-endpoint";
 
 /**
  * Country → allow-list of EVM chainIds a payer in that jurisdiction can use.
@@ -26,7 +24,10 @@ import { createHash } from "node:crypto";
  */
 const DEFAULT_COUNTRY_ALLOWLIST: Readonly<Record<string, readonly number[]>> = {
   // Arc Testnet only during M2. Mainnet cuts over in §48.
-  ID: [5042002],
+  // Monad Testnet added 2026-09-16 for the Monad Metropolis QRIS-spend leg
+  // (mobile-app/docs/monad-metropolis-2026-spec.md §6.6) — `takumi_pay` is
+  // deployed there with the AUSD stand-in allowlisted.
+  ID: [5042002, 10143],
 };
 
 interface EnrichedResponsePayload {
@@ -43,12 +44,18 @@ export class BlockchainsService {
     private readonly blockchainCache: BlockchainCacheService,
     private readonly configService: ConfigService,
     private readonly x402Supported: X402SupportedService,
+    private readonly blockchainVerification: BlockchainVerificationService,
   ) {}
 
   async create(createBlockchainDto: CreateBlockchainDto) {
-    return await this.prisma.blockchain.create({
+    const result = await this.prisma.blockchain.create({
       data: createBlockchainDto,
     });
+    // New EVM chains need a viem client before point deposits / onchain
+    // settlement can verify against them — don't make that wait for the
+    // 5-minute cron tick or a process restart.
+    await this.blockchainVerification.refreshClients();
+    return result;
   }
 
   async findAll(paginationDto: CursorPaginationDto) {
@@ -93,9 +100,7 @@ export class BlockchainsService {
    *   max(updatedAt) + x402-refresh-timestamp so a chain-row edit or a fresh
    *   Circle x402 refresh both bust 304s cleanly.
    */
-  async getEnrichedConfig(
-    country?: string,
-  ): Promise<EnrichedResponsePayload> {
+  async getEnrichedConfig(country?: string): Promise<EnrichedResponsePayload> {
     const countrySegment = country ? country.toUpperCase() : "all";
 
     // Cache-aside at 5 min. Invalidation happens on update/delete via
@@ -214,9 +219,7 @@ export class BlockchainsService {
     return fallback ? [...fallback] : null;
   }
 
-  private computeEtag(
-    rows: Array<{ updatedAt: Date }>,
-  ): string {
+  private computeEtag(rows: Array<{ updatedAt: Date }>): string {
     const maxUpdated = rows.reduce<number>((acc, row) => {
       const t = row.updatedAt?.getTime?.() ?? 0;
       return t > acc ? t : acc;
@@ -318,6 +321,7 @@ export class BlockchainsService {
       });
       // Invalidate cache after update
       await this.blockchainCache.invalidateBlockchain(id);
+      await this.blockchainVerification.refreshClients();
       return result;
     } catch (error) {
       if (
@@ -337,6 +341,7 @@ export class BlockchainsService {
       });
       // Invalidate cache after delete
       await this.blockchainCache.invalidateBlockchain(id);
+      await this.blockchainVerification.refreshClients();
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
