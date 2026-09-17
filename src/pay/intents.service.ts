@@ -1877,17 +1877,22 @@ export class IntentsService {
       });
     }
 
-    // Idempotency — check if we already have a settlement for this txHash.
+    // Idempotency — a settlement already VERIFIED for this txHash is returned
+    // verbatim. A row that only records an earlier timed-out / failed
+    // attempt must not short-circuit: mobile re-POSTs the same hash after a
+    // timeout, and that retry has to re-run verification, not be told
+    // "SETTLED" for a payment nobody has checked yet.
     const existing = await this.prisma.onchainSettlement.findFirst({
       where: { intentId, txHash },
     });
-    if (existing) {
+    if (existing?.verifiedAt) {
       return {
         status: "SETTLED",
         intentId,
-        attestation: existing.verifiedAt
-          ? { id: existing.id, receivedAt: existing.verifiedAt.getTime() }
-          : null,
+        attestation: {
+          id: existing.id,
+          receivedAt: existing.verifiedAt.getTime(),
+        },
       };
     }
 
@@ -1896,19 +1901,31 @@ export class IntentsService {
     // and Solana settlements via this endpoint were blind-trusted (any
     // caller could POST an arbitrary txHash and get an unconditional
     // SETTLED), a gap surfaced 2026-09-17 while standing up Monad Testnet
-    // and closed for all three chain families here. The verification logic
-    // itself (`verifyMerchantPaymentInContract` / Solana's
-    // `verifyMerchantPayment`) already existed and was already wired for
-    // Stellar — this was a dispatch gap, not missing verification code.
+    // and closed for all three chain families here.
     //
-    // `expectedPayer` is left empty for EVM/Solana the same way it already
-    // was for Stellar: a user may pay from any of their linked wallets, so
-    // `intent.payer.walletAddress` (their PRIMARY wallet) isn't reliably
-    // the address that actually signed this specific payment. The real
-    // forgery guard is refId + merchantId + amount + fiatAmount +
-    // exchangeRateId matching the backend-signed quote this exact intent
-    // produced — `verifyMerchantPaymentInContract` and Solana's
-    // `verifyMerchantPayment` both skip the payer check when it's empty.
+    // Two phases, in this order, because mobile POSTs the hash the moment
+    // the tx is broadcast, before it is mined:
+    //   A. `verifyMerchantPaymentTx` — wait for the receipt at the chain's
+    //      own confirmation depth (`Blockchain.minConfirmations`), check it
+    //      succeeded and targeted the `takumi_pay` contract, and bind it to
+    //      this intent through the `MerchantPaymentProcessed` log. That log
+    //      also names the payer, which is the only reliable source for it:
+    //      a user may pay from any linked wallet, so
+    //      `intent.payer.walletAddress` (their PRIMARY wallet) is not.
+    //   B. `verifyMerchantPaymentInContract` — read the contract's record
+    //      for this refId and match merchant / token / amount / fiat /
+    //      exchangeRate against the backend-signed quote, and the payer
+    //      against the one Phase A found.
+    // Stellar and Solana keep their own dispatch inside Phase B (Solana now
+    // waits for the signature to confirm first when given the txHash).
+    //
+    // A receipt timeout is NOT a rejection: the payment may still be
+    // pending, so the attempt is recorded and `SETTLING` returned so the
+    // client keeps polling / re-POSTs. Verification failures are recorded
+    // on the same row (for audit and so the retry path sees them) and
+    // surfaced as 400 — the intent is deliberately left QUOTED, not flipped
+    // to FAILED, so a hash that was rejected for a transient reason (RPC
+    // lag on a fresh block) can be re-submitted.
     if (
       this.blockchainVerification &&
       (blockchain.type === "STELLAR" ||
@@ -1947,40 +1964,108 @@ export class IntentsService {
         contractAddress = contract.address;
       }
 
-      await this.blockchainVerification.verifyMerchantPaymentInContract({
-        contractAddress, // unused in the Stellar/Solana dispatch branches
-        chainId, // unused in the Stellar/Solana dispatch branches
-        refId: intentId,
-        expectedPayer: "",
-        expectedMerchantId: intent.merchantId,
-        expectedTokenAddress: token?.contractAddress ?? "",
-        expectedAmount,
-        expectedFiatAmountMinor: intent.fiatAmountMinor,
-        expectedFiatCurrency: intent.fiatCurrency,
-        expectedExchangeRateId: intent.exchangeRateId,
-        blockchainId,
-      });
+      try {
+        let expectedPayer = "";
+        if (blockchain.type === "EVM") {
+          const phaseA =
+            await this.blockchainVerification.verifyMerchantPaymentTx({
+              txHash,
+              chainId,
+              contractAddress,
+              refId: intentId,
+              minimumConfirmations: this.resolveMinConfirmations(blockchain),
+            });
+          expectedPayer = phaseA.payer;
+          this.logger.log(
+            `[submitOnchain] phase A ok intent=${intentId} txHash=${txHash} payer=${expectedPayer} confirmations=${phaseA.confirmations}`,
+          );
+        }
+
+        await this.blockchainVerification.verifyMerchantPaymentInContract({
+          contractAddress, // unused in the Stellar/Solana dispatch branches
+          chainId, // unused in the Stellar/Solana dispatch branches
+          refId: intentId,
+          expectedPayer,
+          expectedMerchantId: intent.merchantId,
+          expectedTokenAddress: token?.contractAddress ?? "",
+          expectedAmount,
+          expectedFiatAmountMinor: intent.fiatAmountMinor,
+          expectedFiatCurrency: intent.fiatCurrency,
+          expectedExchangeRateId: intent.exchangeRateId,
+          blockchainId,
+          txHash,
+        });
+      } catch (err) {
+        const message = (err as { message?: string })?.message ?? String(err);
+        const isTimeout =
+          (err as { name?: string })?.name ===
+            "WaitForTransactionReceiptTimeoutError" ||
+          /timed out|timeout/i.test(message);
+        await this.recordOnchainAttempt({
+          intentId,
+          txHash,
+          blockchain,
+          failureCode: isTimeout ? "TIMEOUT" : "VERIFICATION_FAILED",
+          failureMessage: message,
+        });
+        if (isTimeout) {
+          this.logger.warn(
+            `[submitOnchain] receipt timeout intent=${intentId} txHash=${txHash}; marked in-flight (SETTLING)`,
+          );
+          return { status: "SETTLING", intentId, attestation: null };
+        }
+        this.logger.warn(
+          `[submitOnchain] verification rejected intent=${intentId} txHash=${txHash}: ${message}`,
+        );
+        throw err;
+      }
     }
 
     this.logger.log(
-      `[submitOnchain] verifying and settling intent=${intentId} txHash=${txHash}`,
+      `[submitOnchain] verified, settling intent=${intentId} txHash=${txHash}`,
     );
-    // Record the onchain settlement and flip the intent status.
-    await this.prisma.$transaction(async (tx) => {
-      await tx.onchainSettlement.create({
-        data: {
+    // Record the onchain settlement and flip the intent status. Upsert on
+    // the (intentId, txHash) key so a retry that follows a recorded
+    // timeout / failure row completes it instead of tripping the unique
+    // index.
+    //
+    // The status flip is a guarded `updateMany` (QUOTED/SIGNED → SETTLED)
+    // rather than a blind `update`: two concurrent submits of the same hash
+    // both pass verification (the idempotency check above ran before
+    // either persisted), and only the one that actually performs the flip
+    // may fire the payout and the merchant-payment record. The loser sees
+    // `count === 0` and returns the same SETTLED answer without
+    // re-triggering anything — so replaying a hash can never pay a
+    // merchant twice.
+    const settledNow = await this.prisma.$transaction(async (tx) => {
+      await tx.onchainSettlement.upsert({
+        where: { intentId_txHash: { intentId, txHash } },
+        create: {
           intentId,
           txHash,
           chainId: blockchain.chainId,
           cluster: blockchain.solanaCluster,
           verifiedAt: new Date(),
         },
+        update: {
+          verifiedAt: new Date(),
+          failureCode: null,
+          failureMessage: null,
+        },
       });
-      await tx.paymentIntent.update({
-        where: { id: intentId },
+      const flipped = await tx.paymentIntent.updateMany({
+        where: { id: intentId, status: { in: ["QUOTED", "SIGNED"] } },
         data: { status: "SETTLED" },
       });
+      return flipped.count === 1;
     });
+
+    if (!settledNow) {
+      this.logger.log(
+        `[submitOnchain] intent=${intentId} already settled by a concurrent submit of txHash=${txHash}; not re-triggering payout`,
+      );
+      return { status: "SETTLED", intentId, attestation: null };
+    }
 
     this.logger.log(
       `[submitOnchain] intent=${intentId} SETTLED txHash=${txHash}`,
@@ -2003,6 +2088,56 @@ export class IntentsService {
       intentId,
       attestation: null,
     };
+  }
+
+  /**
+   * Confirmation depth for an EVM settlement: the chain's own
+   * `Blockchain.minConfirmations` first, then the env defaults — the same
+   * resolution order `OnchainSettlementProvider` uses.
+   */
+  private resolveMinConfirmations(blockchain: {
+    minConfirmations: number | null;
+  }): number {
+    const candidates = [
+      blockchain.minConfirmations,
+      this.config.get<string | number>("ONCHAIN_MIN_CONFIRMATIONS"),
+      this.config.get<string | number>("MIN_CONFIRMATIONS"),
+    ];
+    for (const c of candidates) {
+      const n = Number(c);
+      if (c != null && c !== "" && Number.isInteger(n) && n >= 0) return n;
+    }
+    return 12;
+  }
+
+  /** Audit row for a submit that timed out or was rejected; safe to re-run. */
+  private async recordOnchainAttempt(args: {
+    intentId: string;
+    txHash: string;
+    blockchain: { chainId: number | null; solanaCluster: string | null };
+    failureCode: string;
+    failureMessage: string;
+  }): Promise<void> {
+    const { intentId, txHash, blockchain, failureCode } = args;
+    const failureMessage = args.failureMessage.slice(0, 1000);
+    try {
+      await this.prisma.onchainSettlement.upsert({
+        where: { intentId_txHash: { intentId, txHash } },
+        create: {
+          intentId,
+          txHash,
+          chainId: blockchain.chainId,
+          cluster: blockchain.solanaCluster,
+          failureCode,
+          failureMessage,
+        },
+        update: { failureCode, failureMessage },
+      });
+    } catch (err) {
+      this.logger.error(
+        `[submitOnchain] could not record attempt intent=${intentId} txHash=${txHash}: ${(err as Error)?.message}`,
+      );
+    }
   }
 
   /**

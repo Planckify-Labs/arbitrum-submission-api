@@ -10,6 +10,7 @@ import {
   Transaction,
   TransactionReceipt,
   createPublicClient,
+  parseEventLogs,
 } from "viem";
 import { readContract } from "viem/actions";
 import { addressesEqual } from "../auth/address-compare";
@@ -236,6 +237,7 @@ export class BlockchainVerificationService {
    */
   async verifyTxReceiptOnly(args: {
     transactionHash: string;
+    /** Empty = caller doesn't know the sender; the check is skipped. */
     expectedSender: string;
     expectedRecipient: string;
     expectedChainId: number;
@@ -282,7 +284,10 @@ export class BlockchainVerificationService {
       );
     }
 
-    if (transaction.from.toLowerCase() !== expectedSender.toLowerCase()) {
+    if (
+      expectedSender &&
+      transaction.from.toLowerCase() !== expectedSender.toLowerCase()
+    ) {
       throw new BadRequestException(
         `Sender address mismatch: expected ${expectedSender}, got ${transaction.from}`,
       );
@@ -649,6 +654,59 @@ export class BlockchainVerificationService {
   }
 
   /**
+   * Phase A for an EVM merchant payment: wait for the submitted tx to reach
+   * the chain's required confirmations, check it succeeded and was sent to
+   * the `takumi_pay` contract, then bind it to THIS intent by finding the
+   * `MerchantPaymentProcessed` log the contract emitted for `refId` in the
+   * receipt. Returns the payer that log names so Phase B
+   * (`verifyMerchantPaymentInContract`) can pin the on-chain record to the
+   * wallet that actually paid — no server-side guess about which of the
+   * user's linked wallets signed.
+   *
+   * Without the log check, any successful tx to the contract (e.g. the same
+   * payer's payment for a different intent) would pass Phase A and Phase B
+   * would still find this refId's record, so the wrong txHash would be
+   * stored against the settlement. The log is what proves "this tx is the
+   * one that paid this intent".
+   *
+   * Throws viem's `WaitForTransactionReceiptTimeoutError` (name preserved)
+   * if the receipt doesn't arrive within the timeout — callers treat that
+   * as in-flight, not as a rejection.
+   */
+  async verifyMerchantPaymentTx(args: {
+    txHash: string;
+    chainId: number;
+    contractAddress: string;
+    refId: string;
+    minimumConfirmations?: number;
+  }): Promise<{ payer: string; confirmations: number }> {
+    const { receipt, confirmations } = await this.verifyTxReceiptOnly({
+      transactionHash: args.txHash,
+      expectedSender: "",
+      expectedRecipient: args.contractAddress,
+      expectedChainId: args.chainId,
+      minimumConfirmations: args.minimumConfirmations,
+    });
+
+    const contractLower = args.contractAddress.toLowerCase();
+    const processed = parseEventLogs({
+      abi: TakumiPayAbi,
+      eventName: "MerchantPaymentProcessed",
+      logs: receipt.logs.filter(
+        (log) => log.address.toLowerCase() === contractLower,
+      ),
+    }).find((log) => log.args.refId === args.refId);
+
+    if (!processed) {
+      throw new BadRequestException(
+        `Transaction ${args.txHash} did not process merchant payment ${args.refId}`,
+      );
+    }
+
+    return { payer: processed.args.payer, confirmations };
+  }
+
+  /**
    * Verify a merchant payment in the TakumiWalletMerchant contract (task 17).
    *
    * Calls `readContract` with `getMerchantPaymentByRef(refId)` on the
@@ -672,6 +730,12 @@ export class BlockchainVerificationService {
     expectedFiatCurrency: string;
     expectedExchangeRateId: number;
     blockchainId?: string;
+    /**
+     * Solana only: the submitted signature. When present the record read
+     * waits for it to reach `confirmed` first, so a submit that races the
+     * cluster doesn't fail with "account does not exist".
+     */
+    txHash?: string;
   }): Promise<void> {
     try {
       // Solana dispatch: route to Solana verification for non-EVM blockchains.
@@ -684,6 +748,13 @@ export class BlockchainVerificationService {
           if (family === "SVM") {
             const programId = await this.requireProgramId(blockchain);
             const refIdHash = computeRefIdHash(args.refId);
+            if (args.txHash) {
+              await this.solanaVerification.waitForConfirmation(
+                args.blockchainId,
+                args.txHash,
+                "confirmed",
+              );
+            }
             await this.solanaVerification.verifyMerchantPayment({
               blockchainId: args.blockchainId,
               programId,
@@ -724,12 +795,23 @@ export class BlockchainVerificationService {
       );
 
       const client = this.getClient(args.chainId);
-      const payment = await readContract(client, {
-        address: args.contractAddress as `0x${string}`,
-        abi: TakumiPayAbi,
-        functionName: "getMerchantPaymentByRef",
-        args: [args.refId],
-      });
+      const readPayment = () =>
+        readContract(client, {
+          address: args.contractAddress as `0x${string}`,
+          abi: TakumiPayAbi,
+          functionName: "getMerchantPaymentByRef",
+          args: [args.refId],
+        });
+
+      // The caller has already seen the receipt (Phase A), but `eth_call`
+      // at "latest" may land on a proxy upstream that hasn't imported that
+      // block yet and answer with an empty struct. A few short retries
+      // absorb that lag; a genuinely missing record still fails below.
+      let payment = await readPayment();
+      for (let attempt = 0; attempt < 3 && payment.refId === ""; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        payment = await readPayment();
+      }
 
       if (payment.refId !== args.refId) {
         throw new BadRequestException(

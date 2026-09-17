@@ -7,23 +7,23 @@ import {
 } from "@nestjs/common";
 import {
   IntentsService,
-  computeUsdcMicros,
   addMarkup,
+  computeUsdcMicros,
 } from "./intents.service";
 
 // PushService pulls in expo-server-sdk, which ships pure ESM and isn't
 // transformed by Jest's default config. Nothing here ever instantiates
 // the real PushService, so a trivial stub avoids Jest ever parsing it.
 jest.mock("expo-server-sdk", () => ({ Expo: class {} }));
-import type { X402SupportedService } from "../x402/x402-supported.service";
-import type { PrismaService } from "../prisma/prisma.service";
-import type { ValkeyService } from "../valkey/valkey.service";
 import type { ConfigService } from "@nestjs/config";
-import type { QrSigningService } from "../merchants/qr-signing.service";
-import type { BlockchainCacheService } from "../valkey/services/blockchain-cache.service";
-import type { ICircleSettleClient } from "./circle-settle.client";
 import type { BlockchainVerificationService } from "../blockchain-verification/blockchain-verification.service";
+import type { QrSigningService } from "../merchants/qr-signing.service";
+import type { PrismaService } from "../prisma/prisma.service";
 import type { TransactionsService } from "../transactions/transactions.service";
+import type { BlockchainCacheService } from "../valkey/services/blockchain-cache.service";
+import type { ValkeyService } from "../valkey/valkey.service";
+import type { X402SupportedService } from "../x402/x402-supported.service";
+import type { ICircleSettleClient } from "./circle-settle.client";
 
 /**
  * Stub for `X402SupportedService`. We inject a ready-to-go Arc entry so
@@ -277,7 +277,10 @@ describe("IntentsService", () => {
     await svc.createIntent({ dto: defaultDto, ...defaultArgs });
     expect(prisma.exchangeRate.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ fromCurrency: "USDC", toCurrency: "IDR" }),
+        where: expect.objectContaining({
+          fromCurrency: "USDC",
+          toCurrency: "IDR",
+        }),
       }),
     );
   });
@@ -326,7 +329,10 @@ describe("IntentsService", () => {
 
     expect(prisma.exchangeRate.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ fromCurrency: "AUSD", toCurrency: "IDR" }),
+        where: expect.objectContaining({
+          fromCurrency: "AUSD",
+          toCurrency: "IDR",
+        }),
       }),
     );
     expect(prisma.exchangeRate.findFirst).not.toHaveBeenCalledWith(
@@ -1519,5 +1525,266 @@ describe("IntentsService.recordDepositReceipt", () => {
     const result = await svc.recordDepositReceipt(validArgs);
     expect(result.depositId).toBe("gd_WINNER");
     expect(result.status).toBe("CONFIRMED");
+  });
+});
+
+describe("IntentsService.submitOnchain — EVM two-phase verification", () => {
+  const intentId = "01M2PRX5BA34H2ZES9EPBN3GNQ";
+  const txHash = `0x${"ab".repeat(32)}`;
+  const contractAddress = "0x9EEC5aD4FC092fD468A8114007e541238F4Ba5ee";
+  const onchainPayer = "0x0141781Aad86A023FaC70C6Aad0A8E7253164DB6";
+
+  function evmPrisma(opts: { existingSettlement?: unknown } = {}) {
+    const onchainSettlement = {
+      findFirst: jest.fn(async () => opts.existingSettlement ?? null),
+      upsert: jest.fn(async () => ({})),
+    };
+    const paymentIntent = {
+      create: jest.fn(),
+      findUnique: jest.fn(async () => ({
+        id: intentId,
+        status: "QUOTED",
+        merchantId: "mch_monad",
+        sourceTokenId: "ausd-monad-testnet-token",
+        nanopayUsdcAmountMicros: 5_541_189n,
+        fiatAmountMinor: 99_494,
+        fiatCurrency: "IDR",
+        exchangeRateId: 9,
+        payerUserId: "user_1",
+        payer: { walletAddress: "0x9567f4E7ECDd7D752cEE6062e15580E0086353d7" },
+        merchant: { id: "mch_monad", displayName: "GTron" },
+      })),
+      update: jest.fn(async () => ({})),
+      updateMany: jest.fn(async () => ({ count: 1 })),
+    };
+    const prisma = {
+      paymentIntent,
+      merchant: { findUnique: jest.fn() },
+      exchangeRate: { findFirst: jest.fn() },
+      blockchain: {
+        findUnique: jest.fn(async () => ({
+          id: "monad-testnet",
+          name: "Monad Testnet",
+          type: "EVM",
+          chainId: 10143,
+          minConfirmations: 1,
+          solanaCluster: null,
+          isActive: true,
+        })),
+      },
+      smartContract: {
+        findFirst: jest.fn(async () => ({ address: contractAddress })),
+      },
+      token: {
+        findUnique: jest.fn(async () => ({
+          id: "ausd-monad-testnet-token",
+          decimals: 6,
+          contractAddress: "0x1aC593085Fa34c651E805085da4b2cabAC676F99",
+        })),
+      },
+      onchainSettlement,
+      $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+        fn({ onchainSettlement, paymentIntent }),
+      ),
+    };
+    return prisma;
+  }
+
+  function verificationStub(
+    opts: {
+      phaseA?: jest.Mock;
+      phaseB?: jest.Mock;
+    } = {},
+  ) {
+    return {
+      getPublicClient: jest.fn(),
+      verifyMerchantPaymentTx:
+        opts.phaseA ??
+        jest.fn(async () => ({ payer: onchainPayer, confirmations: 3 })),
+      verifyMerchantPaymentInContract:
+        opts.phaseB ?? jest.fn(() => Promise.resolve()),
+    };
+  }
+
+  it("runs Phase A (receipt + log binding) before Phase B and hands the on-chain payer across", async () => {
+    const calls: string[] = [];
+    const phaseA = jest.fn(() => {
+      calls.push("A");
+      return Promise.resolve({ payer: onchainPayer, confirmations: 3 });
+    });
+    const phaseB = jest.fn(() => {
+      calls.push("B");
+      return Promise.resolve();
+    });
+    const prisma = evmPrisma();
+    const verification = verificationStub({ phaseA, phaseB });
+    const { svc } = buildService({
+      prisma: prisma as unknown as FakePrisma,
+      blockchainVerification: verification as never,
+    });
+
+    const res = await svc.submitOnchain({
+      intentId,
+      txHash,
+      blockchainId: "monad-testnet",
+    });
+
+    expect(res.status).toBe("SETTLED");
+    expect(calls).toEqual(["A", "B"]);
+    expect(phaseA).toHaveBeenCalledWith({
+      txHash,
+      chainId: 10143,
+      contractAddress,
+      refId: intentId,
+      minimumConfirmations: 1,
+    });
+    expect(phaseB).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contractAddress,
+        chainId: 10143,
+        refId: intentId,
+        expectedPayer: onchainPayer,
+        expectedMerchantId: "mch_monad",
+        expectedTokenAddress: "0x1aC593085Fa34c651E805085da4b2cabAC676F99",
+        expectedAmount: "5541189",
+        expectedFiatAmountMinor: 99_494,
+        expectedExchangeRateId: 9,
+        txHash,
+      }),
+    );
+    expect(prisma.onchainSettlement.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { intentId_txHash: { intentId, txHash } },
+        create: expect.objectContaining({ verifiedAt: expect.any(Date) }),
+      }),
+    );
+    expect(prisma.paymentIntent.updateMany).toHaveBeenCalledWith({
+      where: { id: intentId, status: { in: ["QUOTED", "SIGNED"] } },
+      data: { status: "SETTLED" },
+    });
+  });
+
+  it("returns SETTLING (not 400, not SETTLED) when the receipt times out, and records the attempt", async () => {
+    const timeout = Object.assign(
+      new Error(
+        'Timed out while waiting for transaction with hash "0x…" to be confirmed.',
+      ),
+      { name: "WaitForTransactionReceiptTimeoutError" },
+    );
+    const phaseA = jest.fn(() => Promise.reject(timeout));
+    const phaseB = jest.fn();
+    const prisma = evmPrisma();
+    const { svc } = buildService({
+      prisma: prisma as unknown as FakePrisma,
+      blockchainVerification: verificationStub({ phaseA, phaseB }) as never,
+    });
+
+    const res = await svc.submitOnchain({
+      intentId,
+      txHash,
+      blockchainId: "monad-testnet",
+    });
+
+    expect(res.status).toBe("SETTLING");
+    expect(phaseB).not.toHaveBeenCalled();
+    expect(prisma.paymentIntent.updateMany).not.toHaveBeenCalled();
+    expect(prisma.onchainSettlement.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ failureCode: "TIMEOUT" }),
+      }),
+    );
+  });
+
+  it("rejects with 400 and leaves the intent QUOTED when the contract record does not match", async () => {
+    const phaseB = jest.fn(() =>
+      Promise.reject(
+        new BadRequestException(
+          "Merchant payment amount mismatch: expected 5541189, got 1",
+        ),
+      ),
+    );
+    const prisma = evmPrisma();
+    const { svc } = buildService({
+      prisma: prisma as unknown as FakePrisma,
+      blockchainVerification: verificationStub({ phaseB }) as never,
+    });
+
+    await expect(
+      svc.submitOnchain({ intentId, txHash, blockchainId: "monad-testnet" }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.paymentIntent.updateMany).not.toHaveBeenCalled();
+    expect(prisma.onchainSettlement.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ failureCode: "VERIFICATION_FAILED" }),
+      }),
+    );
+  });
+
+  it("short-circuits only on an already-VERIFIED settlement row; a recorded timeout row re-verifies", async () => {
+    const verifiedAt = new Date("2026-09-17T04:10:00Z");
+    const prismaVerified = evmPrisma({
+      existingSettlement: { id: "os_1", verifiedAt },
+    });
+    const verification = verificationStub();
+    const { svc: svcVerified } = buildService({
+      prisma: prismaVerified as unknown as FakePrisma,
+      blockchainVerification: verification as never,
+    });
+    const res = await svcVerified.submitOnchain({
+      intentId,
+      txHash,
+      blockchainId: "monad-testnet",
+    });
+    expect(res).toEqual({
+      status: "SETTLED",
+      intentId,
+      attestation: { id: "os_1", receivedAt: verifiedAt.getTime() },
+    });
+    expect(verification.verifyMerchantPaymentTx).not.toHaveBeenCalled();
+
+    const prismaTimedOut = evmPrisma({
+      existingSettlement: {
+        id: "os_2",
+        verifiedAt: null,
+        failureCode: "TIMEOUT",
+      },
+    });
+    const verification2 = verificationStub();
+    const { svc: svcRetry } = buildService({
+      prisma: prismaTimedOut as unknown as FakePrisma,
+      blockchainVerification: verification2 as never,
+    });
+    const retry = await svcRetry.submitOnchain({
+      intentId,
+      txHash,
+      blockchainId: "monad-testnet",
+    });
+    expect(retry.status).toBe("SETTLED");
+    expect(verification2.verifyMerchantPaymentTx).toHaveBeenCalledTimes(1);
+    expect(verification2.verifyMerchantPaymentInContract).toHaveBeenCalledTimes(
+      1,
+    );
+  });
+  it("a concurrent duplicate submit that loses the status flip does not re-trigger the payout", async () => {
+    const prisma = evmPrisma();
+    // Simulate: another request already flipped QUOTED → SETTLED between
+    // this request's idempotency check and its own guarded update.
+    prisma.paymentIntent.updateMany = jest.fn(async () => ({ count: 0 }));
+    const payoutProvider = { trigger: jest.fn(async () => undefined) };
+    const { svc } = buildService({
+      prisma: prisma as unknown as FakePrisma,
+      blockchainVerification: verificationStub() as never,
+    });
+    (svc as unknown as { payoutProvider: unknown }).payoutProvider =
+      payoutProvider;
+
+    const res = await svc.submitOnchain({
+      intentId,
+      txHash,
+      blockchainId: "monad-testnet",
+    });
+
+    expect(res.status).toBe("SETTLED");
+    expect(payoutProvider.trigger).not.toHaveBeenCalled();
   });
 });
