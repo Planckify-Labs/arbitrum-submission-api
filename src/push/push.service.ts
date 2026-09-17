@@ -243,6 +243,95 @@ export class PushService {
     });
   }
 
+  /**
+   * On-chain merchant settlement verified. Carries `intentId` so the
+   * mobile tap handler deep-links to the receipt (same contract as
+   * `sendPaidOutPush`). Distinct copy from the later "Payment Confirmed"
+   * payout push: this one says the payment went through, that one says
+   * the merchant has the money.
+   */
+  async sendSettledPush(intentId: string): Promise<void> {
+    const intent = await this.loadIntentForPush(intentId);
+    if (!intent) return;
+    await this.sendToUser({
+      userId: intent.payerUserId,
+      title: "Payment sent",
+      body: `Your payment to ${intent.merchant.displayName} went through.`,
+      source: "onchain_settlement",
+      channelId: "payouts",
+      data: {
+        intentId,
+        merchantDisplayName: intent.merchant.displayName,
+        fiatAmountMinor: intent.fiatAmountMinor,
+        fiatCurrency: intent.fiatCurrency,
+      },
+    });
+  }
+
+  /**
+   * The only two things a user is ever told about a settlement that did
+   * not verify — and neither says "failed" about money they may have
+   * spent. `reverted` means the chain itself refused the tx, so nothing
+   * moved and saying "you weren't charged" is true. `needs_review` covers
+   * everything else (mined-but-mismatched, or still unconfirmed after the
+   * full retry budget): the money may have moved, so the message is
+   * "we're checking", never "contact support". Neither carries `intentId`
+   * on purpose: the receipt screen is for successful payments; these
+   * deep-link to the activity detail via `transactionId` instead.
+   */
+  async sendSettlementIssuePush(
+    intentId: string,
+    kind: "reverted" | "needs_review",
+    transactionId?: string,
+  ): Promise<void> {
+    const intent = await this.loadIntentForPush(intentId);
+    if (!intent) return;
+    const merchant = intent.merchant.displayName;
+    const copy =
+      kind === "reverted"
+        ? {
+            title: "Payment didn't go through",
+            body: `Your payment to ${merchant} didn't go through and you weren't charged. You can try again anytime.`,
+          }
+        : {
+            title: "We're checking your payment",
+            body: `Your payment to ${merchant} is being checked. You don't need to do anything, we'll update you once it's done.`,
+          };
+    await this.sendToUser({
+      userId: intent.payerUserId,
+      ...copy,
+      source: "onchain_settlement",
+      channelId: "payouts",
+      data: {
+        type: "merchant_payment",
+        status: kind,
+        ...(transactionId ? { transactionId } : {}),
+      },
+    });
+  }
+
+  private async loadIntentForPush(intentId: string): Promise<{
+    payerUserId: string;
+    fiatAmountMinor: number;
+    fiatCurrency: string;
+    merchant: { displayName: string };
+  } | null> {
+    const intent = await this.prisma.paymentIntent.findUnique({
+      where: { id: intentId },
+      select: {
+        payerUserId: true,
+        fiatAmountMinor: true,
+        fiatCurrency: true,
+        merchant: { select: { displayName: true } },
+      },
+    });
+    if (!intent?.payerUserId) {
+      this.logger.debug(`[push] no payer for intentId=${intentId}`);
+      return null;
+    }
+    return { ...intent, payerUserId: intent.payerUserId };
+  }
+
   // ─── internal ────────────────────────────────────────────────────────────
 
   private async dispatch(

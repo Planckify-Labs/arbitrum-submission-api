@@ -267,15 +267,21 @@ export class IntentsController {
    * `POST /v1/pay/intents/:id/onchain` — onchain settlement submit
    * (task 19 / spec §4.4, §4.8).
    *
-   * Mobile submits the confirmed tx hash + chain ID after the payer's
-   * wallet sends a `processMerchantPayment` transaction to the
-   * TakumiWalletMerchant contract. The server verifies the tx on-chain
-   * (Phase A: receipt checks, Phase B: contract-level data match), then
-   * flips the intent to SETTLED and fires the fiat payout.
+   * Mobile submits the tx hash + chain ID as soon as the payer's wallet
+   * has broadcast a `processMerchantPayment` transaction to the
+   * TakumiWalletMerchant contract — it does NOT wait for it to be mined.
+   * This handler records the hash and answers `SETTLING` at once; the
+   * `onchain-settlement` queue verifies the tx against the chain (Phase
+   * A: receipt at the chain's confirmation depth + the intent's log,
+   * Phase B: contract-level data match), flips the intent to SETTLED,
+   * fires the fiat payout and pushes the result. The client polls
+   * `GET /v1/pay/intents/:id` (status `settling` → `paid`) or acts on the
+   * push; it is free to leave the screen.
    *
    * Return shape mirrors `/nanopay` — same `NanopaySubmitResponseDto`,
    * same three statuses (`SETTLED` / `FAILED` / `SETTLING`), so mobile
-   * receipt / polling code stays rail-agnostic.
+   * receipt / polling code stays rail-agnostic. `SETTLED` is returned
+   * only for a hash that was already verified earlier.
    *
    * Idempotency: `(intentId, txHash)` is the natural dedup key (unique
    * index on `onchain_settlements`). A second POST with the same txHash

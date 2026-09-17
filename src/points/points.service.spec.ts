@@ -1,24 +1,30 @@
-import { BadRequestException, NotFoundException, ConflictException } from "@nestjs/common";
-import type { PrismaService } from "../prisma/prisma.service";
-import type { ExchangeRateService } from "../exchange-rate/exchange-rate.service";
-import type { PointsCacheService } from "../valkey/services/points-cache.service";
-import type { ReferenceIdService } from "../reference-id/reference-id.service";
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from "@nestjs/common";
 import type { Queue } from "bullmq";
+import type { ExchangeRateService } from "../exchange-rate/exchange-rate.service";
+import type { PrismaService } from "../prisma/prisma.service";
+import type { ReferenceIdService } from "../reference-id/reference-id.service";
+import type { PointsCacheService } from "../valkey/services/points-cache.service";
 import { PointsService } from "./points.service";
 
-function buildHarness(opts: {
-  user?: Record<string, unknown> | null;
-  token?: Record<string, unknown> | null;
-  blockchain?: Record<string, unknown> | null;
-  contract?: Record<string, unknown> | null;
-  priceConfig?: Record<string, unknown> | null;
-  exchangeRate?: { rate: number } | null;
-  balance?: { balance: bigint } | null;
-  refIdCreateError?: { code: string };
-  existingPointTx?: Record<string, unknown> | null;
-  existingByHash?: Record<string, unknown> | null;
-  walletLinks?: { walletAddress: string }[];
-} = {}) {
+function buildHarness(
+  opts: {
+    user?: Record<string, unknown> | null;
+    token?: Record<string, unknown> | null;
+    blockchain?: Record<string, unknown> | null;
+    contract?: Record<string, unknown> | null;
+    priceConfig?: Record<string, unknown> | null;
+    exchangeRate?: { rate: number } | null;
+    balance?: { balance: bigint } | null;
+    refIdCreateError?: { code: string };
+    existingPointTx?: Record<string, unknown> | null;
+    existingByHash?: Record<string, unknown> | null;
+    walletLinks?: { walletAddress: string }[];
+  } = {},
+) {
   const txCalls = {
     pointBalance: {
       findUnique: jest.fn(async () => opts.balance ?? null),
@@ -100,14 +106,14 @@ function buildHarness(opts: {
 
   const pointsCache = {
     getPointPrice: jest.fn(
-      async (
-        _t: string,
-        _c: string,
-        fallback: () => unknown,
-      ) => fallback(),
+      async (_t: string, _c: string, fallback: () => unknown) => fallback(),
     ),
-    getPointConfig: jest.fn(async (_c: string, fallback: () => unknown) => fallback()),
-    getPointBalance: jest.fn(async (_u: string, fallback: () => unknown) => fallback()),
+    getPointConfig: jest.fn(async (_c: string, fallback: () => unknown) =>
+      fallback(),
+    ),
+    getPointBalance: jest.fn(async (_u: string, fallback: () => unknown) =>
+      fallback(),
+    ),
     invalidateBalance: jest.fn(async () => undefined),
     invalidateConfig: jest.fn(async () => undefined),
     invalidatePrices: jest.fn(async () => undefined),
@@ -207,7 +213,10 @@ describe("PointsService.getPointPrice", () => {
       },
       priceConfig: { baseRate: "1" },
     });
-    const out = await svc.getPointPrice({ tokenId: "tk_idrx", currency: "IDR" });
+    const out = await svc.getPointPrice({
+      tokenId: "tk_idrx",
+      currency: "IDR",
+    });
     expect(exchangeRateService.findLatest).not.toHaveBeenCalled();
     expect(out.token.symbol).toBe("IDRX");
     expect(out.minimumPoints).toBe(15_000);
@@ -390,7 +399,9 @@ describe("PointsService.createDeposit happy path", () => {
     expect(queue.add).toHaveBeenCalledWith(
       "verify-deposit",
       expect.objectContaining({ pointTransactionId: "ptx_top" }),
-      expect.objectContaining({ attempts: 5 }),
+      // Long, capped schedule from settlement-policy: our own outages
+      // only delay a deposit, they never fail it.
+      expect.objectContaining({ attempts: 150, backoff: { type: "custom" } }),
     );
     expect(out.status).toBe("PENDING");
   });

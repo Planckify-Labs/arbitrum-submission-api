@@ -1,20 +1,26 @@
 import {
-  Injectable,
+  PointTransactionStatus,
+  PointTransactionType,
+  Prisma,
+  ReferenceIdStatus,
+} from "@generated/prisma";
+import { InjectQueue } from "@nestjs/bullmq";
+import {
   BadRequestException,
   ConflictException,
-  NotFoundException,
+  Injectable,
   Logger,
+  NotFoundException,
 } from "@nestjs/common";
-import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
-import { PrismaService } from "../prisma/prisma.service";
-import { ExchangeRateService } from "../exchange-rate/exchange-rate.service";
 import { addressesEqual } from "../auth/address-compare";
-import { PointsCacheService } from "../valkey/services/points-cache.service";
+import { SETTLEMENT_JOB_OPTIONS } from "../blockchain-verification/settlement-policy";
+import { ExchangeRateService } from "../exchange-rate/exchange-rate.service";
+import { PrismaService } from "../prisma/prisma.service";
 import { ReferenceIdService } from "../reference-id/reference-id.service";
-import { Prisma, PointTransactionStatus, PointTransactionType, ReferenceIdStatus } from "@generated/prisma";
-import { GetPointPriceQueryDto } from "./dto/get-point-price-query.dto";
+import { PointsCacheService } from "../valkey/services/points-cache.service";
 import { CreatePointDepositDto } from "./dto/create-point-deposit.dto";
+import { GetPointPriceQueryDto } from "./dto/get-point-price-query.dto";
 import { PointHistoryQueryDto } from "./dto/point-history-query.dto";
 import { PointPriceResponseDto } from "./dto/point-price-response.dto";
 
@@ -34,93 +40,109 @@ export class PointsService {
 
   // ── GET /points/price ──────────────────────────────────────────────────────
 
-  async getPointPrice(query: GetPointPriceQueryDto): Promise<PointPriceResponseDto> {
-    return this.pointsCache.getPointPrice(query.tokenId, query.currency, async () => {
-      const token = await this.prisma.token.findUnique({
-        where: { id: query.tokenId },
-      });
-
-      if (!token) {
-        throw new BadRequestException(`Token with ID ${query.tokenId} not found`);
-      }
-      if (!token.isActive) {
-        throw new BadRequestException(`Token ${token.symbol} is not active`);
-      }
-      if (!token.isStablecoin) {
-        throw new BadRequestException(`Token ${token.symbol} is not a stablecoin`);
-      }
-      // `isPaymentEnabled` is the ops switch for "cleared for user-facing
-      // payment flows". Mobile already filters its deposit token list on it,
-      // so quoting a token without it means the caller went around that list.
-      if (!token.isPaymentEnabled) {
-        throw new BadRequestException(
-          `Token ${token.symbol} is not enabled for payments`,
-        );
-      }
-
-      const priceConfig = await this.pointsCache.getPointConfig(
-        query.currency,
-        () =>
-          this.prisma.pointPriceConfig.findFirst({
-            where: { currency: query.currency, isActive: true },
-            orderBy: { createdAt: "desc" },
-          }),
-      );
-
-      if (!priceConfig) {
-        throw new BadRequestException(
-          `No active point price config for currency ${query.currency}`,
-        );
-      }
-
-      // If the token is already pegged to the requested currency, it's 1:1 — no exchange rate needed.
-      // Otherwise look up the live rate (e.g. USDT → IDR).
-      let tokenPriceInCurrency: Prisma.Decimal;
-      if (token.peggedCurrency === query.currency) {
-        tokenPriceInCurrency = new Prisma.Decimal(1);
-      } else {
-        const exchangeRate = await this.exchangeRateService.findLatest({
-          fromCurrency: token.symbol,
-          toCurrency: query.currency,
+  async getPointPrice(
+    query: GetPointPriceQueryDto,
+  ): Promise<PointPriceResponseDto> {
+    return this.pointsCache.getPointPrice(
+      query.tokenId,
+      query.currency,
+      async () => {
+        const token = await this.prisma.token.findUnique({
+          where: { id: query.tokenId },
         });
 
-        if (!exchangeRate) {
+        if (!token) {
           throw new BadRequestException(
-            `No exchange rate found for ${token.symbol} → ${query.currency}`,
+            `Token with ID ${query.tokenId} not found`,
+          );
+        }
+        if (!token.isActive) {
+          throw new BadRequestException(`Token ${token.symbol} is not active`);
+        }
+        if (!token.isStablecoin) {
+          throw new BadRequestException(
+            `Token ${token.symbol} is not a stablecoin`,
+          );
+        }
+        // `isPaymentEnabled` is the ops switch for "cleared for user-facing
+        // payment flows". Mobile already filters its deposit token list on it,
+        // so quoting a token without it means the caller went around that list.
+        if (!token.isPaymentEnabled) {
+          throw new BadRequestException(
+            `Token ${token.symbol} is not enabled for payments`,
           );
         }
 
-        tokenPriceInCurrency = new Prisma.Decimal(exchangeRate.rate.toString());
-      }
-      const baseRate = new Prisma.Decimal(priceConfig.baseRate.toString());
+        const priceConfig = await this.pointsCache.getPointConfig(
+          query.currency,
+          () =>
+            this.prisma.pointPriceConfig.findFirst({
+              where: { currency: query.currency, isActive: true },
+              orderBy: { createdAt: "desc" },
+            }),
+        );
 
-      const pointsPerToken = tokenPriceInCurrency.div(baseRate).floor();
-      const tokenPerPoint = baseRate.div(tokenPriceInCurrency);
-      const minimumTokenAmount = new Prisma.Decimal(MINIMUM_POINTS).mul(tokenPerPoint);
+        if (!priceConfig) {
+          throw new BadRequestException(
+            `No active point price config for currency ${query.currency}`,
+          );
+        }
 
-      return {
-        pointPrice: baseRate.toFixed(0),
-        currency: query.currency,
-        token: {
-          id: token.id,
-          symbol: token.symbol,
-          name: token.name,
-          decimals: token.decimals,
-          priceInCurrency: tokenPriceInCurrency.toString(),
-        },
-        pointsPerToken: pointsPerToken.toString(),
-        // Full precision — this is the rate mobile multiplies by the
-        // requested point count to derive the token amount to deposit.
-        // Truncating it (previously 6 sig figs) understates the token
-        // amount needed, and since the crediting worker recomputes points
-        // from the actually-deposited amount, that shortfall silently
-        // costs the user points (worse at larger deposits).
-        tokenPerPoint: tokenPerPoint.toSignificantDigits(18).toString(),
-        minimumPoints: MINIMUM_POINTS,
-        minimumTokenAmount: minimumTokenAmount.toSignificantDigits(18).toString(),
-        updatedAt: new Date().toISOString(),
-      };
-    });
+        // If the token is already pegged to the requested currency, it's 1:1 — no exchange rate needed.
+        // Otherwise look up the live rate (e.g. USDT → IDR).
+        let tokenPriceInCurrency: Prisma.Decimal;
+        if (token.peggedCurrency === query.currency) {
+          tokenPriceInCurrency = new Prisma.Decimal(1);
+        } else {
+          const exchangeRate = await this.exchangeRateService.findLatest({
+            fromCurrency: token.symbol,
+            toCurrency: query.currency,
+          });
+
+          if (!exchangeRate) {
+            throw new BadRequestException(
+              `No exchange rate found for ${token.symbol} → ${query.currency}`,
+            );
+          }
+
+          tokenPriceInCurrency = new Prisma.Decimal(
+            exchangeRate.rate.toString(),
+          );
+        }
+        const baseRate = new Prisma.Decimal(priceConfig.baseRate.toString());
+
+        const pointsPerToken = tokenPriceInCurrency.div(baseRate).floor();
+        const tokenPerPoint = baseRate.div(tokenPriceInCurrency);
+        const minimumTokenAmount = new Prisma.Decimal(MINIMUM_POINTS).mul(
+          tokenPerPoint,
+        );
+
+        return {
+          pointPrice: baseRate.toFixed(0),
+          currency: query.currency,
+          token: {
+            id: token.id,
+            symbol: token.symbol,
+            name: token.name,
+            decimals: token.decimals,
+            priceInCurrency: tokenPriceInCurrency.toString(),
+          },
+          pointsPerToken: pointsPerToken.toString(),
+          // Full precision — this is the rate mobile multiplies by the
+          // requested point count to derive the token amount to deposit.
+          // Truncating it (previously 6 sig figs) understates the token
+          // amount needed, and since the crediting worker recomputes points
+          // from the actually-deposited amount, that shortfall silently
+          // costs the user points (worse at larger deposits).
+          tokenPerPoint: tokenPerPoint.toSignificantDigits(18).toString(),
+          minimumPoints: MINIMUM_POINTS,
+          minimumTokenAmount: minimumTokenAmount
+            .toSignificantDigits(18)
+            .toString(),
+          updatedAt: new Date().toISOString(),
+        };
+      },
+    );
   }
 
   // ── GET /points/balance ────────────────────────────────────────────────────
@@ -210,13 +232,18 @@ export class PointsService {
       const existingByHash = await this.prisma.pointTransaction.findFirst({
         where: { txHash: dto.txHash },
       });
-      if (existingByHash && existingByHash.status !== PointTransactionStatus.FAILED) {
+      if (
+        existingByHash &&
+        existingByHash.status !== PointTransactionStatus.FAILED
+      ) {
         throw new ConflictException("Transaction hash already submitted");
       }
     }
 
     // 3. Validate token
-    const token = await this.prisma.token.findUnique({ where: { id: dto.tokenId } });
+    const token = await this.prisma.token.findUnique({
+      where: { id: dto.tokenId },
+    });
     if (!token || !token.isActive || !token.isStablecoin) {
       throw new BadRequestException("Invalid or inactive stablecoin token");
     }
@@ -318,20 +345,25 @@ export class PointsService {
     // 8. Enqueue verification job
     await this.pointDepositQueue.add(
       "verify-deposit",
-      { pointTransactionId: pointTx.id, pointTransactionCreatedAt: pointTx.createdAt },
       {
-        attempts: 5,
-        backoff: { type: "exponential", delay: 3000 },
+        pointTransactionId: pointTx.id,
+        pointTransactionCreatedAt: pointTx.createdAt,
       },
+      // Long, capped schedule: a deposit is only ever told "didn't go
+      // through" on a chain verdict, so our own outages just delay it.
+      SETTLEMENT_JOB_OPTIONS,
     );
 
-    this.logger.log(`Point deposit submitted: ${pointTx.id} for user ${userId}`);
+    this.logger.log(
+      `Point deposit submitted: ${pointTx.id} for user ${userId}`,
+    );
 
     return {
       id: pointTx.id,
       status: PointTransactionStatus.PENDING,
       refId: dto.refId,
-      message: "Deposit submitted. Points will be credited after on-chain verification.",
+      message:
+        "Deposit submitted. Points will be credited after on-chain verification.",
     };
   }
 
@@ -515,7 +547,14 @@ export class PointsService {
       take: limit + 1,
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       include: {
-        user: { select: { id: true, username: true, email: true, walletAddress: true } },
+        user: {
+          select: {
+            id: true,
+            username: true,
+            email: true,
+            walletAddress: true,
+          },
+        },
         token: { select: { symbol: true } },
       },
     });
@@ -603,7 +642,9 @@ export class PointsService {
     await this.pointsCache.invalidateConfig(currency);
     await this.pointsCache.invalidatePrices();
 
-    this.logger.log(`Updated point price config for ${currency}: baseRate=${baseRate}`);
+    this.logger.log(
+      `Updated point price config for ${currency}: baseRate=${baseRate}`,
+    );
 
     return { currency, baseRate, message: "Price config updated successfully" };
   }

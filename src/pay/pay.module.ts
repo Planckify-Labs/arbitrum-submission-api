@@ -1,22 +1,25 @@
+import { BullModule } from "@nestjs/bullmq";
 import { Module, forwardRef } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { BlockchainVerificationModule } from "../blockchain-verification/blockchain-verification.module";
 import { MerchantsModule } from "../merchants/merchants.module";
 import { PayoutModule } from "../payout/payout.module";
 import { PrismaModule } from "../prisma/prisma.module";
+import { PushModule } from "../push/push.module";
 import { TransactionsModule } from "../transactions/transactions.module";
 import { ValkeyModule } from "../valkey/valkey.module";
 import { X402Module } from "../x402/x402.module";
 import {
-  CIRCLE_SETTLE_CLIENT,
-  CircleSettleClient,
-} from "./circle-settle.client";
-import {
   CIRCLE_SETTLE_SVM_CLIENT,
   CircleSettleSvmClient,
 } from "./circle-settle-svm.client";
+import {
+  CIRCLE_SETTLE_CLIENT,
+  CircleSettleClient,
+} from "./circle-settle.client";
 import { IntentsController } from "./intents.controller";
-import { IntentsService } from "./intents.service";
+import { IntentsService, ONCHAIN_SETTLEMENT_QUEUE } from "./intents.service";
+import { OnchainSettlementProcessor } from "./onchain-settlement.processor";
 import { QuoteSignerBootGuard } from "./quote-signer-boot.guard";
 import { QuoteSignerService } from "./quote-signer.service";
 
@@ -59,10 +62,18 @@ import { QuoteSignerService } from "./quote-signer.service";
     MerchantsModule,
     TransactionsModule,
     forwardRef(() => PayoutModule),
+    // On-chain settlement verification runs off the request path (see
+    // `OnchainSettlementProcessor`); the push module delivers the
+    // "Payment sent" / "we're checking" notifications it produces. Job
+    // options (attempts, custom backoff) come from `settlement-policy.ts`
+    // at enqueue time, so this registration only names the queue.
+    BullModule.registerQueue({ name: ONCHAIN_SETTLEMENT_QUEUE }),
+    PushModule,
   ],
   controllers: [IntentsController],
   providers: [
     IntentsService,
+    OnchainSettlementProcessor,
     CircleSettleClient,
     { provide: CIRCLE_SETTLE_CLIENT, useClass: CircleSettleClient },
     // Solana x402 facilitator client (task 43 / spec §5.2.1). The

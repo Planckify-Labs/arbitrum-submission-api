@@ -7,6 +7,7 @@ import type {
   TransactionStatus,
   TransactionType,
 } from "@generated/prisma";
+import { InjectQueue } from "@nestjs/bullmq";
 import {
   BadRequestException,
   ConflictException,
@@ -19,12 +20,22 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import type { Queue } from "bullmq";
 import * as nacl from "tweetnacl";
 import { type Hash, type Hex, stringToHex } from "viem";
 import { BlockchainVerificationService } from "../blockchain-verification/blockchain-verification.service";
+import {
+  NEEDS_REVIEW,
+  SETTLEMENT_JOB_OPTIONS,
+  type SettlementOutcome,
+  TRANSIENT,
+  TX_REVERTED,
+  resolveMinConfirmations,
+} from "../blockchain-verification/settlement-policy";
 import { StellarVerificationService } from "../blockchain-verification/stellar-verification.service";
 import { QrSigningService } from "../merchants/qr-signing.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { PushService } from "../push/push.service";
 import { TransactionsService } from "../transactions/transactions.service";
 import { BlockchainCacheService } from "../valkey/services/blockchain-cache.service";
 import { ValkeyService } from "../valkey/valkey.service";
@@ -164,6 +175,23 @@ const IDEMPOTENCY_KEY_PREFIX = "pay:intent:idem:";
  * (`services/nanopay/types.ts:PaymentIntentStatus`). Keep in lockstep with
  * the mobile enum — a mismatch silently breaks the polling terminal check.
  */
+/**
+ * BullMQ queue that verifies an on-chain merchant payment after the client
+ * has handed us the tx hash (`OnchainSettlementProcessor`). The client's
+ * POST returns as soon as the hash is recorded; everything that needs the
+ * chain — receipt, confirmations, contract record — happens here, retried
+ * for as long as it takes, so the user is never held on a spinner for our
+ * side of the work.
+ */
+export const ONCHAIN_SETTLEMENT_QUEUE = "onchain-settlement";
+export const ONCHAIN_SETTLEMENT_JOB = "verify-settlement";
+
+export interface OnchainSettlementJobData {
+  intentId: string;
+  txHash: string;
+  blockchainId: string;
+}
+
 const DB_TO_MOBILE_STATUS: Record<
   PaymentIntentStatus,
   PaymentIntentResponseDto["status"]
@@ -245,6 +273,12 @@ export class IntentsService {
     @Optional()
     @Inject(QuoteSignerService)
     private readonly quoteSigner: QuoteSignerService | null = null,
+    @Optional()
+    @InjectQueue(ONCHAIN_SETTLEMENT_QUEUE)
+    private readonly onchainSettlementQueue: Queue<OnchainSettlementJobData> | null = null,
+    @Optional()
+    @Inject(PushService)
+    private readonly pushService: PushService | null = null,
   ) {
     const raw = this.config.get<string>("SOLANA_QUOTE_SIGNER_PRIVATE_KEY");
     if (raw) {
@@ -1173,6 +1207,7 @@ export class IntentsService {
         payouts: { orderBy: { createdAt: "desc" } },
         payer: true,
         sourceToken: { include: { blockchain: true } },
+        onchainSettlements: { select: { id: true }, take: 1 },
       },
     });
     if (!intent) {
@@ -1217,9 +1252,17 @@ export class IntentsService {
     const nowMs = Date.now();
     const isAutoExpired =
       intent.status === "QUOTED" && intent.expiresAt.getTime() < nowMs;
+    // SIGNED means "in flight" on every rail; for the on-chain rail the
+    // hash is already recorded (an `onchainSettlements` row exists) and
+    // the verifier is working — that is `settling` to the client, which
+    // polls faster and shows "confirming" rather than "submitting".
+    const isOnchainSettling =
+      intent.status === "SIGNED" && intent.onchainSettlements.length > 0;
     const mobileStatus: PaymentIntentResponseDto["status"] = isAutoExpired
       ? "expired"
-      : DB_TO_MOBILE_STATUS[intent.status];
+      : isOnchainSettling
+        ? "settling"
+        : DB_TO_MOBILE_STATUS[intent.status];
 
     // Nanopay block. Emit the signable payload while the intent is still
     // pre-settle (QUOTED + not auto-expired) so a mobile client that lost
@@ -1830,12 +1873,29 @@ export class IntentsService {
   }
 
   /**
-   * `POST /v1/pay/intents/:id/onchain` — direct onchain settlement submit.
+   * `POST /v1/pay/intents/:id/onchain` — on-chain settlement submit.
    *
-   * Accepts a confirmed transaction hash + chain id, verifies the tx on-chain,
-   * and flips the intent to SETTLED if the verification passes.
+   * The client hands us the tx hash the moment its wallet has broadcast
+   * the `takumi_pay` payment. Everything that needs the chain — waiting
+   * for the receipt at the chain's confirmation depth, reading the
+   * contract record, deciding — runs on the `onchain-settlement` queue
+   * (`OnchainSettlementProcessor`), not in this request. This handler
+   * only records the hash, moves the intent to SIGNED (out of the
+   * expiry sweeper's reach), creates the PENDING activity row the user
+   * can watch from Activity, and enqueues. It returns `SETTLING`
+   * immediately; the client polls / gets a push.
    *
-   * Stub — full implementation tracks with the onchain-settlement task.
+   * Why not verify inline: verification legitimately takes seconds
+   * (receipt + confirmations) and, on a bad day, minutes or hours (RPC
+   * outage). Holding the user's request for that — and reporting a
+   * verdict that is really "our side is down" — is what stranded two
+   * real Monad Testnet payments on 2026-09-17. The user's part of the
+   * job is done when the tx is out; ours can take as long as it takes.
+   *
+   * Idempotency: (intentId, txHash) is unique. A hash already VERIFIED
+   * returns SETTLED with its attestation. A hash still in flight (or one
+   * whose last attempt was transient) returns SETTLING without
+   * enqueueing a duplicate job (BullMQ job id = intentId:txHash).
    */
   async submitOnchain(args: {
     intentId: string;
@@ -1859,6 +1919,20 @@ export class IntentsService {
       });
     }
 
+    const existing = await this.prisma.onchainSettlement.findFirst({
+      where: { intentId, txHash },
+    });
+    if (existing?.verifiedAt) {
+      return {
+        status: "SETTLED",
+        intentId,
+        attestation: {
+          id: existing.id,
+          receivedAt: existing.verifiedAt.getTime(),
+        },
+      };
+    }
+
     if (intent.status !== "QUOTED" && intent.status !== "SIGNED") {
       throw new ConflictException({
         message: `PaymentIntent ${intentId} is in status ${intent.status}; expected QUOTED or SIGNED.`,
@@ -1877,166 +1951,220 @@ export class IntentsService {
       });
     }
 
-    // Idempotency — a settlement already VERIFIED for this txHash is returned
-    // verbatim. A row that only records an earlier timed-out / failed
-    // attempt must not short-circuit: mobile re-POSTs the same hash after a
-    // timeout, and that retry has to re-run verification, not be told
-    // "SETTLED" for a payment nobody has checked yet.
-    const existing = await this.prisma.onchainSettlement.findFirst({
-      where: { intentId, txHash },
-    });
-    if (existing?.verifiedAt) {
-      return {
-        status: "SETTLED",
-        intentId,
-        attestation: {
-          id: existing.id,
-          receivedAt: existing.verifiedAt.getTime(),
-        },
-      };
+    // Cheap config checks up front so a misconfigured chain fails the
+    // request loudly instead of a job silently retrying for a day.
+    if (blockchain.type === "EVM") {
+      if (blockchain.chainId == null) {
+        throw new BadRequestException({
+          message: `Blockchain ${blockchain.name} is missing chainId`,
+          code: "ONCHAIN_BLOCKCHAIN_MISCONFIGURED",
+        });
+      }
+      const contract = await this.prisma.smartContract.findFirst({
+        where: { blockchainId, name: "takumi_pay", isActive: true },
+        select: { id: true },
+      });
+      if (!contract) {
+        throw new BadRequestException({
+          message: `Blockchain ${blockchain.name} has no active "takumi_pay" SmartContract row configured`,
+          code: "ONCHAIN_CONTRACT_NOT_FOUND",
+        });
+      }
     }
 
-    // Verify the on-chain payment actually landed with matching merchant /
-    // amount / token before recording. Used to only run for Stellar — EVM
-    // and Solana settlements via this endpoint were blind-trusted (any
-    // caller could POST an arbitrary txHash and get an unconditional
-    // SETTLED), a gap surfaced 2026-09-17 while standing up Monad Testnet
-    // and closed for all three chain families here.
-    //
-    // Two phases, in this order, because mobile POSTs the hash the moment
-    // the tx is broadcast, before it is mined:
-    //   A. `verifyMerchantPaymentTx` — wait for the receipt at the chain's
-    //      own confirmation depth (`Blockchain.minConfirmations`), check it
-    //      succeeded and targeted the `takumi_pay` contract, and bind it to
-    //      this intent through the `MerchantPaymentProcessed` log. That log
-    //      also names the payer, which is the only reliable source for it:
-    //      a user may pay from any linked wallet, so
-    //      `intent.payer.walletAddress` (their PRIMARY wallet) is not.
-    //   B. `verifyMerchantPaymentInContract` — read the contract's record
-    //      for this refId and match merchant / token / amount / fiat /
-    //      exchangeRate against the backend-signed quote, and the payer
-    //      against the one Phase A found.
-    // Stellar and Solana keep their own dispatch inside Phase B (Solana now
-    // waits for the signature to confirm first when given the txHash).
-    //
-    // A receipt timeout is NOT a rejection: the payment may still be
-    // pending, so the attempt is recorded and `SETTLING` returned so the
-    // client keeps polling / re-POSTs. Verification failures are recorded
-    // on the same row (for audit and so the retry path sees them) and
-    // surfaced as 400 — the intent is deliberately left QUOTED, not flipped
-    // to FAILED, so a hash that was rejected for a transient reason (RPC
-    // lag on a fresh block) can be re-submitted.
-    if (
-      this.blockchainVerification &&
-      (blockchain.type === "STELLAR" ||
-        blockchain.type === "EVM" ||
-        blockchain.type === "SVM")
-    ) {
-      const token = intent.sourceTokenId
-        ? await this.prisma.token.findUnique({
-            where: { id: intent.sourceTokenId },
-          })
-        : null;
-      const scale = 10n ** BigInt(Math.max((token?.decimals ?? 6) - 6, 0));
-      const expectedAmount = (
-        BigInt(String(intent.nanopayUsdcAmountMicros)) * scale
-      ).toString();
-
-      let contractAddress = "";
-      let chainId = 0;
-      if (blockchain.type === "EVM") {
-        if (blockchain.chainId == null) {
-          throw new BadRequestException({
-            message: `Blockchain ${blockchain.name} is missing chainId`,
-            code: "ONCHAIN_BLOCKCHAIN_MISCONFIGURED",
-          });
-        }
-        chainId = blockchain.chainId;
-        const contract = await this.prisma.smartContract.findFirst({
-          where: { blockchainId, name: "takumi_pay", isActive: true },
-        });
-        if (!contract) {
-          throw new BadRequestException({
-            message: `Blockchain ${blockchain.name} has no active "takumi_pay" SmartContract row configured`,
-            code: "ONCHAIN_CONTRACT_NOT_FOUND",
-          });
-        }
-        contractAddress = contract.address;
-      }
-
-      try {
-        let expectedPayer = "";
-        if (blockchain.type === "EVM") {
-          const phaseA =
-            await this.blockchainVerification.verifyMerchantPaymentTx({
-              txHash,
-              chainId,
-              contractAddress,
-              refId: intentId,
-              minimumConfirmations: this.resolveMinConfirmations(blockchain),
-            });
-          expectedPayer = phaseA.payer;
-          this.logger.log(
-            `[submitOnchain] phase A ok intent=${intentId} txHash=${txHash} payer=${expectedPayer} confirmations=${phaseA.confirmations}`,
-          );
-        }
-
-        await this.blockchainVerification.verifyMerchantPaymentInContract({
-          contractAddress, // unused in the Stellar/Solana dispatch branches
-          chainId, // unused in the Stellar/Solana dispatch branches
-          refId: intentId,
-          expectedPayer,
-          expectedMerchantId: intent.merchantId,
-          expectedTokenAddress: token?.contractAddress ?? "",
-          expectedAmount,
-          expectedFiatAmountMinor: intent.fiatAmountMinor,
-          expectedFiatCurrency: intent.fiatCurrency,
-          expectedExchangeRateId: intent.exchangeRateId,
-          blockchainId,
-          txHash,
-        });
-      } catch (err) {
-        const message = (err as { message?: string })?.message ?? String(err);
-        const isTimeout =
-          (err as { name?: string })?.name ===
-            "WaitForTransactionReceiptTimeoutError" ||
-          /timed out|timeout/i.test(message);
-        await this.recordOnchainAttempt({
+    await this.prisma.$transaction(async (tx) => {
+      await tx.onchainSettlement.upsert({
+        where: { intentId_txHash: { intentId, txHash } },
+        create: {
           intentId,
           txHash,
-          blockchain,
-          failureCode: isTimeout ? "TIMEOUT" : "VERIFICATION_FAILED",
-          failureMessage: message,
-        });
-        if (isTimeout) {
-          this.logger.warn(
-            `[submitOnchain] receipt timeout intent=${intentId} txHash=${txHash}; marked in-flight (SETTLING)`,
-          );
-          return { status: "SETTLING", intentId, attestation: null };
-        }
-        this.logger.warn(
-          `[submitOnchain] verification rejected intent=${intentId} txHash=${txHash}: ${message}`,
+          chainId: blockchain.chainId,
+          cluster: blockchain.solanaCluster,
+        },
+        update: {},
+      });
+      // Out of the expiry sweeper's reach: the quote may lapse while the
+      // chain is slow, but the payment is already out.
+      await tx.paymentIntent.updateMany({
+        where: { id: intentId, status: "QUOTED" },
+        data: { status: "SIGNED" },
+      });
+    });
+
+    await this.ensureMerchantPaymentActivity(intent, txHash);
+
+    await this.enqueueSettlementVerification({
+      intentId,
+      txHash,
+      blockchainId,
+    });
+
+    return { status: "SETTLING", intentId, attestation: null };
+  }
+
+  /**
+   * Adds the verification job, deduplicated on (intentId, txHash). A job
+   * that already finished (completed or exhausted) is removed first so a
+   * client re-submit after e.g. a NEEDS_REVIEW verdict re-runs
+   * verification instead of being silently ignored.
+   */
+  private async enqueueSettlementVerification(
+    data: OnchainSettlementJobData,
+  ): Promise<void> {
+    if (!this.onchainSettlementQueue) {
+      this.logger.error(
+        `[submitOnchain] no settlement queue bound; intent=${data.intentId} txHash=${data.txHash} will not be verified until one is`,
+      );
+      return;
+    }
+    const jobId = `${data.intentId}:${data.txHash}`;
+    const prior = await this.onchainSettlementQueue.getJob(jobId);
+    if (prior) {
+      const state = await prior.getState();
+      if (state === "completed" || state === "failed") {
+        await prior.remove();
+      } else {
+        this.logger.log(
+          `[submitOnchain] verification already ${state} for ${jobId}; not enqueueing again`,
         );
-        throw err;
+        return;
       }
     }
+    await this.onchainSettlementQueue.add(ONCHAIN_SETTLEMENT_JOB, data, {
+      ...SETTLEMENT_JOB_OPTIONS,
+      jobId,
+    });
+  }
 
-    this.logger.log(
-      `[submitOnchain] verified, settling intent=${intentId} txHash=${txHash}`,
-    );
-    // Record the onchain settlement and flip the intent status. Upsert on
-    // the (intentId, txHash) key so a retry that follows a recorded
-    // timeout / failure row completes it instead of tripping the unique
-    // index.
-    //
-    // The status flip is a guarded `updateMany` (QUOTED/SIGNED → SETTLED)
-    // rather than a blind `update`: two concurrent submits of the same hash
-    // both pass verification (the idempotency check above ran before
-    // either persisted), and only the one that actually performs the flip
-    // may fire the payout and the merchant-payment record. The loser sees
-    // `count === 0` and returns the same SETTLED answer without
-    // re-triggering anything — so replaying a hash can never pay a
-    // merchant twice.
+  /**
+   * Phase A + B against the chain for one submitted hash. Throws on any
+   * failure; the caller classifies (`classifySettlementError`). Returns
+   * the payer the chain recorded.
+   *
+   *   A. `verifyMerchantPaymentTx` (EVM) — receipt at the chain's own
+   *      confirmation depth, success, `takumi_pay` recipient, and the
+   *      `MerchantPaymentProcessed` log that binds the tx to THIS intent
+   *      and names the wallet that really paid (a user may pay from any
+   *      linked wallet, so `intent.payer.walletAddress` is not reliable).
+   *   B. `verifyMerchantPaymentInContract` — the contract's record for
+   *      this refId matched against the backend-signed quote. Stellar and
+   *      Solana dispatch inside it (Solana waits for the signature to
+   *      confirm first).
+   */
+  async verifyOnchainPayment(args: {
+    intent: {
+      id: string;
+      merchantId: string;
+      sourceTokenId: string | null;
+      nanopayUsdcAmountMicros: bigint | null;
+      fiatAmountMinor: number;
+      fiatCurrency: string;
+      exchangeRateId: number;
+    };
+    blockchain: {
+      id: string;
+      name: string;
+      type: string;
+      chainId: number | null;
+      minConfirmations: number | null;
+    };
+    txHash: string;
+  }): Promise<{ payer: string }> {
+    const { intent, blockchain, txHash } = args;
+    if (!this.blockchainVerification) {
+      throw new Error("BlockchainVerificationService is not available");
+    }
+
+    const token = intent.sourceTokenId
+      ? await this.prisma.token.findUnique({
+          where: { id: intent.sourceTokenId },
+        })
+      : null;
+    const scale = 10n ** BigInt(Math.max((token?.decimals ?? 6) - 6, 0));
+    const expectedAmount = (
+      BigInt(String(intent.nanopayUsdcAmountMicros ?? 0n)) * scale
+    ).toString();
+
+    let contractAddress = "";
+    let chainId = 0;
+    let expectedPayer = "";
+    if (blockchain.type === "EVM") {
+      if (blockchain.chainId == null) {
+        throw new BadRequestException(
+          `Blockchain ${blockchain.name} is missing chainId`,
+        );
+      }
+      chainId = blockchain.chainId;
+      const contract = await this.prisma.smartContract.findFirst({
+        where: {
+          blockchainId: blockchain.id,
+          name: "takumi_pay",
+          isActive: true,
+        },
+      });
+      if (!contract) {
+        throw new BadRequestException(
+          `Blockchain ${blockchain.name} has no active "takumi_pay" SmartContract row configured`,
+        );
+      }
+      contractAddress = contract.address;
+
+      const phaseA = await this.blockchainVerification.verifyMerchantPaymentTx({
+        txHash,
+        chainId,
+        contractAddress,
+        refId: intent.id,
+        minimumConfirmations: resolveMinConfirmations(blockchain, this.config),
+      });
+      expectedPayer = phaseA.payer;
+      this.logger.log(
+        `[verifyOnchainPayment] phase A ok intent=${intent.id} txHash=${txHash} payer=${expectedPayer} confirmations=${phaseA.confirmations}`,
+      );
+    }
+
+    await this.blockchainVerification.verifyMerchantPaymentInContract({
+      contractAddress, // unused in the Stellar/Solana dispatch branches
+      chainId, // unused in the Stellar/Solana dispatch branches
+      refId: intent.id,
+      expectedPayer,
+      expectedMerchantId: intent.merchantId,
+      expectedTokenAddress: token?.contractAddress ?? "",
+      expectedAmount,
+      expectedFiatAmountMinor: intent.fiatAmountMinor,
+      expectedFiatCurrency: intent.fiatCurrency,
+      expectedExchangeRateId: intent.exchangeRateId,
+      blockchainId: blockchain.id,
+      txHash,
+    });
+
+    return { payer: expectedPayer };
+  }
+
+  /**
+   * Verification passed: persist, flip the intent, and fan out — payout
+   * trigger, activity row → COMPLETED, "Payment sent" push. Returns
+   * `false` when a concurrent run already did the flip (guarded
+   * `updateMany` on QUOTED/SIGNED), in which case nothing is re-fired:
+   * a hash replayed N times can only pay a merchant once.
+   */
+  async finalizeOnchainSettlement(args: {
+    intent: {
+      id: string;
+      payerUserId: string | null;
+      sourceTokenId: string | null;
+      nanopayUsdcAmountMicros: bigint | null;
+      fiatAmountMinor: number;
+      fiatCurrency: string;
+      merchant: { displayName: string };
+      payer: { walletAddress: string | null } | null;
+      nanopayUsdcTreasuryAddress: string | null;
+    };
+    blockchain: { chainId: number | null; solanaCluster: string | null };
+    txHash: string;
+  }): Promise<boolean> {
+    const { intent, blockchain, txHash } = args;
+    const intentId = intent.id;
+
     const settledNow = await this.prisma.$transaction(async (tx) => {
       await tx.onchainSettlement.upsert({
         where: { intentId_txHash: { intentId, txHash } },
@@ -2062,16 +2190,15 @@ export class IntentsService {
 
     if (!settledNow) {
       this.logger.log(
-        `[submitOnchain] intent=${intentId} already settled by a concurrent submit of txHash=${txHash}; not re-triggering payout`,
+        `[finalizeOnchainSettlement] intent=${intentId} already settled by a concurrent run of txHash=${txHash}; not re-triggering payout`,
       );
-      return { status: "SETTLED", intentId, attestation: null };
+      return false;
     }
 
     this.logger.log(
-      `[submitOnchain] intent=${intentId} SETTLED txHash=${txHash}`,
+      `[finalizeOnchainSettlement] intent=${intentId} SETTLED txHash=${txHash}`,
     );
 
-    // Fire-and-forget payout trigger (same pattern as submitNanopay).
     if (this.payoutProvider) {
       Promise.resolve(this.payoutProvider.trigger(intentId)).catch((err) => {
         this.logger.error(
@@ -2081,37 +2208,83 @@ export class IntentsService {
       });
     }
 
-    this.recordMerchantPayment(intent, txHash);
+    await this.ensureMerchantPaymentActivity(intent, txHash);
+    await this.setMerchantPaymentActivityStatus(intentId, "COMPLETED");
 
-    return {
-      status: "SETTLED",
-      intentId,
-      attestation: null,
-    };
+    if (this.pushService) {
+      await this.pushService.sendSettledPush(intentId).catch((err) => {
+        this.logger.warn(
+          `[finalizeOnchainSettlement] settled push failed intent=${intentId}: ${(err as Error)?.message}`,
+        );
+      });
+    }
+
+    return true;
   }
 
   /**
-   * Confirmation depth for an EVM settlement: the chain's own
-   * `Blockchain.minConfirmations` first, then the env defaults — the same
-   * resolution order `OnchainSettlementProvider` uses.
+   * A chain verdict that is not "verified", or a retry budget spent.
+   *
+   *   rejected_reverted → nothing moved. Intent FAILED, activity FAILED,
+   *                       push "didn't go through, you weren't charged".
+   *   rejected_mismatch → mined but not the quoted payment. Intent stays
+   *   transient (spent)   SIGNED, row flagged NEEDS_REVIEW for ops,
+   *                       activity stays PENDING, push "we're checking".
+   *
+   * Never called for a transient failure that still has retries left —
+   * those are recorded with `recordOnchainAttempt` and stay silent.
    */
-  private resolveMinConfirmations(blockchain: {
-    minConfirmations: number | null;
-  }): number {
-    const candidates = [
-      blockchain.minConfirmations,
-      this.config.get<string | number>("ONCHAIN_MIN_CONFIRMATIONS"),
-      this.config.get<string | number>("MIN_CONFIRMATIONS"),
-    ];
-    for (const c of candidates) {
-      const n = Number(c);
-      if (c != null && c !== "" && Number.isInteger(n) && n >= 0) return n;
+  async markOnchainSettlementIssue(args: {
+    intentId: string;
+    txHash: string;
+    blockchain: { chainId: number | null; solanaCluster: string | null };
+    outcome: SettlementOutcome;
+    message: string;
+  }): Promise<void> {
+    const { intentId, txHash, blockchain, outcome, message } = args;
+    const reverted = outcome === "rejected_reverted";
+
+    await this.recordOnchainAttempt({
+      intentId,
+      txHash,
+      blockchain,
+      failureCode: reverted ? TX_REVERTED : NEEDS_REVIEW,
+      failureMessage: message,
+    });
+
+    if (reverted) {
+      const flipped = await this.prisma.paymentIntent.updateMany({
+        where: { id: intentId, status: { in: ["QUOTED", "SIGNED"] } },
+        data: { status: "FAILED" },
+      });
+      if (flipped.count === 0) {
+        // Settled or failed by another path meanwhile; nothing to tell.
+        return;
+      }
     }
-    return 12;
+
+    const activityId = await this.setMerchantPaymentActivityStatus(
+      intentId,
+      reverted ? "FAILED" : "PENDING",
+    );
+
+    if (this.pushService) {
+      await this.pushService
+        .sendSettlementIssuePush(
+          intentId,
+          reverted ? "reverted" : "needs_review",
+          activityId ?? undefined,
+        )
+        .catch((err) => {
+          this.logger.warn(
+            `[markOnchainSettlementIssue] push failed intent=${intentId}: ${(err as Error)?.message}`,
+          );
+        });
+    }
   }
 
-  /** Audit row for a submit that timed out or was rejected; safe to re-run. */
-  private async recordOnchainAttempt(args: {
+  /** Audit row for an attempt that did not verify; safe to re-run. */
+  async recordOnchainAttempt(args: {
     intentId: string;
     txHash: string;
     blockchain: { chainId: number | null; solanaCluster: string | null };
@@ -2138,6 +2311,53 @@ export class IntentsService {
         `[submitOnchain] could not record attempt intent=${intentId} txHash=${txHash}: ${(err as Error)?.message}`,
       );
     }
+  }
+
+  /**
+   * The Activity row for a merchant payment exists from the moment the
+   * hash is submitted, as PENDING — so a user who leaves the pay screen
+   * can watch it from Activity — and is flipped by the verifier. One row
+   * per intent (`paymentIntentId`); re-runs are no-ops.
+   */
+  private async ensureMerchantPaymentActivity(
+    intent: {
+      id: string;
+      payerUserId: string | null;
+      sourceTokenId: string | null;
+      nanopayUsdcAmountMicros: bigint | null;
+      fiatAmountMinor: number;
+      fiatCurrency: string;
+      merchant: { displayName: string };
+      payer: { walletAddress: string | null } | null;
+      nanopayUsdcTreasuryAddress: string | null;
+    },
+    txHash: string,
+  ): Promise<void> {
+    const existing = await this.prisma.transactionHistory.findFirst({
+      where: { paymentIntentId: intent.id },
+      select: { id: true },
+    });
+    if (existing) return;
+    await this.recordMerchantPayment(intent, txHash, "PENDING");
+  }
+
+  /** Returns the activity row id, or null if none was recorded. */
+  private async setMerchantPaymentActivityStatus(
+    intentId: string,
+    status: "PENDING" | "COMPLETED" | "FAILED",
+  ): Promise<string | null> {
+    const row = await this.prisma.transactionHistory.findFirst({
+      where: { paymentIntentId: intentId },
+      select: { id: true, createdAt: true, status: true },
+    });
+    if (!row) return null;
+    if (row.status !== status) {
+      await this.prisma.transactionHistory.update({
+        where: { id_createdAt: { id: row.id, createdAt: row.createdAt } },
+        data: { status: status as TransactionStatus },
+      });
+    }
+    return row.id;
   }
 
   /**
@@ -2950,6 +3170,7 @@ export class IntentsService {
       nanopayUsdcTreasuryAddress: string | null;
     },
     txHash?: string,
+    status: "PENDING" | "COMPLETED" = "COMPLETED",
   ): void {
     if (!intent.payerUserId || !intent.sourceTokenId) {
       this.logger.warn(
@@ -2968,7 +3189,7 @@ export class IntentsService {
       .create(intent.payerUserId, {
         tokenId: intent.sourceTokenId,
         type: "PAYMENT" as TransactionType,
-        status: "COMPLETED" as TransactionStatus,
+        status: status as TransactionStatus,
         amount,
         amountInFiat: intent.fiatAmountMinor.toString(),
         fiatCurrency: intent.fiatCurrency,

@@ -1,8 +1,15 @@
 import { PointTransactionStatus, Prisma } from "@generated/prisma";
 import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
 import { Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { Job } from "bullmq";
 import { BlockchainVerificationService } from "../../blockchain-verification/blockchain-verification.service";
+import {
+  SETTLEMENT_MAX_ATTEMPTS,
+  classifySettlementError,
+  resolveMinConfirmations,
+  settlementBackoffStrategy,
+} from "../../blockchain-verification/settlement-policy";
 import { PrismaService } from "../../prisma/prisma.service";
 import { PushService } from "../../push/push.service";
 import { truncateAddress } from "../../utils/address";
@@ -18,7 +25,20 @@ interface PointDepositJobData {
 // bigint directly, no need to round-trip through Number.
 const POINTS_NUMBER_FORMAT = new Intl.NumberFormat("en-US");
 
-@Processor("point-deposit", { concurrency: 5 })
+/**
+ * Outcome rules mirror `OnchainSettlementProcessor` (see
+ * `settlement-policy.ts`): the user is told "didn't go through" only when
+ * the chain reverted the tx (nothing moved); a mined-but-mismatched
+ * deposit or one still unconfirmed after the whole retry budget is
+ * handed to ops as needs-review with a "we're checking" note; and a
+ * failure on OUR side (RPC down, chain client missing, receipt not yet
+ * available) is retried on the long schedule in silence — the user
+ * already paid on-chain, so there is nothing to tell them yet.
+ */
+@Processor("point-deposit", {
+  concurrency: 5,
+  settings: { backoffStrategy: settlementBackoffStrategy },
+})
 export class PointDepositProcessor extends WorkerHost {
   private readonly logger = new Logger(PointDepositProcessor.name);
 
@@ -27,6 +47,7 @@ export class PointDepositProcessor extends WorkerHost {
     private readonly blockchainVerification: BlockchainVerificationService,
     private readonly pointsCache: PointsCacheService,
     private readonly pushService: PushService,
+    private readonly config: ConfigService,
   ) {
     super();
   }
@@ -96,7 +117,9 @@ export class PointDepositProcessor extends WorkerHost {
         expectedWalletAddress: pointTx.walletAddress ?? user.walletAddress,
         expectedTokenAddress: token.contractAddress,
         expectedAmount: BigInt(pointTx.tokenAmount!.toFixed(0)),
-        minConfirmations: 12,
+        // Per-chain depth (Monad = 1), env default otherwise — the same
+        // resolution every other verifier uses.
+        minConfirmations: resolveMinConfirmations(blockchain, this.config),
         blockchainId: blockchain.id,
       });
 
@@ -185,9 +208,22 @@ export class PointDepositProcessor extends WorkerHost {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
 
+      const outcome = classifySettlementError(error);
       this.logger.error(
-        `Point deposit (tx ${pointTx.txHash}) failed (attempt ${job.attemptsMade}): ${errorMessage}`,
+        `Point deposit (tx ${pointTx.txHash}) ${outcome} (attempt ${job.attemptsMade + 1}): ${errorMessage}`,
       );
+
+      if (outcome !== "transient") {
+        // The chain has spoken; retrying cannot change it. Tell the user
+        // the honest version and stop.
+        await this.settleWithChainVerdict(
+          pointTransactionId,
+          new Date(pointTransactionCreatedAt),
+          outcome,
+          errorMessage,
+        );
+        return;
+      }
 
       // Deliberately leave `status` as PENDING here. Flipping it to FAILED
       // on every attempt was the bug: the next BullMQ retry re-fetches
@@ -223,66 +259,106 @@ export class PointDepositProcessor extends WorkerHost {
   }
 
   @OnWorkerEvent("failed")
-  async onFailed(job: Job<PointDepositJobData>, err: Error) {
-    const maxAttempts = job.opts?.attempts ?? 1;
+  async onFailed(job: Job<PointDepositJobData> | undefined, err: Error) {
+    if (!job) return;
+    const maxAttempts = job.opts?.attempts ?? SETTLEMENT_MAX_ATTEMPTS;
     this.logger.error(
       `Point deposit job ${job.id} failed (attempt ${job.attemptsMade}/${maxAttempts}): ${err.message}`,
     );
 
-    // Only the truly final attempt marks the deposit terminally FAILED
-    // and notifies the user — earlier attempts still have retries pending.
+    // Earlier attempts still have retries pending: say nothing. Only a
+    // spent budget — every attempt transient, still no chain verdict —
+    // reaches the user, and as "we're checking", not "failed".
     if (job.attemptsMade < maxAttempts) return;
 
     const { pointTransactionId, pointTransactionCreatedAt } = job.data;
-    await this.markTerminallyFailed(
+    await this.settleWithChainVerdict(
       pointTransactionId,
       new Date(pointTransactionCreatedAt),
-      err.message,
+      "rejected_mismatch",
+      `No chain verdict after ${maxAttempts} attempts: ${err.message}`,
     );
   }
 
-  private async markTerminallyFailed(
+  /**
+   * Terminal handling. `rejected_reverted` = the chain refused the tx, so
+   * nothing moved: FAILED + "you weren't charged". Anything else = the
+   * money may have moved: stays PENDING, flagged `needsReview` in
+   * metadata for ops, user told "we're checking". Never "contact
+   * support", never a raw error string.
+   */
+  private async settleWithChainVerdict(
     pointTransactionId: string,
     createdAt: Date,
+    outcome: "rejected_reverted" | "rejected_mismatch",
     errorMessage: string,
   ): Promise<void> {
     const txKey = { id: pointTransactionId, createdAt };
 
     const pointTx = await this.prisma.pointTransaction.findUnique({
       where: { id_createdAt: txKey },
-      select: { userId: true, status: true },
+      select: { userId: true, status: true, metadata: true },
     });
 
     // Guard against a race with a concurrent successful completion, and
     // against double-marking if this ever runs twice.
     if (!pointTx || pointTx.status !== PointTransactionStatus.PENDING) return;
+    const priorMeta =
+      pointTx.metadata && typeof pointTx.metadata === "object"
+        ? (pointTx.metadata as Record<string, unknown>)
+        : {};
+    if (priorMeta.needsReview === true) return;
 
+    const reverted = outcome === "rejected_reverted";
     await this.prisma.pointTransaction.update({
       where: { id_createdAt: txKey },
-      data: {
-        status: PointTransactionStatus.FAILED,
-        metadata: { error: errorMessage, failedAt: new Date().toISOString() },
-      },
+      data: reverted
+        ? {
+            status: PointTransactionStatus.FAILED,
+            metadata: {
+              ...priorMeta,
+              error: errorMessage,
+              failedAt: new Date().toISOString(),
+            },
+          }
+        : {
+            metadata: {
+              ...priorMeta,
+              needsReview: true,
+              reviewReason: errorMessage,
+              flaggedAt: new Date().toISOString(),
+            },
+          },
     });
 
-    // Best-effort. Never surface `errorMessage` to the user — it's an
-    // internal verification detail, not user-facing copy.
+    const copy = reverted
+      ? {
+          title: "Deposit didn't go through",
+          body: "Your points deposit didn't go through and you weren't charged. You can try again anytime.",
+          status: "FAILED",
+        }
+      : {
+          title: "Still confirming your deposit",
+          body: "We're still confirming your points deposit. You don't need to do anything, we'll update you once it's done.",
+          status: "PENDING",
+        };
+
     await this.pushService
       .sendToUser({
         userId: pointTx.userId,
-        title: "Deposit Failed",
-        body: "We couldn't confirm your deposit after several attempts. If you've already sent the payment, please contact support and we'll help sort it out.",
+        title: copy.title,
+        body: copy.body,
         data: {
           type: "point_deposit",
           pointTransactionId,
-          status: "FAILED",
+          status: copy.status,
         },
         channelId: "points",
         source: "point_deposit",
       })
       .catch((pushErr) => {
         this.logger.warn(
-          `[point-deposit] failure push failed for ${pointTransactionId}: ${pushErr instanceof Error ? pushErr.message : String(pushErr)}`,
+          `[point-deposit] verdict push failed for ${pointTransactionId}: ${pushErr instanceof Error ? pushErr.message : String(pushErr)}`,
         );
       });
   }
