@@ -37,6 +37,7 @@ function buildHarness(
     user?: { walletAddress: string | null } | null;
     walletSubs?: { deviceToken: Device }[];
     intent?: Record<string, unknown> | null;
+    activityRow?: { id: string } | null;
   } = {},
 ) {
   const notificationLogCreate = jest.fn(
@@ -59,6 +60,9 @@ function buildHarness(
     },
     paymentIntent: {
       findUnique: jest.fn(async () => opts.intent ?? null),
+    },
+    transactionHistory: {
+      findFirst: jest.fn(async () => opts.activityRow ?? null),
     },
     $transaction: jest.fn(async (cb: (tx: unknown) => unknown) =>
       cb({
@@ -188,11 +192,12 @@ describe("payment pushes — one per payment, amount first, money language", () 
     sourceToken: { symbol: "AUSD" },
   };
 
-  it("settled push: 'Paid Rp 48.888' / '2.97 AUSD to GTron, SELONG. Tap for your receipt.' with the receipt deep-link", async () => {
+  it("settled push: 'Paid Rp 48.888' / '2.97 AUSD to GTron, SELONG. Tap for your receipt.', landing on the Activity row", async () => {
     const { service, notificationLogCreate } = buildHarness({
       directDevices: [device],
       user: { walletAddress: "0xabc" },
       intent: monadIntent,
+      activityRow: { id: "th_1" },
     });
     const spy = jest.spyOn(service, "sendToUser");
 
@@ -203,7 +208,10 @@ describe("payment pushes — one per payment, amount first, money language", () 
         userId: "user_1",
         title: "Paid Rp 48.888",
         body: "2.97 AUSD to GTron, SELONG. Tap for your receipt.",
-        data: expect.objectContaining({ intentId: "pi_1" }),
+        data: expect.objectContaining({
+          intentId: "pi_1",
+          transactionId: "th_1",
+        }),
       }),
     );
     expect(notificationLogCreate).toHaveBeenCalled();

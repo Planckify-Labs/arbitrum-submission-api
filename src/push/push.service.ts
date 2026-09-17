@@ -262,6 +262,7 @@ export class PushService {
       );
       return;
     }
+    const transactionId = await this.activityRowId(intentId);
     await this.sendToUser({
       userId: intent.payerUserId,
       title: "Payment Confirmed",
@@ -270,6 +271,7 @@ export class PushService {
       channelId: "payouts",
       data: {
         intentId,
+        ...(transactionId ? { transactionId } : {}),
         merchantDisplayName: intent.merchant.displayName,
         fiatAmountMinor: intent.fiatAmountMinor,
         fiatCurrency: intent.fiatCurrency,
@@ -305,6 +307,7 @@ export class PushService {
       this.logger.debug(`[sendSettledPush] no payer for intentId=${intentId}`);
       return;
     }
+    const transactionId = await this.activityRowId(intentId);
     const merchant = intent.merchant.displayName;
     const fiat = formatFiatMinor(intent.fiatAmountMinor, intent.fiatCurrency);
     const spent = intent.sourceToken
@@ -318,11 +321,24 @@ export class PushService {
       channelId: "payouts",
       data: {
         intentId,
+        // A tapped push is a look-up, not the end of a pay flow: land on
+        // the Activity detail (durable record, back → Activity). Older
+        // clients without `transactionId` handling still get the receipt.
+        ...(transactionId ? { transactionId } : {}),
         merchantDisplayName: merchant,
         fiatAmountMinor: intent.fiatAmountMinor,
         fiatCurrency: intent.fiatCurrency,
       },
     });
+  }
+
+  /** The payer's Activity row for this intent, if one has been recorded. */
+  private async activityRowId(intentId: string): Promise<string | null> {
+    const row = await this.prisma.transactionHistory.findFirst({
+      where: { paymentIntentId: intentId },
+      select: { id: true },
+    });
+    return row?.id ?? null;
   }
 
   /**
