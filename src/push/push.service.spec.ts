@@ -192,7 +192,7 @@ describe("payment pushes — one per payment, amount first, money language", () 
     sourceToken: { symbol: "AUSD" },
   };
 
-  it("settled push: 'Paid Rp 48.888' / '2.97 AUSD to GTron, SELONG. Tap for your receipt.', landing on the Activity row", async () => {
+  it("settled push is a spend note: 'You spent Rp 48.888' / 'at GTron, SELONG · 2.97 AUSD from your balance', landing on the Activity row", async () => {
     const { service, notificationLogCreate } = buildHarness({
       directDevices: [device],
       user: { walletAddress: "0xabc" },
@@ -206,8 +206,8 @@ describe("payment pushes — one per payment, amount first, money language", () 
     expect(spy).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: "user_1",
-        title: "Paid Rp 48.888",
-        body: "2.97 AUSD to GTron, SELONG. Tap for your receipt.",
+        title: "You spent Rp 48.888",
+        body: "at GTron, SELONG · 2.97 AUSD from your balance",
         data: expect.objectContaining({
           intentId: "pi_1",
           transactionId: "th_1",
@@ -239,8 +239,8 @@ describe("payment pushes — one per payment, amount first, money language", () 
 
     expect(spy).toHaveBeenCalledWith(
       expect.objectContaining({
-        title: "Paid Rp 48.888",
-        body: "to GTron, SELONG. Tap for your receipt.",
+        title: "You spent Rp 48.888",
+        body: "at GTron, SELONG",
       }),
     );
   });

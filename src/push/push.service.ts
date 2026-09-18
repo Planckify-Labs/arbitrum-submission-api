@@ -281,12 +281,12 @@ export class PushService {
 
   /**
    * On-chain merchant settlement verified — the payer's one notification
-   * for this payment. Reads like a spend, not a transfer: the amount is
-   * the headline, in the currency the purchase was made in, and the body
-   * says what it cost from the balance they paid with and to whom:
+   * for this payment. A spend note in the user's own frame, the way a
+   * bank app (myBCA) words it: what YOU spent, where, and what it cost
+   * from the balance you paid with:
    *
-   *   Paid Rp 48.888
-   *   2.97 AUSD to GTron, SELONG. Tap for your receipt.
+   *   You spent Rp 48.888
+   *   at GTron, SELONG · 2.97 AUSD from your balance
    *
    * Carries `intentId` so the mobile tap handler deep-links to the
    * receipt. The later payout webhook does NOT push again for this rail.
@@ -310,13 +310,13 @@ export class PushService {
     const transactionId = await this.activityRowId(intentId);
     const merchant = intent.merchant.displayName;
     const fiat = formatFiatMinor(intent.fiatAmountMinor, intent.fiatCurrency);
-    const spent = intent.sourceToken
-      ? `${formatTokenMicros(intent.nanopayUsdcAmountMicros ?? 0n)} ${intent.sourceToken.symbol} to ${merchant}`
-      : `to ${merchant}`;
+    const fromBalance = intent.sourceToken
+      ? ` · ${formatTokenMicros(intent.nanopayUsdcAmountMicros ?? 0n)} ${intent.sourceToken.symbol} from your balance`
+      : "";
     await this.sendToUser({
       userId: intent.payerUserId,
-      title: `Paid ${fiat}`,
-      body: `${spent}. Tap for your receipt.`,
+      title: `You spent ${fiat}`,
+      body: `at ${merchant}${fromBalance}`,
       source: "onchain_settlement",
       channelId: "payouts",
       data: {
