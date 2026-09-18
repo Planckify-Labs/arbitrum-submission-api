@@ -928,6 +928,29 @@ async function main() {
         isTestnet: false,
       },
     }),
+    // Monad testnet — EVM chain 10143. Added for the Monad Metropolis 2026
+    // QRIS merchant-spend leg (mobile-app/docs/monad-metropolis-2026-spec.md
+    // §6.6): the `takumi_pay` contract and an open-mint AUSD stand-in live
+    // here, see the SmartContract / token rows below. The remittance leg is
+    // on mainnet 143 above. rpc-proxy's seed carries the matching
+    // `/evm/10143` upstream (Alchemy `monad-testnet` + public fallback).
+    prisma.blockchain.upsert({
+      where: { chainId: 10143 },
+      update: {
+        rpcUrl: "/evm/10143",
+        blockExplorer: "https://testnet.monadvision.com",
+        name: "Monad Testnet",
+      },
+      create: {
+        name: "Monad Testnet",
+        chainId: 10143,
+        rpcUrl: "/evm/10143",
+        blockExplorer: "https://testnet.monadvision.com",
+        type: "EVM",
+        isActive: true,
+        isTestnet: true,
+      },
+    }),
     // Sui mainnet — keyed by chainSlug (no EIP-155 chainId, same posture
     // as Solana). Public Mysten fullnode for v1; swap in Alchemy/Triton
     // when traffic warrants. Keyed by chainSlug (slugChain()).
@@ -1156,6 +1179,31 @@ async function main() {
         name: "takumi_pay",
         type: "payment",
         blockchainId: evmChain(5042002).id, // Arc Testnet
+        address: "0x9EEC5aD4FC092fD468A8114007e541238F4Ba5ee",
+        isActive: true,
+      },
+    }),
+    // takumi_pay on Monad Testnet — TakumiPay 2.1.0 behind a UUPS proxy, see
+    // ../contract/evm/deployments/10143.json (deployed 2026-09-16 for the
+    // Monad Metropolis QRIS-spend leg). MockAUSD allowlisted as the payment
+    // token with a 1000 AUSD sweep cap applied on-chain. The address is the
+    // SAME as Arc testnet's: the same deployer key started from nonce 0 on
+    // both chains, so it is a genuine CREATE match, not a copy-paste (the
+    // deployment record documents this). Converges `address` on re-seed,
+    // same as the Arc row.
+    prisma.smartContract.upsert({
+      where: { id: "smart-contract-payment-monad-testnet" },
+      update: {
+        name: "takumi_pay",
+        type: "payment",
+        address: "0x9EEC5aD4FC092fD468A8114007e541238F4Ba5ee",
+        isActive: true,
+      },
+      create: {
+        id: "smart-contract-payment-monad-testnet",
+        name: "takumi_pay",
+        type: "payment",
+        blockchainId: evmChain(10143).id, // Monad Testnet
         address: "0x9EEC5aD4FC092fD468A8114007e541238F4Ba5ee",
         isActive: true,
       },
@@ -2423,6 +2471,125 @@ async function main() {
     });
   }
 
+  // AUSD (Agora) on Monad mainnet — Monad Metropolis 2026 remittance leg
+  // (mobile-app/docs/monad-metropolis-2026-spec.md §2). Address from Agora's
+  // contract-deployments doc; decimals / symbol / name NOT taken from docs
+  // (Agora never states decimals) but read on-chain via eth_call 2026-09-14:
+  // decimals()=6, symbol()="AUSD", name()="AUSD", non-empty eth_getCode.
+  // Logo URL verified live (HTTP 200, image/svg+xml); the app's token
+  // logo component renders SVG and raster alike. This one row is what
+  // makes AUSD appear in get_wallet_assets, the send-screen token picker and
+  // the agent's send_token tool — no other backend change needed.
+  await prisma.token.upsert({
+    where: {
+      blockchainId_contractAddress: {
+        blockchainId: evmChain(143).id,
+        contractAddress: "0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a",
+      },
+    },
+    update: {
+      name: "AUSD",
+      symbol: "AUSD",
+      decimals: 6,
+      logoUrl: "https://dsvxs4ecepqgj.cloudfront.net/tokens/AUSD/logo.svg",
+      isStablecoin: true,
+      isNativeCurrency: false,
+      isActive: true,
+      peggedCurrency: "USD",
+    },
+    create: {
+      name: "AUSD",
+      symbol: "AUSD",
+      decimals: 6,
+      blockchainId: evmChain(143).id, // Monad
+      contractAddress: "0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a",
+      logoUrl: "https://dsvxs4ecepqgj.cloudfront.net/tokens/AUSD/logo.svg",
+      isStablecoin: true,
+      isNativeCurrency: false,
+      isActive: true,
+      peggedCurrency: "USD",
+    },
+  });
+
+  // MON on Monad Testnet — native currency, same (blockchainId,
+  // isNativeCurrency) identification as mainnet MON above.
+  const existingMonTestnetToken = await prisma.token.findFirst({
+    where: {
+      blockchainId: evmChain(10143).id,
+      isNativeCurrency: true,
+    },
+  });
+  const monTestnetData = {
+    name: "Monad",
+    symbol: "MON",
+    decimals: 18,
+    logoUrl: "https://files.svgcdn.io/token-branded/monad.png",
+    isStablecoin: false,
+    isNativeCurrency: true,
+    isActive: true,
+  };
+  if (existingMonTestnetToken) {
+    await prisma.token.update({
+      where: { id: existingMonTestnetToken.id },
+      data: monTestnetData,
+    });
+  } else {
+    await prisma.token.create({
+      data: {
+        ...monTestnetData,
+        blockchainId: evmChain(10143).id, // Monad Testnet
+        contractAddress: null,
+      },
+    });
+  }
+
+  // AUSD stand-in on Monad Testnet — OUR OWN open-mint 6-decimal ERC-20
+  // (../contract/evm/src/MockAUSD.sol, deployments/10143.json), NOT Agora's
+  // testnet AUSD. Agora's testnet token (0xa9012a…22dC) has a permissioned
+  // mint and no faucet (verified on-chain 2026-09-16, spec §6.6 step 2), so
+  // it cannot fund a demo wallet. The QRIS rail is token-agnostic; the real
+  // AUSD is exercised on mainnet. If Agora hands out testnet AUSD, swap this
+  // address — zero code change. decimals()=6 read back via cast post-deploy.
+  //
+  // `isPaymentEnabled` — this is the row merchant (QRIS) payments on Monad
+  // testnet must use, same posture as Arc testnet's USDC ERC-20 row: the
+  // token is allowlisted on the `takumi_pay` contract with a sweep cap set,
+  // so a quote built from it is payable. The mainnet AUSD row above stays
+  // payment-disabled on purpose (FEATURE_EVM_ONCHAIN_SETTLEMENT_MAINNET /
+  // backend-signer rotation, spec §6.6).
+  await prisma.token.upsert({
+    where: {
+      blockchainId_contractAddress: {
+        blockchainId: evmChain(10143).id,
+        contractAddress: "0x1aC593085Fa34c651E805085da4b2cabAC676F99",
+      },
+    },
+    update: {
+      name: "AUSD",
+      symbol: "AUSD",
+      decimals: 6,
+      logoUrl: "https://dsvxs4ecepqgj.cloudfront.net/tokens/AUSD/logo.svg",
+      isStablecoin: true,
+      isNativeCurrency: false,
+      isPaymentEnabled: true,
+      isActive: true,
+      peggedCurrency: "USD",
+    },
+    create: {
+      name: "AUSD",
+      symbol: "AUSD",
+      decimals: 6,
+      blockchainId: evmChain(10143).id, // Monad Testnet
+      contractAddress: "0x1aC593085Fa34c651E805085da4b2cabAC676F99",
+      logoUrl: "https://dsvxs4ecepqgj.cloudfront.net/tokens/AUSD/logo.svg",
+      isStablecoin: true,
+      isNativeCurrency: false,
+      isPaymentEnabled: true,
+      isActive: true,
+      peggedCurrency: "USD",
+    },
+  });
+
   // BNB on BSC / AVAX on Avalanche — native currencies, no contract address.
   // Same (blockchainId, isNativeCurrency) identification as MON on Monad
   // above, for the same reason (Postgres allows multiple null-contractAddress
@@ -2965,6 +3132,20 @@ async function main() {
       fromCurrency: "USDC",
       toCurrency: "IDR",
       rate: 16234.5,
+      region: "ID",
+      markup: 1.5,
+    },
+    // AUSD → IDR (Monad Metropolis 2026, mobile-app/docs/monad-metropolis-2026-spec.md
+    // §6.6). AUSD is a USD-pegged stablecoin (6 dec, verified on-chain), so this
+    // uses the live USD/IDR spot rate, not a separate crypto quote — same
+    // convention as the USDC row above. Rate is the mid-market USD/IDR spot
+    // fetched 2026-09-16 (open.er-api.com: 17,688.13; frankfurter.app: 17,697 —
+    // averaged and rounded). `markup: 1.5` matches the USDC row; re-run the
+    // seed to refresh once a live FX cron exists (same TODO as above).
+    {
+      fromCurrency: "AUSD",
+      toCurrency: "IDR",
+      rate: 17690,
       region: "ID",
       markup: 1.5,
     },
