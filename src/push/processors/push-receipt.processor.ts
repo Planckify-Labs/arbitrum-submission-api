@@ -1,9 +1,13 @@
 import { Processor, WorkerHost } from "@nestjs/bullmq";
 import { Logger } from "@nestjs/common";
 import { Job } from "bullmq";
-import { type PushReceiptEntry, PushService } from "../push.service";
+import {
+  PUSH_RECEIPTS_QUEUE,
+  type PushReceiptEntry,
+  PushService,
+} from "../push.service";
 
-@Processor("push-receipts", { concurrency: 5 })
+@Processor(PUSH_RECEIPTS_QUEUE, { concurrency: 5 })
 export class PushReceiptProcessor extends WorkerHost {
   private readonly logger = new Logger(PushReceiptProcessor.name);
 

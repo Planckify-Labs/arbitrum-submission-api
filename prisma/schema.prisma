@@ -225,9 +225,17 @@ model WalletPushSubscription {
   @@index([walletAddress])
 }
 
-/// Audit log for sent push notifications. Not per-device delivery receipts —
-/// those live in Expo. This answers "did we attempt to notify this user/wallet
-/// and how many devices did we fan out to?"
+/// Push-notification outbox + audit log. One row per notification a caller
+/// asked for (not per device). The row is written FIRST — inside the
+/// caller's own DB transaction when it has one (transfer history, etc.) — and
+/// a `push-dispatch` job keyed by its id does the actual Expo send, so a
+/// process restart, a Redis blip or an Expo outage between "we decided to
+/// notify" and "Expo accepted it" can never silently drop a push: the
+/// `PushOutboxSweeper` re-enqueues anything left in `queued`/`sending`.
+///
+/// This also answers "did we attempt to notify this user/wallet, to how
+/// many devices, and what happened?" — including `no_device`, which is the
+/// single most common reason a recipient never sees a transfer push.
 model NotificationLog {
   id             String   @id @default(cuid())
   userId         String?
@@ -236,15 +244,36 @@ model NotificationLog {
   body           String
   data           Json?
   source         String
+  /// Android channel id / rich-content image, kept so the dispatch worker
+  /// (and the sweeper) can rebuild the exact Expo message from the row.
+  channelId      String?
+  imageUrl       String?
+  /// Devices resolved for the target when the row was staged (audit).
   recipientCount Int
+  targetDeviceIds  String[] @default([])
+  /// Devices still waiting for an "ok" Expo ticket. Each attempt sends
+  /// only to these, so a retry never double-sends a device Expo already
+  /// accepted. Empty once every device is accepted / pruned / rejected.
+  pendingDeviceIds String[] @default([])
+  /// Worker attempts so far (inline fallback counts too).
+  attempts       Int      @default(0)
+  lastError      String?
+  /// Drop rather than send after this — e.g. a WalletConnect "approval
+  /// needed" push is useless once the request itself has expired.
+  expiresAt      DateTime?
+  /// When the row was staged (kept as `sentAt` for compatibility).
   sentAt         DateTime @default(now())
+  /// First moment Expo accepted at least one ticket for this row.
+  dispatchedAt   DateTime?
+  updatedAt      DateTime @default(now()) @updatedAt
 
-  // Delivery verification — an "ok" Expo ticket at send time only means
-  // Expo accepted the request, not that the OS actually delivered it.
-  // "pending" until the delayed receipt check (see PushReceiptProcessor)
-  // resolves it to "delivered" | "undelivered" | "unregistered". Queryable
-  // so delivery failures are diagnosable without tailing server logs.
-  deliveryStatus    String    @default("pending")
+  // Lifecycle (`PushDeliveryStatus` in push.service.ts):
+  //   queued → sending → pending → delivered | undelivered | unregistered
+  //   plus the terminal short-cuts no_device | failed | expired.
+  // "pending" means Expo accepted the tickets; the delayed receipt check
+  // (PushReceiptProcessor) is what turns it into a real delivery verdict —
+  // an "ok" ticket only says Expo took the request, not that the OS showed it.
+  deliveryStatus    String    @default("queued")
   expoTicketIds     String[]  @default([])
   deliveryCheckedAt DateTime?
 
@@ -252,6 +281,7 @@ model NotificationLog {
   @@index([walletAddress])
   @@index([sentAt])
   @@index([deliveryStatus])
+  @@index([deliveryStatus, updatedAt])
 }
 
 model Blockchain {

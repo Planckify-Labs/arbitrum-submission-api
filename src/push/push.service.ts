@@ -2,7 +2,7 @@ import type { Prisma } from "@generated/prisma";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import type { Queue } from "bullmq";
+import type { Job, Queue } from "bullmq";
 import {
   Expo,
   type ExpoPushErrorReceipt,
@@ -12,11 +12,43 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import { canonicalizeWalletAddress } from "../utils/address";
 
+export const PUSH_DISPATCH_QUEUE = "push-dispatch";
+export const PUSH_RECEIPTS_QUEUE = "push-receipts";
+
+/**
+ * Lifecycle of a `NotificationLog` row.
+ *
+ *   queued ──► sending ──► pending ──► delivered | undelivered | unregistered
+ *     ▲           │
+ *     └───────────┘  (devices still pending → back to queued for the next attempt)
+ *
+ * Short-cuts: `no_device` (nothing subscribed when staged), `failed` (every
+ * attempt exhausted without a single accepted ticket), `expired` (`expiresAt`
+ * passed before a worker got to it).
+ */
+export const PushDeliveryStatus = {
+  queued: "queued",
+  sending: "sending",
+  pending: "pending",
+  delivered: "delivered",
+  undelivered: "undelivered",
+  unregistered: "unregistered",
+  no_device: "no_device",
+  failed: "failed",
+  expired: "expired",
+} as const;
+export type PushDeliveryStatus =
+  (typeof PushDeliveryStatus)[keyof typeof PushDeliveryStatus];
+
 /** One outstanding delivery to verify once Expo's receipt is ready. */
 export interface PushReceiptEntry {
   ticketId: string;
   deviceId: string;
   token: string;
+  notificationLogId: string;
+}
+
+export interface PushDispatchJobData {
   notificationLogId: string;
 }
 
@@ -35,6 +67,13 @@ export interface SendPushArgs {
   imageUrl?: string;
   /** Recorded in NotificationLog for audit/debug. */
   source?: string;
+  /**
+   * Give up (status `expired`) if Expo hasn't accepted the push within this
+   * many seconds of staging. Omit for "always deliver, however late" — the
+   * right default for money ("you received 5 USDC" is still news an hour
+   * later); set it for pushes tied to something that itself expires.
+   */
+  ttlSeconds?: number;
 }
 
 export interface SendToUserArgs extends SendPushArgs {
@@ -45,11 +84,15 @@ export interface SendToWalletArgs extends SendPushArgs {
   walletAddress: string;
 }
 
+/**
+ * What a caller learns synchronously. Delivery itself is asynchronous and
+ * verified later (`deliveryStatus` on the log row); `attempted` is the one
+ * fact known up front — how many devices the target resolved to.
+ */
 export interface SendPushResult {
   attempted: number;
-  accepted: number;
-  /** Tokens removed because Expo reported DeviceNotRegistered. */
-  pruned: number;
+  /** `null` only when the outbox row could not be written. */
+  notificationLogId: string | null;
 }
 
 /**
@@ -75,6 +118,47 @@ export function formatTokenMicros(micros: bigint): string {
   return n.toFixed(n < 1 ? 4 : 2);
 }
 
+type Device = { id: string; token: string };
+type DeliveryOutcome = "done" | "retry" | "skipped";
+/** Any Prisma client — the caller's open transaction or the service one. */
+type Db = Prisma.TransactionClient;
+
+const DEVICE_SELECT = { id: true, token: true } as const;
+
+/**
+ * Expo ticket errors worth another attempt. Everything else at ticket level
+ * (`MessageTooBig`, `InvalidCredentials`, `MismatchSenderId`, …) is a
+ * property of the message or our credentials — resending the same thing
+ * would fail the same way.
+ */
+const RETRYABLE_TICKET_ERRORS = new Set<string>(["MessageRateExceeded"]);
+
+/**
+ * How long `enqueue` waits on Redis before sending inline instead. BullMQ
+ * connections run with `maxRetriesPerRequest: null` (required for workers),
+ * which means `queue.add` blocks for as long as Redis is unreachable rather
+ * than throwing — so a caller that awaited it would hang with the user's
+ * push in limbo.
+ */
+const ENQUEUE_TIMEOUT_MS = 5_000;
+
+/** Sweeper thresholds — see `sweepOutbox`. */
+const SWEEP_NEVER_PICKED_UP_MS = 2 * 60_000;
+const SWEEP_STUCK_SENDING_MS = 10 * 60_000;
+const SWEEP_RETRY_ORPHANED_MS = 15 * 60_000;
+const SWEEP_BATCH = 200;
+
+/**
+ * Registration of a wallet that a concurrent registration from the same
+ * device just created is kept even if this request's list omits it. Two
+ * cold-start registrations can race (the wallet list hydrating in steps,
+ * a foreground retry) and land out of order; without this window the older
+ * request's shorter list would delete a subscription the newer one made
+ * and the wallet would silently stop receiving pushes until the next cold
+ * start.
+ */
+const SUBSCRIPTION_KEEP_RECENT_MS = 60_000;
+
 @Injectable()
 export class PushService {
   private readonly logger = new Logger(PushService.name);
@@ -83,7 +167,9 @@ export class PushService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
-    @InjectQueue("push-receipts")
+    @InjectQueue(PUSH_DISPATCH_QUEUE)
+    private readonly dispatchQueue: Queue<PushDispatchJobData>,
+    @InjectQueue(PUSH_RECEIPTS_QUEUE)
     private readonly receiptQueue: Queue<{ entries: PushReceiptEntry[] }>,
   ) {
     const accessToken = this.configService.get<string>("EXPO_ACCESS_TOKEN");
@@ -100,9 +186,9 @@ export class PushService {
 
   /**
    * Register (or re-register) a device and its wallet subscriptions.
-   * Idempotent — upserts the DevicePushToken, then replaces all
-   * WalletPushSubscription rows for that device so the server is always
-   * authoritative from the last successful call.
+   * Idempotent — upserts the DevicePushToken, then reconciles the
+   * WalletPushSubscription rows for that device to the given list so the
+   * server is authoritative from the last successful call.
    *
    * `userId` is optional — the endpoint is public (API-key gated) so a
    * device can register before the user signs in, keyed only by wallet
@@ -137,22 +223,39 @@ export class PushService {
       },
     });
 
-    // Replace wallet subscriptions — delete then re-create in a transaction
-    // so a crash mid-replace never leaves the device with a partial list.
-    const unique = [...new Set(input.wallets.filter(Boolean))];
+    // Canonical per-chain form (never a blanket lowercase, which would
+    // corrupt case-sensitive Solana/Stellar addresses).
+    const unique = [
+      ...new Set(
+        input.wallets
+          .map((w) => (typeof w === "string" ? w.trim() : ""))
+          .filter(Boolean)
+          .map((w) => canonicalizeWalletAddress(w)),
+      ),
+    ];
+
+    // Reconcile rather than wipe-and-recreate: rows for wallets still on
+    // the device are left alone (no window where the device has zero
+    // subscriptions), rows for wallets the device dropped go, and rows a
+    // concurrent registration created moments ago survive an out-of-order
+    // arrival. `skipDuplicates` makes two racing registrations of the same
+    // list both succeed instead of one 500-ing on the unique key.
     await this.prisma.$transaction([
       this.prisma.walletPushSubscription.deleteMany({
-        where: { deviceTokenId: device.id },
+        where: {
+          deviceTokenId: device.id,
+          ...(unique.length > 0 ? { walletAddress: { notIn: unique } } : {}),
+          createdAt: { lt: new Date(Date.now() - SUBSCRIPTION_KEEP_RECENT_MS) },
+        },
       }),
       ...(unique.length > 0
         ? [
             this.prisma.walletPushSubscription.createMany({
-              data: unique.map((address) => ({
+              data: unique.map((walletAddress) => ({
                 deviceTokenId: device.id,
-                // Canonical per-chain form (never a blanket lowercase, which
-                // would corrupt case-sensitive Solana/Stellar addresses).
-                walletAddress: canonicalizeWalletAddress(address),
+                walletAddress,
               })),
+              skipDuplicates: true,
             }),
           ]
         : []),
@@ -163,47 +266,26 @@ export class PushService {
     );
   }
 
+  // ─── public send API ─────────────────────────────────────────────────────
+  //
+  // Every send is two phases: `stage*` writes the outbox row (optionally
+  // inside the caller's own DB transaction, so the push is committed
+  // atomically with whatever it announces), `enqueue` hands it to the
+  // dispatch worker. `send*` is the one-shot convenience for callers with
+  // no transaction of their own.
+
   /** Send a push to every device registered to a user. */
   async sendToUser(args: SendToUserArgs): Promise<SendPushResult> {
-    const directDevices = await this.prisma.devicePushToken.findMany({
-      where: { userId: args.userId },
-      select: { id: true, token: true },
-    });
+    const staged = await this.stageToUser(args);
+    await this.enqueue(staged);
+    return staged;
+  }
 
-    // Every wallet address is its own backend User row with its own JWT
-    // (find-or-create by canonical walletAddress — see auth.service.ts). A
-    // single physical device only re-POSTs its push token when the
-    // wallet *list* changes (see app/_layout.tsx's walletKey effect),
-    // not when the user merely switches which wallet is active — so
-    // DevicePushToken.userId can be stuck on whichever wallet was active
-    // at the last registration, leaving every other wallet's userId with
-    // zero directly-matching devices. WalletPushSubscription is already
-    // populated for every wallet address the device has ever reported
-    // (registration POSTs the full wallet list, not just the active
-    // one), so fall back to it via this user's own wallet address.
-    const user = await this.prisma.user.findUnique({
-      where: { id: args.userId },
-      select: { walletAddress: true },
-    });
-
-    const walletDevices = user?.walletAddress
-      ? (
-          await this.prisma.walletPushSubscription.findMany({
-            where: {
-              walletAddress: canonicalizeWalletAddress(user.walletAddress),
-            },
-            select: { deviceToken: { select: { id: true, token: true } } },
-          })
-        ).map((s) => s.deviceToken)
-      : [];
-
-    const devicesById = new Map(
-      [...directDevices, ...walletDevices].map((d) => [d.id, d]),
-    );
-
-    return this.dispatch([...devicesById.values()], args, {
-      userId: args.userId,
-    });
+  /** Send a push to every device subscribed to a wallet address. */
+  async sendToWallet(args: SendToWalletArgs): Promise<SendPushResult> {
+    const staged = await this.stageToWallet(args);
+    await this.enqueue(staged);
+    return staged;
   }
 
   /**
@@ -215,22 +297,96 @@ export class PushService {
     tokens: string[],
     args: SendPushArgs,
   ): Promise<SendPushResult> {
-    const devices = await this.prisma.devicePushToken.findMany({
-      where: { token: { in: tokens } },
-      select: { id: true, token: true },
-    });
-    return this.dispatch(devices, args, {});
+    const staged = await this.stageToTokens(tokens, args);
+    await this.enqueue(staged);
+    return staged;
   }
 
-  /** Send a push to every device subscribed to a wallet address. */
-  async sendToWallet(args: SendToWalletArgs): Promise<SendPushResult> {
-    const subs = await this.prisma.walletPushSubscription.findMany({
-      where: { walletAddress: canonicalizeWalletAddress(args.walletAddress) },
-      select: { deviceToken: { select: { id: true, token: true } } },
-    });
-    const devices = subs.map((s) => s.deviceToken);
-    return this.dispatch(devices, args, { walletAddress: args.walletAddress });
+  /** Phase 1 of `sendToUser` — see the section comment above. */
+  async stageToUser(
+    args: SendToUserArgs,
+    db: Db = this.prisma,
+  ): Promise<SendPushResult> {
+    const devices = await this.resolveUserDevices(args.userId, db);
+    return this.stage(devices, args, { userId: args.userId }, db);
   }
+
+  /** Phase 1 of `sendToWallet`. */
+  async stageToWallet(
+    args: SendToWalletArgs,
+    db: Db = this.prisma,
+  ): Promise<SendPushResult> {
+    const canonical = canonicalizeWalletAddress(args.walletAddress);
+    const devices = await this.resolveWalletDevices(canonical, db);
+    return this.stage(devices, args, { walletAddress: canonical }, db);
+  }
+
+  /** Phase 1 of `sendToTokens`. */
+  async stageToTokens(
+    tokens: string[],
+    args: SendPushArgs,
+    db: Db = this.prisma,
+  ): Promise<SendPushResult> {
+    const devices =
+      tokens.length === 0
+        ? []
+        : await db.devicePushToken.findMany({
+            where: { token: { in: tokens } },
+            select: DEVICE_SELECT,
+          });
+    return this.stage(devices, args, {}, db);
+  }
+
+  /**
+   * Phase 2: hand a staged row to the dispatch worker. Call after the
+   * caller's transaction has committed — the worker reads the row by id.
+   * Idempotent: the job id is the row id, so BullMQ de-duplicates repeats,
+   * and the worker's status CAS de-duplicates the rest.
+   *
+   * If Redis can't take the job promptly, the push is attempted inline so
+   * the user still gets it now; the committed row keeps the sweeper as the
+   * safety net if that also fails.
+   */
+  async enqueue(staged: SendPushResult): Promise<void> {
+    const { notificationLogId, attempted } = staged;
+    if (!notificationLogId || attempted === 0) return;
+
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () =>
+          reject(
+            new Error(`queue.add timed out after ${ENQUEUE_TIMEOUT_MS}ms`),
+          ),
+        ENQUEUE_TIMEOUT_MS,
+      );
+    });
+    try {
+      await Promise.race([
+        this.dispatchQueue.add(
+          "dispatch",
+          { notificationLogId },
+          { jobId: notificationLogId },
+        ),
+        timeout,
+      ]);
+    } catch (err) {
+      this.logger.warn(
+        `[enqueue] could not queue push ${notificationLogId} (${err instanceof Error ? err.message : String(err)}); sending inline`,
+      );
+      await this.attemptDelivery(notificationLogId, { final: false }).catch(
+        (inlineErr) => {
+          this.logger.warn(
+            `[enqueue] inline send of ${notificationLogId} failed: ${inlineErr instanceof Error ? inlineErr.message : String(inlineErr)}`,
+          );
+        },
+      );
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  // ─── payment-specific pushes ─────────────────────────────────────────────
 
   /**
    * Send a PAID_OUT receipt push for a payment intent. Looks up the
@@ -405,151 +561,471 @@ export class PushService {
     return { ...intent, payerUserId: intent.payerUserId };
   }
 
-  // ─── internal ────────────────────────────────────────────────────────────
+  // ─── device resolution ───────────────────────────────────────────────────
 
-  private async dispatch(
-    devices: { id: string; token: string }[],
+  /**
+   * Every wallet address is its own backend User row with its own JWT
+   * (find-or-create by canonical walletAddress — see auth.service.ts). A
+   * single physical device only re-POSTs its push token when the wallet
+   * *list* changes (see app/_layout.tsx's walletKey effect), not when the
+   * user merely switches which wallet is active — so DevicePushToken.userId
+   * can be stuck on whichever wallet was active at the last registration,
+   * leaving every other wallet's userId with zero directly-matching
+   * devices. WalletPushSubscription is populated for every wallet address
+   * the device has ever reported (registration POSTs the full wallet list,
+   * not just the active one), so fall back to it via this user's own
+   * wallet address.
+   */
+  private async resolveUserDevices(userId: string, db: Db): Promise<Device[]> {
+    const [direct, user] = await Promise.all([
+      db.devicePushToken.findMany({
+        where: { userId },
+        select: DEVICE_SELECT,
+      }),
+      db.user.findUnique({
+        where: { id: userId },
+        select: { walletAddress: true },
+      }),
+    ]);
+    const viaWallet = user?.walletAddress
+      ? await this.subscribedDevices(
+          canonicalizeWalletAddress(user.walletAddress),
+          db,
+        )
+      : [];
+    return dedupeDevices([...direct, ...viaWallet]);
+  }
+
+  /**
+   * The mirror image of `resolveUserDevices`: subscriptions are the primary
+   * route, but a device that registered while this wallet's own user was
+   * signed in (DevicePushToken.userId) held the wallet at that moment — so
+   * it is reached even if its subscription row is missing or was clobbered
+   * by a racing registration. Without this a transfer TO the wallet is
+   * silently dropped while a transfer FROM it (recorded under the same
+   * userId) works, which is exactly the asymmetry users notice.
+   */
+  private async resolveWalletDevices(
+    canonicalAddress: string,
+    db: Db,
+  ): Promise<Device[]> {
+    const [subscribed, owner] = await Promise.all([
+      this.subscribedDevices(canonicalAddress, db),
+      db.user.findUnique({
+        where: { walletAddress: canonicalAddress },
+        select: { id: true },
+      }),
+    ]);
+    const viaOwner = owner
+      ? await db.devicePushToken.findMany({
+          where: { userId: owner.id },
+          select: DEVICE_SELECT,
+        })
+      : [];
+    return dedupeDevices([...subscribed, ...viaOwner]);
+  }
+
+  private async subscribedDevices(
+    canonicalAddress: string,
+    db: Db,
+  ): Promise<Device[]> {
+    const subs = await db.walletPushSubscription.findMany({
+      where: { walletAddress: canonicalAddress },
+      select: { deviceToken: { select: DEVICE_SELECT } },
+    });
+    return subs.map((s) => s.deviceToken);
+  }
+
+  // ─── outbox ──────────────────────────────────────────────────────────────
+
+  /**
+   * Write the outbox row. A target that resolves to zero devices is still
+   * recorded (`no_device`) — that row is the answer to "I never got the
+   * transfer push": nothing was subscribed for the wallet at that moment.
+   */
+  private async stage(
+    devices: Device[],
     args: SendPushArgs,
-    logCtx: { userId?: string; walletAddress?: string },
+    target: { userId?: string; walletAddress?: string },
+    db: Db,
   ): Promise<SendPushResult> {
-    if (devices.length === 0) {
-      return { attempted: 0, accepted: 0, pruned: 0 };
-    }
+    const deviceIds = devices.map((d) => d.id);
+    const hasDevices = deviceIds.length > 0;
+    const expiresAt =
+      args.ttlSeconds && args.ttlSeconds > 0
+        ? new Date(Date.now() + args.ttlSeconds * 1000)
+        : null;
 
-    const messages: ExpoPushMessage[] = devices.map((d) => ({
-      to: d.token,
-      sound: "default",
-      title: args.title,
-      body: args.body,
-      data: args.data ?? {},
-      channelId: args.channelId,
-      priority: "high",
-      ...(args.imageUrl ? { richContent: { image: args.imageUrl } } : {}),
-    }));
-
-    const chunks = this.expo.chunkPushNotifications(messages);
-    const tickets: ExpoPushTicket[] = [];
-    for (const chunk of chunks) {
-      const batch = await this.sendChunkWithRetry(chunk);
-      if (batch) tickets.push(...batch);
-    }
-
-    const toPrune: string[] = [];
-    let accepted = 0;
-    // An "ok" ticket only means Expo accepted the message for delivery —
-    // it is not a delivery confirmation. Real delivery errors (stale FCM
-    // registration, mismatched sender ID, etc.) only surface later via
-    // the receipts endpoint, so we track ticket ids here and verify them
-    // asynchronously instead of trusting the ticket alone.
-    const okTickets: { ticketId: string; deviceId: string; token: string }[] =
-      [];
-
-    tickets.forEach((ticket, i) => {
-      if (ticket.status === "ok") {
-        accepted += 1;
-        const device = devices[i];
-        if (device) {
-          okTickets.push({
-            ticketId: ticket.id,
-            deviceId: device.id,
-            token: device.token,
-          });
-        }
-        return;
-      }
-      const details = (ticket as { details?: ExpoPushErrorReceipt["details"] })
-        .details;
-      if (details?.error === "DeviceNotRegistered") {
-        const token = messages[i]?.to;
-        if (typeof token === "string") toPrune.push(token);
-      } else {
-        this.logger.warn(
-          `[dispatch] expo ticket error: ${ticket.message ?? "unknown"} (code=${details?.error ?? "n/a"})`,
-        );
-      }
+    const log = await db.notificationLog.create({
+      data: {
+        userId: target.userId,
+        walletAddress: target.walletAddress,
+        title: args.title,
+        body: args.body,
+        data: (args.data ?? {}) as Prisma.InputJsonValue,
+        source: args.source ?? "unknown",
+        channelId: args.channelId,
+        imageUrl: args.imageUrl,
+        recipientCount: deviceIds.length,
+        targetDeviceIds: deviceIds,
+        pendingDeviceIds: deviceIds,
+        expiresAt,
+        deliveryStatus: hasDevices
+          ? PushDeliveryStatus.queued
+          : PushDeliveryStatus.no_device,
+        deliveryCheckedAt: hasDevices ? null : new Date(),
+      },
+      select: { id: true },
     });
 
-    // "pending" only makes sense if there's an ok ticket to eventually
-    // verify — if every ticket errored out (or the send itself failed
-    // after retries), we already know the outcome, no need to wait 20
-    // minutes to find out what we already know.
-    const notificationLog = await this.prisma
-      .$transaction(async (tx) => {
-        if (toPrune.length > 0) {
-          await tx.devicePushToken.deleteMany({
-            where: { token: { in: toPrune } },
-          });
-        }
-        return tx.notificationLog.create({
+    if (!hasDevices) {
+      this.logger.log(
+        `[stage] source=${args.source ?? "unknown"} log=${log.id} no devices for ${describeTarget(target)}`,
+      );
+    }
+    return { attempted: deviceIds.length, notificationLogId: log.id };
+  }
+
+  /** Worker entry point — see `PushDispatchProcessor`. */
+  async processDispatch(job: Job<PushDispatchJobData>): Promise<void> {
+    const budget = job.opts.attempts ?? 1;
+    const final = job.attemptsMade + 1 >= budget;
+    const outcome = await this.attemptDelivery(job.data.notificationLogId, {
+      final,
+    });
+    if (outcome === "retry") {
+      // Surface to BullMQ so its backoff schedules the next attempt.
+      throw new Error(
+        `push ${job.data.notificationLogId}: devices still pending after attempt ${job.attemptsMade + 1}/${budget}`,
+      );
+    }
+  }
+
+  /**
+   * One delivery attempt for an outbox row. Sends only to the devices still
+   * in `pendingDeviceIds`, records what Expo said per device, and reports
+   * whether anything is left to retry.
+   *
+   * Claiming the row (queued → sending) is a compare-and-set, so the BullMQ
+   * job, a sweeper re-enqueue and the inline fallback can all race for the
+   * same row and exactly one of them sends.
+   */
+  async attemptDelivery(
+    notificationLogId: string,
+    opts: { final: boolean },
+  ): Promise<DeliveryOutcome> {
+    const claimed = await this.prisma.notificationLog.updateMany({
+      where: {
+        id: notificationLogId,
+        deliveryStatus: PushDeliveryStatus.queued,
+      },
+      data: {
+        deliveryStatus: PushDeliveryStatus.sending,
+        attempts: { increment: 1 },
+      },
+    });
+    if (claimed.count === 0) {
+      this.logger.debug(
+        `[deliver] ${notificationLogId} not claimable (already sent, in flight, or terminal)`,
+      );
+      return "skipped";
+    }
+
+    const log = await this.prisma.notificationLog.findUnique({
+      where: { id: notificationLogId },
+    });
+    if (!log) return "skipped";
+
+    try {
+      if (log.expiresAt && log.expiresAt.getTime() <= Date.now()) {
+        await this.prisma.notificationLog.update({
+          where: { id: log.id },
           data: {
-            userId: logCtx.userId,
-            walletAddress: logCtx.walletAddress,
-            title: args.title,
-            body: args.body,
-            data: (args.data ?? {}) as Prisma.InputJsonValue,
-            source: args.source ?? "unknown",
-            recipientCount: accepted,
-            expoTicketIds: okTickets.map((t) => t.ticketId),
-            deliveryStatus: okTickets.length > 0 ? "pending" : "undelivered",
-            deliveryCheckedAt: okTickets.length > 0 ? null : new Date(),
+            deliveryStatus: PushDeliveryStatus.expired,
+            pendingDeviceIds: [],
+            deliveryCheckedAt: new Date(),
           },
         });
-      })
-      .catch((err) => {
-        this.logger.warn(
-          `[dispatch] prune/log transaction failed: ${err instanceof Error ? err.message : String(err)}`,
+        this.logger.log(
+          `[deliver] ${log.id} expired before it could be sent (source=${log.source})`,
         );
-        return null;
-      });
+        return "done";
+      }
 
-    if (notificationLog && okTickets.length > 0) {
-      const entries: PushReceiptEntry[] = okTickets.map((t) => ({
-        ...t,
-        notificationLogId: notificationLog.id,
+      // Fresh tokens for whatever is still pending — a device pruned since
+      // staging simply drops out here.
+      const devices =
+        log.pendingDeviceIds.length === 0
+          ? []
+          : await this.prisma.devicePushToken.findMany({
+              where: { id: { in: log.pendingDeviceIds } },
+              select: DEVICE_SELECT,
+            });
+
+      if (devices.length === 0) {
+        const status =
+          log.expoTicketIds.length > 0
+            ? PushDeliveryStatus.pending
+            : PushDeliveryStatus.unregistered;
+        await this.prisma.notificationLog.update({
+          where: { id: log.id },
+          data: {
+            deliveryStatus: status,
+            pendingDeviceIds: [],
+            ...(status === PushDeliveryStatus.unregistered
+              ? { deliveryCheckedAt: new Date() }
+              : {}),
+          },
+        });
+        return "done";
+      }
+
+      const messages: ExpoPushMessage[] = devices.map((d) => ({
+        to: d.token,
+        sound: "default",
+        title: log.title,
+        body: log.body,
+        data: (log.data ?? {}) as Record<string, unknown>,
+        channelId: log.channelId ?? undefined,
+        priority: "high",
+        ...(log.imageUrl ? { richContent: { image: log.imageUrl } } : {}),
+        // Let FCM/APNs drop it too, rather than showing a stale push when
+        // the device comes back online after the deadline.
+        ...(log.expiresAt
+          ? { expiration: Math.floor(log.expiresAt.getTime() / 1000) }
+          : {}),
       }));
-      // Expo recommends waiting at least ~15 minutes before receipts are
-      // queryable; 20 minutes gives margin without leaving the token's
-      // delivery status unverified for too long.
-      await this.receiptQueue
-        .add("check-receipts", { entries }, { delay: 20 * 60 * 1000 })
-        .catch((err) => {
+
+      const okTickets: Omit<PushReceiptEntry, "notificationLogId">[] = [];
+      const toPrune: string[] = [];
+      const stillPending: string[] = [];
+      const errors: string[] = [];
+
+      let offset = 0;
+      for (const chunk of this.expo.chunkPushNotifications(messages)) {
+        const chunkDevices = devices.slice(offset, offset + chunk.length);
+        offset += chunk.length;
+
+        const tickets = await this.sendChunkWithRetry(chunk);
+        if (!tickets) {
+          // Transport-level failure (network, Expo 5xx): nothing in this
+          // chunk reached Expo, so all of it stays pending for the next attempt.
+          for (const d of chunkDevices) stillPending.push(d.id);
+          errors.push("transport failure");
+          continue;
+        }
+
+        tickets.forEach((ticket, i) => {
+          const device = chunkDevices[i];
+          if (!device) return;
+          // An "ok" ticket only means Expo accepted the message for
+          // delivery — it is not a delivery confirmation. Real delivery
+          // errors (stale FCM registration, mismatched sender ID, etc.)
+          // only surface later via the receipts endpoint, so we track
+          // ticket ids and verify them asynchronously.
+          if (ticket.status === "ok") {
+            okTickets.push({
+              ticketId: ticket.id,
+              deviceId: device.id,
+              token: device.token,
+            });
+            return;
+          }
+          const code = (ticket as { details?: ExpoPushErrorReceipt["details"] })
+            .details?.error;
+          if (code === "DeviceNotRegistered") {
+            toPrune.push(device.id);
+            return;
+          }
+          const reason = `${ticket.message ?? "unknown"} (code=${code ?? "n/a"})`;
+          errors.push(reason);
+          if (code && RETRYABLE_TICKET_ERRORS.has(code)) {
+            stillPending.push(device.id);
+            return;
+          }
           this.logger.warn(
-            `[dispatch] failed to enqueue receipt check: ${err instanceof Error ? err.message : String(err)}`,
+            `[deliver] ${log.id} device=${device.id} rejected by Expo: ${reason}`,
           );
         });
-    }
+      }
 
-    // Update lastPushedAt for successfully reached devices
-    if (accepted > 0) {
-      const successfulIds = devices
-        .filter((_, i) => tickets[i]?.status === "ok")
-        .map((d) => d.id);
-      if (successfulIds.length > 0) {
-        await this.prisma.devicePushToken
-          .updateMany({
-            where: { id: { in: successfulIds } },
+      const retry = stillPending.length > 0 && !opts.final;
+      const everAccepted = okTickets.length > 0 || log.expoTicketIds.length > 0;
+      const status: PushDeliveryStatus = retry
+        ? PushDeliveryStatus.queued
+        : everAccepted
+          ? PushDeliveryStatus.pending
+          : stillPending.length > 0
+            ? PushDeliveryStatus.failed
+            : toPrune.length === devices.length
+              ? PushDeliveryStatus.unregistered
+              : PushDeliveryStatus.undelivered;
+      const terminal =
+        status === PushDeliveryStatus.failed ||
+        status === PushDeliveryStatus.unregistered ||
+        status === PushDeliveryStatus.undelivered;
+
+      // If this write fails after Expo accepted tickets, the row is released
+      // back to `queued` below and the next attempt re-sends to those
+      // devices — a rare duplicate, which for a payment notification is the
+      // right side of the trade against a lost one.
+      await this.prisma.$transaction(async (tx) => {
+        if (toPrune.length > 0) {
+          await tx.devicePushToken.deleteMany({
+            where: { id: { in: toPrune } },
+          });
+        }
+        await tx.notificationLog.update({
+          where: { id: log.id },
+          data: {
+            deliveryStatus: status,
+            pendingDeviceIds: stillPending,
+            ...(okTickets.length > 0
+              ? { expoTicketIds: { push: okTickets.map((t) => t.ticketId) } }
+              : {}),
+            ...(errors.length > 0
+              ? { lastError: errors.slice(0, 3).join("; ").slice(0, 500) }
+              : {}),
+            ...(okTickets.length > 0 && !log.dispatchedAt
+              ? { dispatchedAt: new Date() }
+              : {}),
+            ...(terminal ? { deliveryCheckedAt: new Date() } : {}),
+          },
+        });
+        if (okTickets.length > 0) {
+          await tx.devicePushToken.updateMany({
+            where: { id: { in: okTickets.map((t) => t.deviceId) } },
             data: { lastPushedAt: new Date() },
-          })
-          .catch(() => {
-            // non-critical
+          });
+        }
+      });
+
+      if (okTickets.length > 0) {
+        const entries: PushReceiptEntry[] = okTickets.map((t) => ({
+          ...t,
+          notificationLogId: log.id,
+        }));
+        // Expo recommends waiting at least ~15 minutes before receipts are
+        // queryable; 20 minutes gives margin without leaving the token's
+        // delivery status unverified for too long.
+        await this.receiptQueue
+          .add("check-receipts", { entries }, { delay: 20 * 60 * 1000 })
+          .catch((err) => {
+            this.logger.warn(
+              `[deliver] failed to enqueue receipt check for ${log.id}: ${err instanceof Error ? err.message : String(err)}`,
+            );
           });
       }
-    }
 
-    this.logger.log(
-      `[dispatch] source=${args.source ?? "unknown"} attempted=${messages.length} accepted=${accepted} pruned=${toPrune.length}`,
-    );
-    return { attempted: messages.length, accepted, pruned: toPrune.length };
+      this.logger.log(
+        `[deliver] source=${log.source} log=${log.id} attempt=${log.attempts} devices=${devices.length} accepted=${okTickets.length} pruned=${toPrune.length} pending=${stillPending.length} status=${status}`,
+      );
+      return retry ? "retry" : "done";
+    } catch (err) {
+      // Unexpected failure mid-attempt (DB down, bug): release the claim so
+      // the retry — or the sweeper — can pick the row up again.
+      const message = err instanceof Error ? err.message : String(err);
+      await this.prisma.notificationLog
+        .updateMany({
+          where: { id: log.id, deliveryStatus: PushDeliveryStatus.sending },
+          data: {
+            deliveryStatus: opts.final
+              ? PushDeliveryStatus.failed
+              : PushDeliveryStatus.queued,
+            lastError: message.slice(0, 500),
+            ...(opts.final ? { deliveryCheckedAt: new Date() } : {}),
+          },
+        })
+        .catch(() => {
+          // The sweeper's stuck-`sending` rule covers this.
+        });
+      throw err;
+    }
   }
+
+  /**
+   * Safety net for the gaps the queue can't cover on its own. Runs every
+   * minute (`PushOutboxSweeper`) on every instance — the worker's CAS makes
+   * duplicate re-enqueues harmless. Three shapes of stuck row:
+   *
+   *   1. `queued`, never attempted, older than 2 min — the process died (or
+   *      Redis was unreachable) between committing the row and `queue.add`.
+   *   2. `queued` mid-retry, untouched for 15 min — longer than the whole
+   *      backoff schedule, so the BullMQ job itself is gone (Redis restart
+   *      without persistence, manual queue flush).
+   *   3. `sending` for 10 min — a worker claimed it and died before
+   *      recording the outcome.
+   */
+  async sweepOutbox(): Promise<number> {
+    const now = Date.now();
+    const stuck = await this.prisma.notificationLog.findMany({
+      where: {
+        OR: [
+          {
+            deliveryStatus: PushDeliveryStatus.queued,
+            attempts: 0,
+            sentAt: { lt: new Date(now - SWEEP_NEVER_PICKED_UP_MS) },
+          },
+          {
+            deliveryStatus: PushDeliveryStatus.queued,
+            attempts: { gt: 0 },
+            updatedAt: { lt: new Date(now - SWEEP_RETRY_ORPHANED_MS) },
+          },
+          {
+            deliveryStatus: PushDeliveryStatus.sending,
+            updatedAt: { lt: new Date(now - SWEEP_STUCK_SENDING_MS) },
+          },
+        ],
+      },
+      select: { id: true, deliveryStatus: true, attempts: true },
+      orderBy: { sentAt: "asc" },
+      take: SWEEP_BATCH,
+    });
+    if (stuck.length === 0) return 0;
+
+    let requeued = 0;
+    for (const row of stuck) {
+      if (row.deliveryStatus === PushDeliveryStatus.sending) {
+        const released = await this.prisma.notificationLog.updateMany({
+          where: { id: row.id, deliveryStatus: PushDeliveryStatus.sending },
+          data: { deliveryStatus: PushDeliveryStatus.queued },
+        });
+        if (released.count === 0) continue; // finished in the meantime
+      }
+      try {
+        // A fresh job id per (row, attempt, 5-minute window): the original
+        // id may still sit in BullMQ's completed/failed sets, which would
+        // otherwise silently de-duplicate the re-enqueue away.
+        await this.dispatchQueue.add(
+          "dispatch",
+          { notificationLogId: row.id },
+          {
+            jobId: `${row.id}:sweep:${row.attempts}:${Math.floor(now / 300_000)}`,
+          },
+        );
+        requeued += 1;
+      } catch (err) {
+        this.logger.warn(
+          `[sweep] could not re-enqueue ${row.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    this.logger.warn(
+      `[sweep] re-enqueued ${requeued}/${stuck.length} stuck push notification(s)`,
+    );
+    return requeued;
+  }
+
+  // ─── Expo transport ──────────────────────────────────────────────────────
 
   /**
    * A thrown error here is a transport-level failure (network blip, Expo
    * 5xx) — distinct from a ticket coming back with an error status, which
-   * is a per-message rejection handled by the caller. Without a retry, a
-   * single flaky request silently drops the notification with nothing but
-   * a log line to show for it. Returns null (not an empty array) after
-   * exhausting retries so the caller can tell "nothing sent" apart from
-   * "sent, zero accepted".
+   * is a per-message rejection handled by the caller. A few quick inline
+   * retries absorb a single flaky request; anything longer is the dispatch
+   * worker's job (exponential backoff over minutes). Returns null (not an
+   * empty array) after exhausting retries so the caller can tell "nothing
+   * sent" apart from "sent, zero accepted".
    */
   private async sendChunkWithRetry(
     chunk: ExpoPushMessage[],
@@ -663,8 +1139,24 @@ export class PushService {
     await Promise.all(
       [...outcomeByLogId.entries()].map(([logId, status]) =>
         this.prisma.notificationLog
-          .update({
-            where: { id: logId },
+          .updateMany({
+            where: {
+              id: logId,
+              // A row still `queued`/`sending` has devices left to send to
+              // — its verdict comes from a later attempt's receipts. And a
+              // batch that landed on some devices never downgrades a row
+              // another batch already proved delivered.
+              deliveryStatus: {
+                in:
+                  status === "delivered"
+                    ? [
+                        PushDeliveryStatus.pending,
+                        PushDeliveryStatus.undelivered,
+                        PushDeliveryStatus.unregistered,
+                      ]
+                    : [PushDeliveryStatus.pending],
+              },
+            },
             data: { deliveryStatus: status, deliveryCheckedAt: new Date() },
           })
           .catch((err) => {
@@ -675,4 +1167,17 @@ export class PushService {
       ),
     );
   }
+}
+
+function dedupeDevices(devices: Device[]): Device[] {
+  return [...new Map(devices.map((d) => [d.id, d])).values()];
+}
+
+function describeTarget(target: {
+  userId?: string;
+  walletAddress?: string;
+}): string {
+  if (target.userId) return `user=${target.userId}`;
+  if (target.walletAddress) return `wallet=${target.walletAddress}`;
+  return "explicit tokens";
 }

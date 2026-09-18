@@ -146,7 +146,11 @@ describe("notificationCopy", () => {
 
 describe("WalletConnectPushService.deliver", () => {
   function harness(opts: { client?: { token: string } | null } = {}) {
-    const sent: Array<{ tokens: string[]; title: string }> = [];
+    const sent: Array<{
+      tokens: string[];
+      title: string;
+      ttlSeconds?: number;
+    }> = [];
     const prisma = {
       walletConnectPushClient: {
         findUnique: () =>
@@ -158,12 +162,14 @@ describe("WalletConnectPushService.deliver", () => {
       },
     };
     const push = {
-      sendToTokens: (tokens: string[], args: { title: string }) => {
-        sent.push({ tokens, title: args.title });
+      sendToTokens: (
+        tokens: string[],
+        args: { title: string; ttlSeconds?: number },
+      ) => {
+        sent.push({ tokens, title: args.title, ttlSeconds: args.ttlSeconds });
         return Promise.resolve({
           attempted: tokens.length,
-          accepted: tokens.length,
-          pruned: 0,
+          notificationLogId: "log_1",
         });
       },
     };
@@ -179,8 +185,14 @@ describe("WalletConnectPushService.deliver", () => {
     const msg = { id: "m1", topic: "t", tag: 1108, message: "enc" };
     expect(await service.deliver("client-1", msg)).toEqual({ delivered: true });
     expect(await service.deliver("client-1", msg)).toEqual({ delivered: true });
+    // Five-minute TTL: a request push that can't go out before the relay
+    // request itself expires would only open the app to "nothing to review".
     expect(sent).toEqual([
-      { tokens: ["ExponentPushToken[abc]"], title: "Approval needed" },
+      {
+        tokens: ["ExponentPushToken[abc]"],
+        title: "Approval needed",
+        ttlSeconds: 300,
+      },
     ]);
   });
 

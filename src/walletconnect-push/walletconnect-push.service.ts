@@ -18,9 +18,17 @@ export interface RelayPushMessage {
 }
 
 export interface DeliveryOutcome {
+  /** Handed to the push outbox (delivery itself is verified asynchronously). */
   delivered: boolean;
-  reason?: "unknown_client" | "ignored_tag" | "no_device" | "expo_rejected";
+  reason?: "unknown_client" | "ignored_tag" | "no_device";
 }
+
+/**
+ * A relay request the wallet can act on lives for five minutes; a push
+ * that Expo could not take within that window would only open the app to
+ * "nothing to review", so it is dropped instead.
+ */
+const REQUEST_PUSH_TTL_SECONDS = 5 * 60;
 
 /** Recent relay message ids, so a retried delivery does not double-notify. */
 const RECENT_IDS_MAX = 2000;
@@ -108,6 +116,7 @@ export class WalletConnectPushService {
       body: copy.body,
       source: "walletconnect-push",
       channelId: "dapp-requests",
+      ttlSeconds: REQUEST_PUSH_TTL_SECONDS,
       data: {
         type: "wc-push",
         topic: msg.topic ?? msg.payload?.topic ?? null,
@@ -116,8 +125,6 @@ export class WalletConnectPushService {
     });
     if (result.attempted === 0)
       return { delivered: false, reason: "no_device" };
-    if (result.accepted === 0)
-      return { delivered: false, reason: "expo_rejected" };
     return { delivered: true };
   }
 

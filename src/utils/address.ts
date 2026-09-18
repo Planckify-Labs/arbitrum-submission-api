@@ -36,6 +36,11 @@ export function canonicalizeWalletAddress(
   address: string,
   namespace?: AddressNamespace,
 ): string {
+  // Pasted/typed addresses (push registration, transfer recipients) can
+  // carry stray whitespace; a leading space would otherwise make an EVM
+  // address fail `getAddress`, fold to lowercase, and never match the
+  // checksummed subscription row.
+  address = address.trim();
   const ns = namespace ?? inferNamespace(address);
   if (ns === "eip155") {
     try {

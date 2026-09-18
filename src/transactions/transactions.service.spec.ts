@@ -10,8 +10,16 @@ import { TransactionsService } from "./transactions.service";
 jest.mock("expo-server-sdk", () => ({ Expo: class {} }));
 
 const pushServiceStub = {
-  sendToWallet: jest.fn(async () => ({ attempted: 0, accepted: 0, pruned: 0 })),
-  sendToUser: jest.fn(async () => ({ attempted: 0, accepted: 0, pruned: 0 })),
+  stageToWallet: jest.fn(async () => ({
+    attempted: 0,
+    notificationLogId: null,
+  })),
+  enqueue: jest.fn(async () => undefined),
+  sendToWallet: jest.fn(async () => ({
+    attempted: 0,
+    notificationLogId: null,
+  })),
+  sendToUser: jest.fn(async () => ({ attempted: 0, notificationLogId: null })),
 } as unknown as PushService;
 
 // TokenIconService pulls in sharp (native libvips) and Valkey; the transfer
@@ -54,7 +62,7 @@ function buildPrismaStub(
     return txs.find((t) => (t as { id: string }).id === where?.id) ?? null;
   });
 
-  return {
+  const prisma = {
     transactionHistory: {
       create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({
         id: "tx_001",
@@ -76,7 +84,9 @@ function buildPrismaStub(
     token: { findUnique: jest.fn(async () => opts.token ?? null) },
     purchase: { findMany: jest.fn(async () => opts.purchases ?? []) },
     paymentIntent: { findUnique: jest.fn(async () => opts.intent ?? null) },
-  } as unknown as PrismaService;
+    $transaction: jest.fn(async (cb: (tx: unknown) => unknown) => cb(prisma)),
+  };
+  return prisma as unknown as PrismaService;
 }
 
 describe("TransactionsService.create", () => {
@@ -122,8 +132,9 @@ describe("TransactionsService.create", () => {
 describe("TransactionsService.create — transfer notifications", () => {
   function buildTransferPrismaStub(
     tokenOverrides: Record<string, unknown> = {},
+    opts: { earlierRow?: { id: string } | null } = {},
   ) {
-    return {
+    const prisma = {
       transactionHistory: {
         create: jest.fn(
           async ({ data }: { data: Record<string, unknown> }) => ({
@@ -138,35 +149,51 @@ describe("TransactionsService.create — transfer notifications", () => {
             },
           }),
         ),
+        findFirst: jest.fn(async () => opts.earlierRow ?? null),
       },
-    } as unknown as PrismaService;
+      // Interactive transaction: the callback gets the same client, and
+      // `tx` identity is what the tests use to prove the push was staged
+      // inside the history row's own transaction.
+      $transaction: jest.fn(async (cb: (tx: unknown) => unknown) => cb(prisma)),
+    };
+    return prisma as unknown as PrismaService;
   }
 
-  it("pushes to the recipient wallet on a TRANSFER with a different sender and recipient", async () => {
-    const sendToWallet = jest.fn(async () => ({
-      attempted: 1,
-      accepted: 1,
-      pruned: 0,
-    }));
-    const push = {
-      sendToWallet,
-      sendToUser: jest.fn(),
-    } as unknown as PushService;
-    const svc = new TransactionsService(
-      buildTransferPrismaStub(),
-      push,
-      tokenIconStub,
-    );
+  /** A PushService stub with the two-phase (stage, enqueue) API. */
+  function buildPushStub(
+    staged = { attempted: 1, notificationLogId: "log_1" },
+  ) {
+    const stageToWallet = jest.fn(async () => staged);
+    const enqueue = jest.fn(async () => undefined);
+    return {
+      push: {
+        stageToWallet,
+        enqueue,
+        sendToWallet: jest.fn(),
+        sendToUser: jest.fn(),
+      } as unknown as PushService,
+      stageToWallet,
+      enqueue,
+    };
+  }
+
+  const flush = () => new Promise((r) => setImmediate(r));
+
+  it("stages the recipient's push inside the history row's transaction, then enqueues it after commit", async () => {
+    const prisma = buildTransferPrismaStub();
+    const { push, stageToWallet, enqueue } = buildPushStub();
+    const svc = new TransactionsService(prisma, push, tokenIconStub);
 
     await svc.create("user_1", {
       tokenId: "tk_usdc",
       type: "TRANSFER",
       amount: "5000000",
+      txHash: "0xhash",
       fromAddress: "0xSENDER",
       toAddress: "0xRECIPIENT",
     } as never);
 
-    expect(sendToWallet).toHaveBeenCalledWith(
+    expect(stageToWallet).toHaveBeenCalledWith(
       expect.objectContaining({
         walletAddress: "0xRECIPIENT",
         body: expect.stringContaining("5 USDC"),
@@ -180,19 +207,66 @@ describe("TransactionsService.create — transfer notifications", () => {
           tokenSymbol: "USDC",
         },
       }),
+      prisma, // the `tx` handed to the $transaction callback
     );
+    await flush();
+    expect(enqueue).toHaveBeenCalledWith({
+      attempted: 1,
+      notificationLogId: "log_1",
+    });
+  });
+
+  it("does not ring the recipient twice when the same on-chain transfer is recorded again", async () => {
+    const prisma = buildTransferPrismaStub(
+      {},
+      { earlierRow: { id: "tx_first" } },
+    );
+    const { push, stageToWallet, enqueue } = buildPushStub();
+    const svc = new TransactionsService(prisma, push, tokenIconStub);
+
+    await svc.create("user_1", {
+      tokenId: "tk_usdc",
+      type: "TRANSFER",
+      amount: "5000000",
+      txHash: "0xhash",
+      fromAddress: "0xSENDER",
+      toAddress: "0xRECIPIENT",
+    } as never);
+
+    expect(prisma.transactionHistory.findFirst).toHaveBeenCalledWith({
+      where: {
+        txHash: "0xhash",
+        type: "TRANSFER",
+        recipientAddress: "0xRECIPIENT",
+        tokenId: "tk_usdc",
+        id: { not: "tx_transfer" },
+      },
+      select: { id: true },
+    });
+    expect(stageToWallet).not.toHaveBeenCalled();
+    await flush();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("skips the duplicate check when the client sent no txHash", async () => {
+    const prisma = buildTransferPrismaStub();
+    const { push, stageToWallet } = buildPushStub();
+    const svc = new TransactionsService(prisma, push, tokenIconStub);
+
+    await svc.create("user_1", {
+      tokenId: "tk_usdc",
+      type: "TRANSFER",
+      amount: "5000000",
+      fromAddress: "0xSENDER",
+      toAddress: "0xRECIPIENT",
+    } as never);
+
+    expect(prisma.transactionHistory.findFirst).not.toHaveBeenCalled();
+    expect(stageToWallet).toHaveBeenCalledTimes(1);
   });
 
   it("embeds the token's push-safe icon URL from TokenIconService, not the raw logoUrl", async () => {
-    const sendToWallet = jest.fn(async () => ({
-      attempted: 1,
-      accepted: 1,
-      pruned: 0,
-    }));
-    const push = {
-      sendToWallet,
-      sendToUser: jest.fn(),
-    } as unknown as PushService;
+    const { push, stageToWallet } = buildPushStub();
     // An SVG logo is the shape that used to reach the device raw and render
     // no icon at all; it must now route through the PNG endpoint.
     const svc = new TransactionsService(
@@ -212,32 +286,22 @@ describe("TransactionsService.create — transfer notifications", () => {
     } as never);
 
     expect(tokenIconStub.pushImageUrl).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: "tk_ausd",
-        logoUrl: "https://cdn.example.com/tokens/AUSD/logo.svg",
-      }),
+      expect.objectContaining({ id: "tk_ausd" }),
     );
-    // Pre-warmed before the push goes out, so the device's fetch hits cache.
+    // Pre-warmed once the row is committed, so the device's fetch hits cache.
     expect(tokenIconStub.warm).toHaveBeenCalledWith(
       expect.objectContaining({ id: "tk_ausd" }),
     );
-    expect(sendToWallet).toHaveBeenCalledWith(
+    expect(stageToWallet).toHaveBeenCalledWith(
       expect.objectContaining({
         imageUrl: "https://api.example.test/tokens/tk_ausd/icon.png?v=abc123",
       }),
+      expect.anything(),
     );
   });
 
   it("sends the push without an image when the token has no logo", async () => {
-    const sendToWallet = jest.fn(async () => ({
-      attempted: 1,
-      accepted: 1,
-      pruned: 0,
-    }));
-    const push = {
-      sendToWallet,
-      sendToUser: jest.fn(),
-    } as unknown as PushService;
+    const { push, stageToWallet } = buildPushStub();
     const svc = new TransactionsService(
       buildTransferPrismaStub({ logoUrl: null }),
       push,
@@ -245,30 +309,22 @@ describe("TransactionsService.create — transfer notifications", () => {
     );
 
     await svc.create("user_1", {
-      tokenId: "tk_nologo",
+      tokenId: "tk_usdc",
       type: "TRANSFER",
       amount: "1000000",
       fromAddress: "0xSENDER",
       toAddress: "0xRECIPIENT",
     } as never);
 
-    expect(sendToWallet).toHaveBeenCalledTimes(1);
-    const args = (sendToWallet.mock.calls[0] as unknown[])[0] as {
+    expect(stageToWallet).toHaveBeenCalledTimes(1);
+    const args = (stageToWallet.mock.calls[0] as unknown[])[0] as {
       imageUrl?: string;
     };
     expect(args.imageUrl).toBeUndefined();
   });
 
   it("shows truncated sender and recipient addresses in the body", async () => {
-    const sendToWallet = jest.fn(async () => ({
-      attempted: 1,
-      accepted: 1,
-      pruned: 0,
-    }));
-    const push = {
-      sendToWallet,
-      sendToUser: jest.fn(),
-    } as unknown as PushService;
+    const { push, stageToWallet } = buildPushStub();
     const svc = new TransactionsService(
       buildTransferPrismaStub(),
       push,
@@ -279,28 +335,26 @@ describe("TransactionsService.create — transfer notifications", () => {
       tokenId: "tk_usdc",
       type: "TRANSFER",
       amount: "1000000",
-      fromAddress: "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-      toAddress: "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+      fromAddress: "0x1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
+      toAddress: "0xffeeddccbbaa99887766554433221100ffeeddcc",
     } as never);
 
-    expect(sendToWallet).toHaveBeenCalledWith(
+    expect(stageToWallet).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: expect.stringContaining("0xAAAAAA...AAAAAAAA"),
+        body: expect.stringContaining("0x1a2b3c...7e8f9a0b"),
       }),
+      expect.anything(),
     );
-    expect(sendToWallet).toHaveBeenCalledWith(
+    expect(stageToWallet).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: expect.stringContaining("0xBBBBBB...BBBBBBBB"),
+        body: expect.stringContaining("0xffeedd...ffeeddcc"),
       }),
+      expect.anything(),
     );
   });
 
   it("does not push when sender and recipient are the same wallet (self-transfer)", async () => {
-    const sendToWallet = jest.fn();
-    const push = {
-      sendToWallet,
-      sendToUser: jest.fn(),
-    } as unknown as PushService;
+    const { push, stageToWallet } = buildPushStub();
     const svc = new TransactionsService(
       buildTransferPrismaStub(),
       push,
@@ -315,15 +369,11 @@ describe("TransactionsService.create — transfer notifications", () => {
       toAddress: "0xsame",
     } as never);
 
-    expect(sendToWallet).not.toHaveBeenCalled();
+    expect(stageToWallet).not.toHaveBeenCalled();
   });
 
   it("does not push for non-TRANSFER types (e.g. PAYMENT)", async () => {
-    const sendToWallet = jest.fn();
-    const push = {
-      sendToWallet,
-      sendToUser: jest.fn(),
-    } as unknown as PushService;
+    const { push, stageToWallet } = buildPushStub();
     const svc = new TransactionsService(
       buildTransferPrismaStub(),
       push,
@@ -338,19 +388,44 @@ describe("TransactionsService.create — transfer notifications", () => {
       toAddress: "0xB",
     } as never);
 
-    expect(sendToWallet).not.toHaveBeenCalled();
+    expect(stageToWallet).not.toHaveBeenCalled();
   });
 
-  it("never throws when the push dispatch fails", async () => {
+  it("nothing to notify when the recipient wallet has no devices, but the record still commits", async () => {
+    const prisma = buildTransferPrismaStub();
+    const { push, enqueue } = buildPushStub({
+      attempted: 0,
+      notificationLogId: "log_no_device",
+    });
+    const svc = new TransactionsService(prisma, push, tokenIconStub);
+
+    await expect(
+      svc.create("user_1", {
+        tokenId: "tk_usdc",
+        type: "TRANSFER",
+        amount: "1000000",
+        fromAddress: "0xSENDER",
+        toAddress: "0xNOBODY",
+      } as never),
+    ).resolves.toMatchObject({ id: "tx_transfer" });
+    await flush();
+    // Handed over anyway — `enqueue` is the one that knows a no-device row
+    // has nothing to dispatch.
+    expect(enqueue).toHaveBeenCalledWith({
+      attempted: 0,
+      notificationLogId: "log_no_device",
+    });
+  });
+
+  it("a push staging failure never rolls back or fails the sender's own record", async () => {
+    const prisma = buildTransferPrismaStub();
     const push = {
-      sendToWallet: jest.fn(() => Promise.reject(new Error("network blip"))),
+      stageToWallet: jest.fn(() => Promise.reject(new Error("network blip"))),
+      enqueue: jest.fn(),
+      sendToWallet: jest.fn(),
       sendToUser: jest.fn(),
     } as unknown as PushService;
-    const svc = new TransactionsService(
-      buildTransferPrismaStub(),
-      push,
-      tokenIconStub,
-    );
+    const svc = new TransactionsService(prisma, push, tokenIconStub);
 
     await expect(
       svc.create("user_1", {
@@ -361,6 +436,26 @@ describe("TransactionsService.create — transfer notifications", () => {
         toAddress: "0xRECIPIENT",
       } as never),
     ).resolves.toMatchObject({ id: "tx_transfer" });
+    expect(push.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("a failing enqueue is swallowed — the committed outbox row is the sweeper's problem now", async () => {
+    const prisma = buildTransferPrismaStub();
+    const { push, enqueue } = buildPushStub();
+    enqueue.mockRejectedValueOnce(new Error("redis down"));
+    const svc = new TransactionsService(prisma, push, tokenIconStub);
+
+    await expect(
+      svc.create("user_1", {
+        tokenId: "tk_usdc",
+        type: "TRANSFER",
+        amount: "1000000",
+        fromAddress: "0xSENDER",
+        toAddress: "0xRECIPIENT",
+      } as never),
+    ).resolves.toMatchObject({ id: "tx_transfer" });
+    await flush();
+    expect(enqueue).toHaveBeenCalledTimes(1);
   });
 });
 

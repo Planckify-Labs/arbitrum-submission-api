@@ -2,7 +2,7 @@ import { Prisma, TransactionType } from "@generated/prisma";
 import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import { PrismaService } from "../prisma/prisma.service";
-import { PushService } from "../push/push.service";
+import { PushService, type SendPushResult } from "../push/push.service";
 import { TokenIconService } from "../tokens/token-icon.service";
 import { truncateAddress } from "../utils/address";
 import { CreateTransactionDto } from "./dto/create-transaction.dto";
@@ -15,6 +15,11 @@ const AMOUNT_NUMBER_FORMAT = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 6,
 });
 
+/** A freshly created history row with its token, as `create` returns it. */
+type TransactionRecord = Prisma.TransactionHistoryGetPayload<{
+  include: { token: true };
+}>;
+
 @Injectable()
 export class TransactionsService {
   private readonly logger = new Logger(TransactionsService.name);
@@ -26,39 +31,108 @@ export class TransactionsService {
   ) {}
 
   async create(userId: string, createTransactionDto: CreateTransactionDto) {
-    const transaction = await this.prisma.transactionHistory.create({
-      data: {
-        userId,
-        tokenId: createTransactionDto.tokenId,
-        type: createTransactionDto.type,
-        status: createTransactionDto.status,
-        amount: createTransactionDto.amount,
-        amountInFiat: createTransactionDto.amountInFiat,
-        fiatCurrency: createTransactionDto.fiatCurrency,
-        txHash: createTransactionDto.txHash,
-        senderAddress: createTransactionDto.fromAddress,
-        recipientAddress: createTransactionDto.toAddress,
-        merchantName: createTransactionDto.merchantName,
-        paymentIntentId: createTransactionDto.paymentIntentId,
+    // The history row and the recipient's push are one unit of work: the
+    // push outbox row is written inside the same transaction, so once the
+    // sender's record is committed the notification is committed with it
+    // and survives anything that happens to this request afterwards
+    // (process restart, Redis blip, Expo outage — see PushService).
+    const { transaction, staged } = await this.prisma.$transaction(
+      async (tx) => {
+        const transaction = await tx.transactionHistory.create({
+          data: {
+            userId,
+            tokenId: createTransactionDto.tokenId,
+            type: createTransactionDto.type,
+            status: createTransactionDto.status,
+            amount: createTransactionDto.amount,
+            amountInFiat: createTransactionDto.amountInFiat,
+            fiatCurrency: createTransactionDto.fiatCurrency,
+            txHash: createTransactionDto.txHash,
+            senderAddress: createTransactionDto.fromAddress?.trim(),
+            recipientAddress: createTransactionDto.toAddress?.trim(),
+            merchantName: createTransactionDto.merchantName,
+            paymentIntentId: createTransactionDto.paymentIntentId,
+          },
+          include: {
+            token: true,
+          },
+        });
+        const staged = await this.stageTransferPush(tx, transaction);
+        return { transaction, staged };
       },
-      include: {
-        token: true,
-      },
-    });
+    );
 
-    // Records are written by the sender's own client right after their
-    // on-chain tx is submitted, but the row already carries the
-    // recipient's address — no need to wait for the recipient's own
-    // client to do anything. Route by wallet address, not userId: the
-    // recipient may be an entirely different backend User than the
-    // sender, or may not be one of our users at all (sendToWallet is a
-    // safe no-op when nothing is subscribed for that address).
+    if (staged) {
+      // Pre-build the icon PNG so the device's fetch, which happens the
+      // moment the notification lands, is a cache hit rather than a cold
+      // upstream fetch + rasterise on the OS's short timeout.
+      this.tokenIcon.warm(transaction.token);
+      // Deliberately not awaited: the row is committed, so the dispatch
+      // worker — or the outbox sweeper, if this enqueue never lands —
+      // delivers it regardless, and the sender's response never waits on
+      // Redis.
+      void this.pushService.enqueue(staged).catch((err) => {
+        this.logger.warn(
+          `[transactions] transfer push enqueue failed for tx ${transaction.id} (log ${staged.notificationLogId}): ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+    }
+
+    return transaction;
+  }
+
+  /**
+   * Stage the recipient's "Transfer Received" push for a freshly written
+   * TRANSFER row, inside the caller's transaction. Returns null when there
+   * is nothing to notify, and never throws — a push problem must not roll
+   * back the sender's own history record.
+   *
+   * Records are written by the sender's own client right after their
+   * on-chain tx is submitted, but the row already carries the recipient's
+   * address — no need to wait for the recipient's own client to do
+   * anything. Route by wallet address, not userId: the recipient may be an
+   * entirely different backend User than the sender, or may not be one of
+   * our users at all (a wallet with nothing subscribed is recorded as
+   * `no_device` on the log, not an error).
+   */
+  private async stageTransferPush(
+    tx: Prisma.TransactionClient,
+    transaction: TransactionRecord,
+  ): Promise<SendPushResult | null> {
     if (
-      transaction.type === TransactionType.TRANSFER &&
-      transaction.recipientAddress &&
-      transaction.recipientAddress.toLowerCase() !==
+      transaction.type !== TransactionType.TRANSFER ||
+      !transaction.recipientAddress ||
+      transaction.recipientAddress.toLowerCase() ===
         transaction.senderAddress?.toLowerCase()
     ) {
+      return null;
+    }
+
+    try {
+      // A client that times out and re-POSTs the same on-chain transfer
+      // (or an agent executor and the send screen both recording it) must
+      // not ring the recipient twice. Exact-match on the indexed txHash —
+      // a resubmit sends the identical string — and scoped to recipient +
+      // token so a single tx paying several recipients still notifies each.
+      if (transaction.txHash) {
+        const earlier = await tx.transactionHistory.findFirst({
+          where: {
+            txHash: transaction.txHash,
+            type: TransactionType.TRANSFER,
+            recipientAddress: transaction.recipientAddress,
+            tokenId: transaction.tokenId,
+            id: { not: transaction.id },
+          },
+          select: { id: true },
+        });
+        if (earlier) {
+          this.logger.log(
+            `[transactions] transfer ${transaction.id} duplicates ${earlier.id} (txHash ${transaction.txHash}); recipient already notified`,
+          );
+          return null;
+        }
+      }
+
       const humanAmount = new Prisma.Decimal(transaction.amount.toString())
         .div(new Prisma.Decimal(10).pow(transaction.token.decimals))
         .toNumber();
@@ -68,13 +142,8 @@ export class TransactionsService {
         : "another wallet";
       const recipientShort = truncateAddress(transaction.recipientAddress);
 
-      // Pre-build the icon PNG so the device's fetch, which happens the
-      // moment the notification lands, is a cache hit rather than a cold
-      // upstream fetch + rasterise on the OS's short timeout.
-      this.tokenIcon.warm(transaction.token);
-
-      await this.pushService
-        .sendToWallet({
+      return await this.pushService.stageToWallet(
+        {
           walletAddress: transaction.recipientAddress,
           title: "Transfer Received",
           body: `You received ${amountFormatted} ${transaction.token.symbol} from ${senderShort} to ${recipientShort}.`,
@@ -91,15 +160,15 @@ export class TransactionsService {
           },
           channelId: "transfers",
           source: "transfer",
-        })
-        .catch((err) => {
-          this.logger.warn(
-            `[transactions] transfer push failed for tx ${transaction.id}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        });
+        },
+        tx,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `[transactions] transfer push staging failed for tx ${transaction.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
     }
-
-    return transaction;
   }
 
   async findAll(paginationDto: CursorPaginationDto) {
