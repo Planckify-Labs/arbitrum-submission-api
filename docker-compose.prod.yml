@@ -121,6 +121,7 @@ services:
       DEFI_AUTO_COMPOUND_INTERVAL_DAYS: ${DEFI_AUTO_COMPOUND_INTERVAL_DAYS:-7}
       # Push notifications (Expo Push) — leave blank for free anonymous relay
       EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN}
+      PUBLIC_API_URL: ${PUBLIC_API_URL}
       # Email (Resend) — OTP emails silently fail to send if these are unset
       RESEND_API_KEY: ${RESEND_API_KEY}
       RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL}

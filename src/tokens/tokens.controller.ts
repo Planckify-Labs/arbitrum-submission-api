@@ -1,34 +1,35 @@
 import {
-  Controller,
-  Get,
-  Post,
   Body,
-  Put,
-  Param,
+  Controller,
   Delete,
+  Get,
   HttpCode,
   HttpStatus,
+  Param,
+  Post,
+  Put,
   Query,
   Res,
 } from "@nestjs/common";
+import { ApiOperation, ApiParam, ApiResponse, ApiTags } from "@nestjs/swagger";
 import type { Response } from "express";
-import { ApiTags } from "@nestjs/swagger";
-import { TokensService } from "./tokens.service";
-import { AlchemyTokenMetadataClient } from "./alchemy-token-metadata.client";
-import { CreateTokenDto } from "./dto/create-token.dto";
-import { UpdateTokenDto } from "./dto/update-token.dto";
-import { SearchTokenDto } from "./dto/search-token.dto";
-import { CursorPaginationDto } from "../dto/common/pagination.dto";
+import { ApiKey } from "../decorators/api-key.decorator";
+import { Public } from "../decorators/public.decorator";
 import {
   ApiCreateToken,
   ApiDeleteToken,
-  ApiUpdateToken,
+  ApiGetTokenPublic,
   ApiGetTokensPublic,
   ApiSearchTokensPublic,
-  ApiGetTokenPublic,
+  ApiUpdateToken,
 } from "../decorators/swagger/token.decorators";
-import { Public } from "../decorators/public.decorator";
-import { ApiKey } from "../decorators/api-key.decorator";
+import { CursorPaginationDto } from "../dto/common/pagination.dto";
+import { AlchemyTokenMetadataClient } from "./alchemy-token-metadata.client";
+import { CreateTokenDto } from "./dto/create-token.dto";
+import { SearchTokenDto } from "./dto/search-token.dto";
+import { UpdateTokenDto } from "./dto/update-token.dto";
+import { TokenIconService } from "./token-icon.service";
+import { TokensService } from "./tokens.service";
 
 @Controller("tokens")
 @ApiTags("tokens")
@@ -36,7 +37,46 @@ export class TokensController {
   constructor(
     private readonly tokensService: TokensService,
     private readonly alchemyTokenMetadata: AlchemyTokenMetadataClient,
+    private readonly tokenIcon: TokenIconService,
   ) {}
+
+  /**
+   * The token's logo as a square PNG, for surfaces that can only decode a
+   * bitmap from a bare URL — chiefly the transfer push notification, whose
+   * large icon Android fetches with no headers and hands straight to
+   * `BitmapFactory`. Whatever `Token.logoUrl` points at (SVG, JPEG, a CDN
+   * that rejects the Dalvik UA) is fetched and normalised server-side by
+   * `TokenIconService`; see that file for why.
+   *
+   * No `@ApiKey()` on purpose: the OS notification pipeline cannot send one.
+   * The route leaks nothing beyond the logo that `GET /tokens/:id` already
+   * serves, and answers 404 (never 500) when no icon can be built.
+   */
+  @Get(":id/icon.png")
+  @Public()
+  @ApiOperation({ summary: "Token logo as a 256x256 PNG (push-safe)" })
+  @ApiParam({ name: "id", type: "string" })
+  @ApiResponse({ status: 200, description: "image/png" })
+  @ApiResponse({ status: 404, description: "No usable logo for this token" })
+  async icon(@Param("id") id: string, @Res() res: Response) {
+    const png = await this.tokenIcon.getIconPng(id);
+    if (!png) {
+      res
+        .status(HttpStatus.NOT_FOUND)
+        .setHeader("Cache-Control", "public, max-age=300")
+        .end();
+      return;
+    }
+    res
+      .status(HttpStatus.OK)
+      .setHeader("Content-Type", "image/png")
+      .setHeader("Content-Length", String(png.length))
+      .setHeader(
+        "Cache-Control",
+        "public, max-age=86400, stale-while-revalidate=604800",
+      )
+      .end(png);
+  }
 
   /**
    * Token identity (symbol, logo, decimals) for one contract, for surfaces

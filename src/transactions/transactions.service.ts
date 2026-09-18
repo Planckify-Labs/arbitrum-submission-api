@@ -3,6 +3,7 @@ import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import { PushService } from "../push/push.service";
+import { TokenIconService } from "../tokens/token-icon.service";
 import { truncateAddress } from "../utils/address";
 import { CreateTransactionDto } from "./dto/create-transaction.dto";
 import { SearchTransactionDto } from "./dto/search-transaction.dto";
@@ -21,6 +22,7 @@ export class TransactionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly pushService: PushService,
+    private readonly tokenIcon: TokenIconService,
   ) {}
 
   async create(userId: string, createTransactionDto: CreateTransactionDto) {
@@ -66,12 +68,20 @@ export class TransactionsService {
         : "another wallet";
       const recipientShort = truncateAddress(transaction.recipientAddress);
 
+      // Pre-build the icon PNG so the device's fetch, which happens the
+      // moment the notification lands, is a cache hit rather than a cold
+      // upstream fetch + rasterise on the OS's short timeout.
+      this.tokenIcon.warm(transaction.token);
+
       await this.pushService
         .sendToWallet({
           walletAddress: transaction.recipientAddress,
           title: "Transfer Received",
           body: `You received ${amountFormatted} ${transaction.token.symbol} from ${senderShort} to ${recipientShort}.`,
-          imageUrl: transaction.token.logoUrl ?? undefined,
+          // Our own PNG endpoint, not the raw logoUrl: Android decodes the
+          // push image with BitmapFactory and silently drops SVGs and
+          // hot-link-blocked hosts — see TokenIconService.
+          imageUrl: this.tokenIcon.pushImageUrl(transaction.token),
           data: {
             type: "transfer",
             transactionId: transaction.id,

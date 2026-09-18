@@ -1803,7 +1803,7 @@ async function main() {
         symbol: "IDRX",
         decimals: 2,
         logoUrl:
-          "https://assets.coingecko.com/coins/images/34630/large/idrx.png",
+          "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/polygon/assets/0x649a2DA7B28E0D54c13D5eFf95d3A660652742cC/logo.png",
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "IDR",
@@ -1815,7 +1815,7 @@ async function main() {
         blockchainId: evmChain(84532).id, // Base
         contractAddress: "0x1aC593085Fa34c651E805085da4b2cabAC676F99",
         logoUrl:
-          "https://assets.coingecko.com/coins/images/34630/large/idrx.png",
+          "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/polygon/assets/0x649a2DA7B28E0D54c13D5eFf95d3A660652742cC/logo.png",
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "IDR",
@@ -2789,7 +2789,8 @@ async function main() {
             name: `Aave V3 ${reserve.symbol} (${deployment.chainName})`,
             symbol: `a${reserve.symbol}`,
             decimals: underlyingDecimals,
-            logoUrl: "https://app.aave.com/icons/tokens/ausdc.svg",
+            logoUrl:
+              "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xBcca60bB61934080951369a648Fb03DF4F96263C/logo.png",
             isStablecoin:
               reserve.symbol === "USDC" || reserve.symbol === "USDT",
             isActive: true,
@@ -2801,7 +2802,8 @@ async function main() {
             decimals: underlyingDecimals,
             blockchainId: blockchain.id,
             contractAddress: aToken.toLowerCase(),
-            logoUrl: "https://app.aave.com/icons/tokens/ausdc.svg",
+            logoUrl:
+              "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xBcca60bB61934080951369a648Fb03DF4F96263C/logo.png",
             isStablecoin:
               reserve.symbol === "USDC" || reserve.symbol === "USDT",
             isActive: true,
