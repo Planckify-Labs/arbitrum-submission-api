@@ -1,6 +1,6 @@
 import type { Prisma } from "@generated/prisma";
 import { InjectQueue } from "@nestjs/bullmq";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { Job, Queue } from "bullmq";
 import {
@@ -9,8 +9,19 @@ import {
   type ExpoPushMessage,
   type ExpoPushTicket,
 } from "expo-server-sdk";
+import { createHash, randomUUID } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
-import { canonicalizeWalletAddress } from "../utils/address";
+import { canonicalizeWalletAddress, truncateAddress } from "../utils/address";
+import {
+  defaultChannelFor,
+  NotificationCategory,
+  resolveCategory,
+} from "./notification-categories";
+import { NotificationPreferencesService } from "./notification-preferences.service";
+import {
+  WALLET_ACTIVITY_QUEUE,
+  type WalletActivityJobData,
+} from "../wallet-activity/wallet-activity.types";
 
 export const PUSH_DISPATCH_QUEUE = "push-dispatch";
 export const PUSH_RECEIPTS_QUEUE = "push-receipts";
@@ -24,7 +35,8 @@ export const PUSH_RECEIPTS_QUEUE = "push-receipts";
  *
  * Short-cuts: `no_device` (nothing subscribed when staged), `failed` (every
  * attempt exhausted without a single accepted ticket), `expired` (`expiresAt`
- * passed before a worker got to it).
+ * passed before a worker got to it), `muted` (the user has the category
+ * switched off — recorded for audit, never sent, hidden from the inbox).
  */
 export const PushDeliveryStatus = {
   queued: "queued",
@@ -36,6 +48,7 @@ export const PushDeliveryStatus = {
   no_device: "no_device",
   failed: "failed",
   expired: "expired",
+  muted: "muted",
 } as const;
 export type PushDeliveryStatus =
   (typeof PushDeliveryStatus)[keyof typeof PushDeliveryStatus];
@@ -74,6 +87,19 @@ export interface SendPushArgs {
    * later); set it for pushes tied to something that itself expires.
    */
   ttlSeconds?: number;
+  /**
+   * What kind of notification this is, for the user's mute switches and
+   * the inbox filter. Omitted = derived from `channelId` (see
+   * notification-categories.ts); a push with neither is always sent.
+   */
+  category?: NotificationCategory;
+  /**
+   * Producer-agnostic identity of the event being announced. Two stagings
+   * with the same key are ONE notification: the second is dropped at the
+   * unique index, whichever producer got there first (the sender's app
+   * recording a transfer vs. the Zerion webhook seeing it on-chain).
+   */
+  dedupeKey?: string;
 }
 
 export interface SendToUserArgs extends SendPushArgs {
@@ -91,8 +117,12 @@ export interface SendToWalletArgs extends SendPushArgs {
  */
 export interface SendPushResult {
   attempted: number;
-  /** `null` only when the outbox row could not be written. */
+  /** `null` when the outbox row could not be written, or was deduplicated. */
   notificationLogId: string | null;
+  /** True when `dedupeKey` matched an existing row — nothing was staged. */
+  deduplicated?: boolean;
+  /** True when the user has this category off — recorded, not sent. */
+  muted?: boolean;
 }
 
 /**
@@ -118,7 +148,7 @@ export function formatTokenMicros(micros: bigint): string {
   return n.toFixed(n < 1 ? 4 : 2);
 }
 
-type Device = { id: string; token: string };
+export type Device = { id: string; token: string };
 type DeliveryOutcome = "done" | "retry" | "skipped";
 /** Any Prisma client — the caller's open transaction or the service one. */
 type Db = Prisma.TransactionClient;
@@ -167,10 +197,19 @@ export class PushService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
+    private readonly preferences: NotificationPreferencesService,
     @InjectQueue(PUSH_DISPATCH_QUEUE)
     private readonly dispatchQueue: Queue<PushDispatchJobData>,
     @InjectQueue(PUSH_RECEIPTS_QUEUE)
     private readonly receiptQueue: Queue<{ entries: PushReceiptEntry[] }>,
+    /**
+     * Hands freshly registered wallets to the Zerion subscription (see
+     * wallet-activity/). Optional so the service stands alone in tests and
+     * in any deployment that leaves the wallet-activity feature out.
+     */
+    @Optional()
+    @InjectQueue(WALLET_ACTIVITY_QUEUE)
+    private readonly walletActivityQueue?: Queue<WalletActivityJobData>,
   ) {
     const accessToken = this.configService.get<string>("EXPO_ACCESS_TOKEN");
     this.expo = new Expo({
@@ -201,13 +240,26 @@ export class PushService {
     token: string;
     platform: string;
     wallets: string[];
-  }): Promise<void> {
+  }): Promise<{
+    deviceId: string;
+    wallets: string[];
+    isNewDevice: boolean;
+  } | null> {
     if (!Expo.isExpoPushToken(input.token)) {
       this.logger.warn(
         `[registerToken] rejected: not a valid Expo push token (user=${input.userId ?? "anonymous"})`,
       );
-      return;
+      return null;
     }
+
+    // "New device" = this push token has never been seen. A reinstall or a
+    // token rotation looks the same from here, which is fine: both mean the
+    // wallet is now live somewhere the user's OTHER devices didn't know
+    // about, and that is exactly what the security push is for.
+    const seenBefore = await this.prisma.devicePushToken.findUnique({
+      where: { token: input.token },
+      select: { id: true },
+    });
 
     const device = await this.prisma.devicePushToken.upsert({
       where: { token: input.token },
@@ -264,6 +316,92 @@ export class PushService {
     this.logger.log(
       `[registerToken] upserted device=${device.id} user=${input.userId ?? "anonymous"} wallets=${unique.length}`,
     );
+
+    if (unique.length > 0) this.subscribeWalletActivity(device.id, unique);
+
+    const isNewDevice = !seenBefore;
+    if (isNewDevice && unique.length > 0) {
+      // Best-effort, after the registration is committed: the push goes to
+      // the wallet's other devices, never to the one that just registered.
+      void this.sendNewDevicePush({
+        deviceId: device.id,
+        platform: input.platform,
+        wallets: unique,
+      }).catch((err) => {
+        this.logger.warn(
+          `[registerToken] new-device push failed for device=${device.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+    }
+    return { deviceId: device.id, wallets: unique, isNewDevice };
+  }
+
+  /**
+   * Ask the wallet-activity worker to add these wallets to the Zerion
+   * subscription. Fire-and-forget: the 6-hourly reconcile catches anything
+   * a missed job leaves out, and registration must never wait on Redis.
+   */
+  private subscribeWalletActivity(deviceId: string, wallets: string[]): void {
+    if (!this.walletActivityQueue) return;
+    const fingerprint = createHash("sha1")
+      .update([...wallets].sort().join(","))
+      .digest("hex")
+      .slice(0, 12);
+    void this.walletActivityQueue
+      .add(
+        "subscribe",
+        { kind: "subscribe", wallets },
+        { jobId: `subscribe:${deviceId}:${fingerprint}` },
+      )
+      .catch((err) => {
+        this.logger.warn(
+          `[registerToken] could not queue wallet-activity subscribe for device=${deviceId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+  }
+
+  /**
+   * "Your wallet is now on a new device" to every OTHER device that holds
+   * one of the wallets the new device registered. One push per wallet
+   * (each wallet's holders may differ), keyed so a registration retry
+   * can't ring twice.
+   */
+  private async sendNewDevicePush(input: {
+    deviceId: string;
+    platform: string;
+    wallets: string[];
+  }): Promise<void> {
+    const platformWord =
+      input.platform.toLowerCase() === "ios"
+        ? "iPhone"
+        : input.platform.toLowerCase() === "android"
+          ? "Android device"
+          : "device";
+    for (const wallet of input.wallets) {
+      const devices = (
+        await this.resolveWalletDevices(wallet, this.prisma)
+      ).filter((d) => d.id !== input.deviceId);
+      if (devices.length === 0) continue;
+      const staged = await this.stage(
+        devices,
+        {
+          title: "Wallet active on a new device",
+          body: `${truncateAddress(wallet)} was just set up on a new ${platformWord}. If this wasn't you, move your funds to a new wallet right away.`,
+          category: NotificationCategory.security,
+          channelId: "security",
+          source: "new_device",
+          dedupeKey: `new-device:${input.deviceId}:${wallet}`,
+          data: {
+            type: "new_device",
+            walletAddress: wallet,
+            platform: input.platform,
+          },
+        },
+        { walletAddress: wallet },
+        this.prisma,
+      );
+      await this.enqueue(staged);
+    }
   }
 
   // ─── public send API ─────────────────────────────────────────────────────
@@ -561,6 +699,310 @@ export class PushService {
     return { ...intent, payerUserId: intent.payerUserId };
   }
 
+  /**
+   * The merchant's side of a completed payout: the customer's fiat landed
+   * in their bank account. Merchants are Users too (`Merchant.userId`);
+   * one without a linked user has nowhere to receive a push.
+   */
+  async sendMerchantPayoutPush(intentId: string): Promise<void> {
+    const intent = await this.prisma.paymentIntent.findUnique({
+      where: { id: intentId },
+      select: {
+        fiatAmountMinor: true,
+        fiatCurrency: true,
+        merchant: {
+          select: { userId: true, displayName: true, payoutChannelCode: true },
+        },
+      },
+    });
+    if (!intent?.merchant.userId) {
+      this.logger.debug(
+        `[sendMerchantPayoutPush] merchant has no user for intentId=${intentId}`,
+      );
+      return;
+    }
+    const fiat = formatFiatMinor(intent.fiatAmountMinor, intent.fiatCurrency);
+    await this.sendToUser({
+      userId: intent.merchant.userId,
+      title: `Payout received ${fiat}`,
+      body: `A customer payment has landed in your ${intent.merchant.payoutChannelCode} account.`,
+      source: "merchant_payout",
+      category: NotificationCategory.payments,
+      channelId: "payouts",
+      dedupeKey: `merchant-payout:${intentId}`,
+      data: {
+        type: "merchant_payout",
+        intentId,
+        fiatAmountMinor: intent.fiatAmountMinor,
+        fiatCurrency: intent.fiatCurrency,
+      },
+    });
+  }
+
+  /**
+   * Outcome of a digital-product purchase (gift card, game voucher). Three
+   * shapes, worded from the buyer's side:
+   *   - `completed`: the vendor delivered — "your X is ready".
+   *   - `payment_failed`: on-chain verification failed, so the vendor was
+   *     never called and nothing was delivered. The buyer may or may not
+   *     have been charged (a mismatched tx still spent gas), so this says
+   *     "we're checking" rather than "you weren't charged".
+   *   - `fulfilment_failed`: payment verified but the vendor call failed —
+   *     the buyer HAS paid, and this must never read as "try again".
+   */
+  async sendPurchaseOutcomePush(input: {
+    walletAddress: string;
+    purchaseId: string;
+    bookingId: string;
+    productName: string;
+    outcome: "completed" | "payment_failed" | "fulfilment_failed";
+  }): Promise<void> {
+    const copy =
+      input.outcome === "completed"
+        ? {
+            title: "Your order is ready",
+            body: `${input.productName} has been delivered. Open TakumiPay to see the details.`,
+          }
+        : input.outcome === "payment_failed"
+          ? {
+              title: "We couldn't verify your payment",
+              body: `Your ${input.productName} order is on hold while we check the payment. You don't need to do anything, we'll update you.`,
+            }
+          : {
+              title: "Your order needs attention",
+              body: `Your payment for ${input.productName} went through but delivery hit a snag. We're on it and will update you.`,
+            };
+    await this.sendToWallet({
+      walletAddress: input.walletAddress,
+      ...copy,
+      source: "purchase",
+      category: NotificationCategory.payments,
+      channelId: "payouts",
+      dedupeKey: `purchase:${input.purchaseId}:${input.outcome}`,
+      data: {
+        type: "purchase",
+        status: input.outcome,
+        purchaseId: input.purchaseId,
+        bookingId: input.bookingId,
+      },
+    });
+  }
+
+  /**
+   * "Your price lock is about to expire" — sent once per booking, ~2
+   * minutes before `expiresAt`, and dropped by Expo if it can't land
+   * before the booking is gone (a late reminder is worse than none).
+   */
+  async sendBookingExpiringPush(input: {
+    walletAddress: string;
+    bookingId: string;
+    productName: string;
+    expiresAt: Date;
+  }): Promise<SendPushResult> {
+    const secondsLeft = Math.max(
+      30,
+      Math.floor((input.expiresAt.getTime() - Date.now()) / 1000),
+    );
+    const minutes = Math.max(1, Math.round(secondsLeft / 60));
+    return this.sendToWallet({
+      walletAddress: input.walletAddress,
+      title: "Your price lock is about to expire",
+      body: `Complete your ${input.productName} purchase in the next ${minutes} minute${minutes === 1 ? "" : "s"} to keep the locked price.`,
+      source: "booking_expiring",
+      category: NotificationCategory.payments,
+      channelId: "payouts",
+      dedupeKey: `booking-expiring:${input.bookingId}`,
+      ttlSeconds: secondsLeft,
+      data: { type: "booking_expiring", bookingId: input.bookingId },
+    });
+  }
+
+  // ─── inbox ───────────────────────────────────────────────────────────────
+
+  /**
+   * The user's notification history, newest first. A user is reached two
+   * ways — by id (`sendToUser`) and by wallet (`sendToWallet`) — so both
+   * are matched; announcements are matched through the device they were
+   * targeted at, since a broadcast row has no per-user owner. Muted and
+   * expired rows are not shown: neither was ever a notification the user
+   * could have seen.
+   */
+  async listInbox(input: {
+    userId: string;
+    walletAddress: string | null;
+    cursor?: string;
+    take: number;
+    unreadOnly?: boolean;
+  }): Promise<{
+    items: Array<{
+      id: string;
+      title: string;
+      body: string;
+      data: unknown;
+      category: string | null;
+      imageUrl: string | null;
+      sentAt: Date;
+      readAt: Date | null;
+    }>;
+    nextCursor: string | null;
+  }> {
+    const take = Math.min(Math.max(input.take, 1), 100);
+    const where = await this.inboxWhere(input.userId, input.walletAddress);
+    if (input.unreadOnly) where.readAt = null;
+
+    let cursorFilter: Prisma.NotificationLogWhereInput = {};
+    if (input.cursor) {
+      const at = await this.prisma.notificationLog.findUnique({
+        where: { id: input.cursor },
+        select: { sentAt: true },
+      });
+      if (at) {
+        cursorFilter = {
+          OR: [
+            { sentAt: { lt: at.sentAt } },
+            { sentAt: at.sentAt, id: { lt: input.cursor } },
+          ],
+        };
+      }
+    }
+
+    const rows = await this.prisma.notificationLog.findMany({
+      where: { AND: [where, cursorFilter] },
+      orderBy: [{ sentAt: "desc" }, { id: "desc" }],
+      take: take + 1,
+      select: {
+        id: true,
+        title: true,
+        body: true,
+        data: true,
+        category: true,
+        imageUrl: true,
+        sentAt: true,
+        readAt: true,
+      },
+    });
+    const hasMore = rows.length > take;
+    const items = hasMore ? rows.slice(0, take) : rows;
+    return {
+      items,
+      nextCursor: hasMore ? (items[items.length - 1]?.id ?? null) : null,
+    };
+  }
+
+  async unreadCount(userId: string, walletAddress: string | null) {
+    const where = await this.inboxWhere(userId, walletAddress);
+    return this.prisma.notificationLog.count({
+      where: { ...where, readAt: null },
+    });
+  }
+
+  /** Mark the given rows — or everything unread — as read. */
+  async markRead(
+    userId: string,
+    walletAddress: string | null,
+    ids?: string[],
+  ): Promise<number> {
+    const where = await this.inboxWhere(userId, walletAddress);
+    const result = await this.prisma.notificationLog.updateMany({
+      where: {
+        ...where,
+        readAt: null,
+        ...(ids && ids.length > 0 ? { id: { in: ids } } : {}),
+      },
+      data: { readAt: new Date() },
+    });
+    return result.count;
+  }
+
+  private async inboxWhere(
+    userId: string,
+    walletAddress: string | null,
+  ): Promise<Prisma.NotificationLogWhereInput> {
+    const devices = await this.prisma.devicePushToken.findMany({
+      where: { userId },
+      select: { id: true },
+    });
+    const deviceIds = devices.map((d) => d.id);
+    const or: Prisma.NotificationLogWhereInput[] = [{ userId }];
+    if (walletAddress) {
+      or.push({ walletAddress: canonicalizeWalletAddress(walletAddress) });
+    }
+    if (deviceIds.length > 0) {
+      or.push({
+        category: NotificationCategory.announcements,
+        targetDeviceIds: { hasSome: deviceIds },
+      });
+    }
+    return {
+      OR: or,
+      deliveryStatus: {
+        notIn: [PushDeliveryStatus.muted, PushDeliveryStatus.expired],
+      },
+    };
+  }
+
+  // ─── announcements ───────────────────────────────────────────────────────
+
+  /**
+   * Product news to every registered device. Walks signed-in users (their
+   * devices + their wallets' subscribed devices, so an anonymous install
+   * that holds a signed-in wallet is reached too), honouring each user's
+   * `announcements` switch, and never hits one physical device twice even
+   * when two users resolve to it. One outbox row per user, so the inbox
+   * can show it and delivery is verified like any other push.
+   */
+  async broadcastAnnouncement(args: {
+    title: string;
+    body: string;
+    data?: Record<string, unknown>;
+    imageUrl?: string;
+    dedupeKey: string;
+  }): Promise<{ users: number; devices: number; muted: number }> {
+    const seenDevices = new Set<string>();
+    let users = 0;
+    let devices = 0;
+    let muted = 0;
+    // Every signed-in user with at least one device. A few thousand ids in
+    // memory is fine; the per-user work below is what dominates.
+    const groups = await this.prisma.devicePushToken.groupBy({
+      by: ["userId"],
+      where: { userId: { not: null } },
+    });
+    for (const { userId } of groups) {
+      if (!userId) continue;
+      const resolved = (
+        await this.resolveUserDevices(userId, this.prisma)
+      ).filter((d) => !seenDevices.has(d.id));
+      if (resolved.length === 0) continue;
+      const staged = await this.stage(
+        resolved,
+        {
+          ...args,
+          source: "announcement",
+          category: NotificationCategory.announcements,
+          channelId: "announcements",
+          dedupeKey: `${args.dedupeKey}:${userId}`,
+          data: { type: "announcement", ...(args.data ?? {}) },
+        },
+        { userId },
+        this.prisma,
+      );
+      if (staged.muted) {
+        muted += 1;
+        continue;
+      }
+      if (staged.deduplicated) continue;
+      for (const d of resolved) seenDevices.add(d.id);
+      users += 1;
+      devices += resolved.length;
+      await this.enqueue(staged);
+    }
+    this.logger.log(
+      `[announcement] ${args.dedupeKey}: users=${users} devices=${devices} muted=${muted}`,
+    );
+    return { users, devices, muted };
+  }
+
   // ─── device resolution ───────────────────────────────────────────────────
 
   /**
@@ -649,41 +1091,96 @@ export class PushService {
     target: { userId?: string; walletAddress?: string },
     db: Db,
   ): Promise<SendPushResult> {
-    const deviceIds = devices.map((d) => d.id);
+    const category = resolveCategory(args);
+    const channelId =
+      args.channelId ?? (category ? defaultChannelFor(category) : undefined);
+
+    // Muted categories are still recorded (the row answers "why didn't I
+    // get X?") but resolve to zero devices and never reach the inbox.
+    const muted = !(await this.preferences.isEnabled(target, category, db));
+    const deviceIds = muted ? [] : devices.map((d) => d.id);
     const hasDevices = deviceIds.length > 0;
     const expiresAt =
       args.ttlSeconds && args.ttlSeconds > 0
         ? new Date(Date.now() + args.ttlSeconds * 1000)
         : null;
 
-    const log = await db.notificationLog.create({
-      data: {
-        userId: target.userId,
-        walletAddress: target.walletAddress,
-        title: args.title,
-        body: args.body,
-        data: (args.data ?? {}) as Prisma.InputJsonValue,
-        source: args.source ?? "unknown",
-        channelId: args.channelId,
-        imageUrl: args.imageUrl,
-        recipientCount: deviceIds.length,
-        targetDeviceIds: deviceIds,
-        pendingDeviceIds: deviceIds,
-        expiresAt,
-        deliveryStatus: hasDevices
+    const data: Prisma.NotificationLogCreateManyInput = {
+      userId: target.userId,
+      walletAddress: target.walletAddress,
+      title: args.title,
+      body: args.body,
+      data: (args.data ?? {}) as Prisma.InputJsonValue,
+      source: args.source ?? "unknown",
+      category,
+      dedupeKey: args.dedupeKey,
+      channelId,
+      imageUrl: args.imageUrl,
+      recipientCount: deviceIds.length,
+      targetDeviceIds: deviceIds,
+      pendingDeviceIds: deviceIds,
+      expiresAt,
+      deliveryStatus: muted
+        ? PushDeliveryStatus.muted
+        : hasDevices
           ? PushDeliveryStatus.queued
           : PushDeliveryStatus.no_device,
-        deliveryCheckedAt: hasDevices ? null : new Date(),
-      },
-      select: { id: true },
-    });
+      deliveryCheckedAt: hasDevices ? null : new Date(),
+    };
 
+    let logId: string;
+    if (args.dedupeKey) {
+      // `ON CONFLICT DO NOTHING` rather than create-and-catch: a unique
+      // violation inside the caller's open transaction would poison it
+      // (Postgres aborts the whole tx), and the caller's own row — the
+      // sender's transfer record — must not roll back because the
+      // recipient was already notified by another producer.
+      const id = randomUUID();
+      const inserted = await db.notificationLog.createMany({
+        data: [{ ...data, id }],
+        skipDuplicates: true,
+      });
+      if (inserted.count === 0) {
+        this.logger.log(
+          `[stage] source=${args.source ?? "unknown"} deduplicated (${args.dedupeKey}) for ${describeTarget(target)}`,
+        );
+        return { attempted: 0, notificationLogId: null, deduplicated: true };
+      }
+      logId = id;
+    } else {
+      const log = await db.notificationLog.create({
+        data,
+        select: { id: true },
+      });
+      logId = log.id;
+    }
+
+    if (muted) {
+      this.logger.log(
+        `[stage] source=${args.source ?? "unknown"} log=${logId} muted (${category}) for ${describeTarget(target)}`,
+      );
+      return { attempted: 0, notificationLogId: logId, muted: true };
+    }
     if (!hasDevices) {
       this.logger.log(
-        `[stage] source=${args.source ?? "unknown"} log=${log.id} no devices for ${describeTarget(target)}`,
+        `[stage] source=${args.source ?? "unknown"} log=${logId} no devices for ${describeTarget(target)}`,
       );
     }
-    return { attempted: deviceIds.length, notificationLogId: log.id };
+    return { attempted: deviceIds.length, notificationLogId: logId };
+  }
+
+  /**
+   * Stage directly to already-resolved devices. For producers that pick
+   * their own audience (the announcement broadcast, which walks devices in
+   * batches and must not double-hit one device reachable via two users).
+   */
+  async stageToDevices(
+    devices: Device[],
+    args: SendPushArgs,
+    target: { userId?: string; walletAddress?: string } = {},
+    db: Db = this.prisma,
+  ): Promise<SendPushResult> {
+    return this.stage(devices, args, target, db);
   }
 
   /** Worker entry point — see `PushDispatchProcessor`. */

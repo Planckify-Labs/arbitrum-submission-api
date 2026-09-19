@@ -13,10 +13,7 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
-import {
-  PaymentIntentStatus,
-  ProviderPayoutStatus,
-} from "@generated/prisma";
+import { PaymentIntentStatus, ProviderPayoutStatus } from "@generated/prisma";
 import { Public } from "../decorators/public.decorator";
 import { PrismaService } from "../prisma/prisma.service";
 import { PushService } from "../push/push.service";
@@ -328,9 +325,7 @@ export class WebhookController {
 
     const flipId = disbursement.id;
     const rawStatus =
-      typeof disbursement.status === "string"
-        ? disbursement.status
-        : undefined;
+      typeof disbursement.status === "string" ? disbursement.status : undefined;
 
     if (flipId == null) {
       this.logger.warn("Flip webhook: data missing id field");
@@ -423,6 +418,14 @@ export class WebhookController {
     } catch (err) {
       this.logger.warn(
         `PAID_OUT push failed intentId=${intentId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    // The other side of the same event: the merchant's "money landed".
+    try {
+      await this.pushService.sendMerchantPayoutPush(intentId);
+    } catch (err) {
+      this.logger.warn(
+        `merchant payout push failed intentId=${intentId}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }

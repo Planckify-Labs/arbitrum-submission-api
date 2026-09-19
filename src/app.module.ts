@@ -45,6 +45,7 @@ import { CacheInterceptor } from "./valkey/interceptors/cache.interceptor";
 import { InvalidateCacheInterceptor } from "./valkey/interceptors/invalidate-cache.interceptor";
 import { ValkeyModule } from "./valkey/valkey.module";
 import { VendorsModule } from "./vendors/vendors.module";
+import { WalletActivityModule } from "./wallet-activity/wallet-activity.module";
 import { WalletConnectPushModule } from "./walletconnect-push/walletconnect-push.module";
 import { X402Module } from "./x402/x402.module";
 
@@ -93,6 +94,7 @@ import { X402Module } from "./x402/x402.module";
     BridgeModule,
     PushModule,
     WalletConnectPushModule,
+    WalletActivityModule,
   ],
   controllers: [AppController],
   providers: [

@@ -8,6 +8,7 @@ import { VendorAPIModule } from "../providers/vendor-api/vendor-api.module";
 import { ReferenceIdModule } from "../reference-id/reference-id.module";
 import { QueueService } from "./queue.service";
 import { ValkeyModule } from "../valkey/valkey.module";
+import { PushModule } from "../push/push.module";
 
 @Module({
   imports: [
@@ -74,6 +75,7 @@ import { ValkeyModule } from "../valkey/valkey.module";
     VendorAPIModule,
     ReferenceIdModule,
     ValkeyModule,
+    PushModule,
   ],
   providers: [PurchaseProcessor, QueueService],
   exports: [QueueService],

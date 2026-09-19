@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ValkeyModule } from "../../valkey/valkey.module";
+import { ZerionSubscriptionsClient } from "./zerion-subscriptions.client";
 import { ZerionClient } from "./zerion.client";
 
 /**
@@ -10,7 +11,7 @@ import { ZerionClient } from "./zerion.client";
  */
 @Module({
   imports: [ValkeyModule],
-  providers: [ZerionClient],
-  exports: [ZerionClient],
+  providers: [ZerionClient, ZerionSubscriptionsClient],
+  exports: [ZerionClient, ZerionSubscriptionsClient],
 })
 export class ZerionModule {}

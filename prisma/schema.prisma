@@ -135,6 +135,7 @@ model User {
   gatewayDeposits       GatewayDeposit[]
 
   devicePushTokens DevicePushToken[]
+  notificationPreference NotificationPreference?
 
   // Wallets this (social) account has set up on some device. Lets a
   // returning user on a new device be told "we found your wallet" even
@@ -277,11 +278,41 @@ model NotificationLog {
   expoTicketIds     String[]  @default([])
   deliveryCheckedAt DateTime?
 
+  /// Notification centre fields (see src/push/notification-categories.ts).
+  /// `category` drives per-user mute preferences and the inbox filter;
+  /// `dedupeKey` makes two producers of the same event (the sender's app
+  /// recording a transfer, and the Zerion webhook seeing it on-chain) a
+  /// single notification — the second insert hits the unique index;
+  /// `readAt` is the inbox read marker.
+  category  String?
+  dedupeKey String?   @unique
+  readAt    DateTime?
+
   @@index([userId])
   @@index([walletAddress])
   @@index([sentAt])
   @@index([deliveryStatus])
   @@index([deliveryStatus, updatedAt])
+  @@index([userId, sentAt(sort: Desc)])
+  @@index([walletAddress, sentAt(sort: Desc)])
+}
+
+/// Per-user notification settings. One row per user, created lazily on the
+/// first PATCH — absent row = every default (see DEFAULT_CATEGORY_ENABLED
+/// in src/push/notification-categories.ts). `categories` holds only the
+/// explicit overrides ({ "wallet_activity": false, "portfolio_digest": true }),
+/// so a new category added later is governed by its code default, not by
+/// whatever was persisted before it existed.
+model NotificationPreference {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categories    Json     @default("{}")
+  /// Hour (UTC, 0-23) the daily portfolio digest is sent, when enabled.
+  /// Default 02:00 UTC = 09:00 WIB.
+  digestHourUtc Int      @default(2)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
 
 model Blockchain {

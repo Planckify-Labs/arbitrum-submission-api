@@ -24,6 +24,19 @@ export interface ZerionChain {
    * so they carry `null` and are addressed by namespace instead.
    */
   readonly chainId: number | null;
+  /**
+   * Our `Blockchain.chainSlug` for chains that have no numeric id, so a
+   * registry row can be mapped to its Zerion id without guessing from the
+   * namespace (Solana devnet is `solana-devnet`, which Zerion does not index).
+   */
+  readonly chainSlug?: string;
+  /**
+   * Testnets are excluded from the portfolio default ("every chain we
+   * support") — a Sepolia balance is not part of anyone's net worth — but
+   * ARE included in the wallet-activity webhook subscription, so QA wallets
+   * get the same pushes production wallets do.
+   */
+  readonly testnet?: boolean;
   readonly capabilities: readonly ZerionCapability[];
 }
 
@@ -37,6 +50,9 @@ const EVM_FULL: readonly ZerionCapability[] = [
 /** Solana: tokens + transactions today, DeFi/NFT "coming soon" upstream. */
 const SOLANA_CAPS: readonly ZerionCapability[] = ["tokens", "transactions"];
 
+/** Testnets: Zerion lists them without a per-capability breakdown. */
+const TESTNET_CAPS: readonly ZerionCapability[] = ["tokens", "transactions"];
+
 /**
  * The chains we actually care about, not Zerion's full ~37-chain list. Adding
  * a chain here is the only step needed to extend coverage, provided the chain
@@ -47,10 +63,23 @@ export const ZERION_CHAINS: readonly ZerionChain[] = [
   { zerionId: "optimism", namespace: "eip155", chainId: 10, capabilities: EVM_FULL },
   { zerionId: "binance-smart-chain", namespace: "eip155", chainId: 56, capabilities: EVM_FULL },
   { zerionId: "polygon", namespace: "eip155", chainId: 137, capabilities: EVM_FULL },
+  // Monad mainnet — verified 2026-09-19 against the supported-blockchains
+  // page (tokens/txns/DeFi/NFT all ✅).
+  { zerionId: "monad", namespace: "eip155", chainId: 143, capabilities: EVM_FULL },
   { zerionId: "base", namespace: "eip155", chainId: 8453, capabilities: EVM_FULL },
   { zerionId: "arbitrum", namespace: "eip155", chainId: 42161, capabilities: EVM_FULL },
   { zerionId: "avalanche", namespace: "eip155", chainId: 43114, capabilities: EVM_FULL },
-  { zerionId: "solana", namespace: "solana", chainId: null, capabilities: SOLANA_CAPS },
+  {
+    zerionId: "solana",
+    namespace: "solana",
+    chainId: null,
+    chainSlug: "solana-mainnet",
+    capabilities: SOLANA_CAPS,
+  },
+  // Testnets (webhook subscription only — see `testnet` on ZerionChain).
+  { zerionId: "ethereum-sepolia", namespace: "eip155", chainId: 11155111, testnet: true, capabilities: TESTNET_CAPS },
+  { zerionId: "base-sepolia-test", namespace: "eip155", chainId: 84532, testnet: true, capabilities: TESTNET_CAPS },
+  { zerionId: "monad-test-v2", namespace: "eip155", chainId: 10143, testnet: true, capabilities: TESTNET_CAPS },
 ];
 
 const BY_ZERION_ID = new Map(ZERION_CHAINS.map((c) => [c.zerionId, c]));
@@ -69,6 +98,22 @@ export function chainFromZerionId(zerionId: string): ZerionChain | undefined {
 /** Our numeric chain id -> Zerion's chain. `undefined` when unsupported. */
 export function chainFromChainId(chainId: number): ZerionChain | undefined {
   return BY_CHAIN_ID.get(chainId);
+}
+
+/**
+ * A `Blockchain` registry row -> Zerion's chain, or `undefined` when Zerion
+ * does not index it (Sui, Stellar, Solana devnet, Arc testnet, …). EVM rows
+ * match on `chainId`, the rest on `chainSlug`.
+ */
+export function chainFromRegistryRow(row: {
+  chainId: number | null;
+  chainSlug: string | null;
+}): ZerionChain | undefined {
+  if (row.chainId !== null) return BY_CHAIN_ID.get(row.chainId);
+  if (row.chainSlug) {
+    return ZERION_CHAINS.find((c) => c.chainSlug === row.chainSlug);
+  }
+  return undefined;
 }
 
 /**
@@ -124,9 +169,9 @@ export function resolveZerionChainIds(
   capability: ZerionCapability,
 ): string[] {
   if (!chains || chains.length === 0) {
-    return ZERION_CHAINS.filter((c) => isSupported(c, capability)).map(
-      (c) => c.zerionId,
-    );
+    return ZERION_CHAINS.filter(
+      (c) => !c.testnet && isSupported(c, capability),
+    ).map((c) => c.zerionId);
   }
   const out: string[] = [];
   for (const sel of chains) {

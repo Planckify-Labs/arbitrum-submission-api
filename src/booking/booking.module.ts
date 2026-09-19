@@ -6,11 +6,20 @@ import { ConfigModule } from "@nestjs/config";
 import { BlockchainsModule } from "../blockchains/blockchains.module";
 import { ProductsModule } from "../products/products.module";
 import { ValkeyModule } from "../valkey/valkey.module";
+import { PushModule } from "../push/push.module";
+import { BookingReminderService } from "./booking-reminder.service";
 
 @Module({
-  imports: [PrismaModule, ConfigModule, BlockchainsModule, ProductsModule, ValkeyModule],
+  imports: [
+    PrismaModule,
+    ConfigModule,
+    BlockchainsModule,
+    ProductsModule,
+    ValkeyModule,
+    PushModule,
+  ],
   controllers: [BookingController],
-  providers: [BookingService],
+  providers: [BookingService, BookingReminderService],
   exports: [BookingService],
 })
 export class BookingModule {}

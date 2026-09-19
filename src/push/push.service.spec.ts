@@ -1,6 +1,7 @@
 import type { ConfigService } from "@nestjs/config";
 import type { Job, Queue } from "bullmq";
 import type { PrismaService } from "../prisma/prisma.service";
+import { NotificationPreferencesService } from "./notification-preferences.service";
 import {
   type PushDispatchJobData,
   type PushReceiptEntry,
@@ -68,6 +69,10 @@ function buildHarness(
     intent?: Record<string, unknown> | null;
     activityRow?: { id: string } | null;
     logs?: LogRow[];
+    /** `devicePushToken.findUnique` result — a token seen before. */
+    seenDevice?: { id: string } | null;
+    /** `notificationPreference.findUnique` result for the target user. */
+    preference?: { categories: Record<string, boolean> } | null;
   } = {},
 ) {
   const logs: LogRow[] = opts.logs ?? [];
@@ -126,6 +131,35 @@ function buildHarness(
       logs.push(row);
       return { id: row.id };
     }),
+    createMany: jest.fn(
+      async ({ data }: { data: Array<Record<string, unknown>> }) => {
+        let count = 0;
+        for (const item of data) {
+          if (
+            item.dedupeKey &&
+            logs.some((r) => r.dedupeKey === item.dedupeKey)
+          ) {
+            continue; // ON CONFLICT DO NOTHING
+          }
+          logs.push({
+            id: String(item.id),
+            deliveryStatus: PushDeliveryStatus.queued,
+            attempts: 0,
+            expoTicketIds: [],
+            pendingDeviceIds: [],
+            lastError: null,
+            dispatchedAt: null,
+            expiresAt: null,
+            channelId: null,
+            imageUrl: null,
+            sentAt: new Date(),
+            ...item,
+          });
+          count += 1;
+        }
+        return { count };
+      },
+    ),
     findUnique: jest.fn(
       async ({ where }: { where: { id: string } }) =>
         logs.find((r) => r.id === where.id) ?? null,
@@ -189,12 +223,17 @@ function buildHarness(
     ),
     updateMany: jest.fn(async () => ({ count: 0 })),
     deleteMany: jest.fn(async () => ({ count: 0 })),
+    findUnique: jest.fn(async () => opts.seenDevice ?? null),
     upsert: jest.fn(
       async ({ create }: { create: Record<string, unknown> }) => ({
         id: "device_upserted",
         ...create,
       }),
     ),
+  };
+
+  const notificationPreference = {
+    findUnique: jest.fn(async () => opts.preference ?? null),
   };
 
   const walletPushSubscription = {
@@ -207,6 +246,7 @@ function buildHarness(
     devicePushToken,
     walletPushSubscription,
     notificationLog,
+    notificationPreference,
     user: {
       findUnique: jest.fn(
         async ({
@@ -239,6 +279,7 @@ function buildHarness(
   const service = new PushService(
     prisma as unknown as PrismaService,
     configService as unknown as ConfigService,
+    new NotificationPreferencesService(prisma as unknown as PrismaService),
     dispatchQueue as unknown as Queue<PushDispatchJobData>,
     receiptQueue as unknown as Queue<{ entries: PushReceiptEntry[] }>,
   );
@@ -996,5 +1037,283 @@ describe("payment pushes — one per payment, amount first, money language", () 
     expect(formatFiatMinor(1050, "PHP")).toBe("PHP 10.50");
     expect(formatTokenMicros(2_966_861n)).toBe("2.97");
     expect(formatTokenMicros(941_294n)).toBe("0.9413");
+  });
+});
+
+describe("notification centre — categories, mute, dedupe", () => {
+  const device = { id: "dev_1", token: "ExponentPushToken[abc]" };
+
+  it("a muted category is recorded (status muted, zero devices) and never enqueued", async () => {
+    const { service, prisma, dispatchQueue } = buildHarness({
+      directDevices: [device],
+      user: { id: "user_1", walletAddress: null },
+      preference: { categories: { defi: false } },
+    });
+    const result = await service.sendToUser({
+      userId: "user_1",
+      title: "Time to add to your plan",
+      body: "…",
+      channelId: "strategies", // → category "defi" via the channel map
+    });
+    expect(result).toEqual({
+      attempted: 0,
+      notificationLogId: "log_1",
+      muted: true,
+    });
+    const row = (
+      prisma.notificationLog.create.mock.calls[0][0] as {
+        data: Record<string, unknown>;
+      }
+    ).data;
+    expect(row.category).toBe("defi");
+    expect(row.deliveryStatus).toBe(PushDeliveryStatus.muted);
+    expect(row.targetDeviceIds).toEqual([]);
+    expect(dispatchQueue.add).not.toHaveBeenCalled();
+  });
+
+  it("the digest is off unless explicitly enabled; everything else is on by default", async () => {
+    const { service, dispatchQueue } = buildHarness({
+      directDevices: [device],
+      user: { id: "user_1", walletAddress: null },
+    });
+    const digest = await service.sendToUser({
+      userId: "user_1",
+      title: "Portfolio today",
+      body: "…",
+      category: "portfolio_digest",
+    });
+    expect(digest.muted).toBe(true);
+    const points = await service.sendToUser({
+      userId: "user_1",
+      title: "+10 points",
+      body: "…",
+      channelId: "points",
+    });
+    expect(points.attempted).toBe(1);
+    expect(dispatchQueue.add).toHaveBeenCalledTimes(1);
+  });
+
+  it("two producers with the same dedupeKey are ONE notification — the second is dropped without a row", async () => {
+    const { service, prisma, dispatchQueue } = buildHarness({
+      walletSubs: [{ deviceToken: device }],
+    });
+    const key = "activity:0xhash:0xwallet";
+    const first = await service.sendToWallet({
+      walletAddress: "0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+      title: "Transfer Received",
+      body: "from the sender's app",
+      channelId: "transfers",
+      dedupeKey: key,
+    });
+    const second = await service.sendToWallet({
+      walletAddress: "0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+      title: "Transfer Received",
+      body: "from the Zerion webhook",
+      channelId: "transfers",
+      dedupeKey: key,
+    });
+    expect(first.attempted).toBe(1);
+    expect(second).toEqual({
+      attempted: 0,
+      notificationLogId: null,
+      deduplicated: true,
+    });
+    expect(prisma.notificationLog.createMany).toHaveBeenCalledTimes(2);
+    expect(prisma.notificationLog.create).not.toHaveBeenCalled();
+    expect(dispatchQueue.add).toHaveBeenCalledTimes(1);
+  });
+
+  it("a caller with a category but no channel gets the category's Android channel", async () => {
+    const { service, prisma } = buildHarness({
+      directDevices: [device],
+      user: { id: "user_1", walletAddress: null },
+    });
+    await service.sendToUser({
+      userId: "user_1",
+      title: "t",
+      body: "b",
+      category: "payments",
+    });
+    const row = (
+      prisma.notificationLog.create.mock.calls[0][0] as {
+        data: Record<string, unknown>;
+      }
+    ).data;
+    expect(row.channelId).toBe("payouts");
+    expect(row.category).toBe("payments");
+  });
+});
+
+describe("registerToken — new device", () => {
+  const existing = { id: "dev_old", token: "ExponentPushToken[old]" };
+
+  it("a never-seen token tells the wallet's OTHER devices, never the new one, once per wallet", async () => {
+    const { service, prisma, dispatchQueue } = buildHarness({
+      walletSubs: [{ deviceToken: existing }],
+      seenDevice: null,
+    });
+    const wallet = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+    const result = await service.registerToken({
+      userId: null,
+      token: "ExponentPushToken[new]",
+      platform: "ios",
+      wallets: [wallet],
+    });
+    expect(result?.isNewDevice).toBe(true);
+    // The security push is fire-and-forget; let it settle.
+    await new Promise((r) => setImmediate(r));
+
+    const staged = prisma.notificationLog.createMany.mock.calls.find(
+      (c) =>
+        (c[0] as { data: Array<Record<string, unknown>> }).data[0].source ===
+        "new_device",
+    );
+    expect(staged).toBeDefined();
+    const row = (staged![0] as { data: Array<Record<string, unknown>> })
+      .data[0];
+    expect(row.category).toBe("security");
+    expect(row.title).toBe("Wallet active on a new device");
+    expect(row.body).toContain("new iPhone");
+    expect(row.targetDeviceIds).toEqual(["dev_old"]);
+    expect(row.dedupeKey).toBe(`new-device:device_upserted:${wallet}`);
+    expect(dispatchQueue.add).toHaveBeenCalledTimes(1);
+  });
+
+  it("a token seen before (re-registration, wallet list change) is not a new device", async () => {
+    const { service, prisma } = buildHarness({
+      walletSubs: [{ deviceToken: existing }],
+      seenDevice: { id: "device_upserted" },
+    });
+    const result = await service.registerToken({
+      userId: null,
+      token: "ExponentPushToken[old]",
+      platform: "ios",
+      wallets: ["0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"],
+    });
+    expect(result?.isNewDevice).toBe(false);
+    await new Promise((r) => setImmediate(r));
+    expect(prisma.notificationLog.createMany).not.toHaveBeenCalled();
+  });
+
+  it("a new device with no other devices for the wallet rings nothing", async () => {
+    const { service, prisma } = buildHarness({
+      walletSubs: [],
+      seenDevice: null,
+    });
+    await service.registerToken({
+      userId: null,
+      token: "ExponentPushToken[new]",
+      platform: "android",
+      wallets: ["0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"],
+    });
+    await new Promise((r) => setImmediate(r));
+    expect(prisma.notificationLog.createMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("product pushes — purchases, bookings, merchant payouts", () => {
+  const device = { id: "dev_1", token: "ExponentPushToken[abc]" };
+
+  it("purchase outcomes are worded from the buyer's side and keyed per outcome", async () => {
+    const { service, prisma } = buildHarness({
+      walletSubs: [{ deviceToken: device }],
+    });
+    const base = {
+      walletAddress: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+      purchaseId: "p1",
+      bookingId: "b1",
+      productName: "Steam Wallet 100k",
+    };
+    await service.sendPurchaseOutcomePush({ ...base, outcome: "completed" });
+    await service.sendPurchaseOutcomePush({
+      ...base,
+      outcome: "payment_failed",
+    });
+    await service.sendPurchaseOutcomePush({
+      ...base,
+      outcome: "fulfilment_failed",
+    });
+    const rows = prisma.notificationLog.createMany.mock.calls.map(
+      (c) => (c[0] as { data: Array<Record<string, unknown>> }).data[0],
+    );
+    expect(rows.map((r) => r.title)).toEqual([
+      "Your order is ready",
+      "We couldn't verify your payment",
+      "Your order needs attention",
+    ]);
+    expect(rows[0].body).toBe(
+      "Steam Wallet 100k has been delivered. Open TakumiPay to see the details.",
+    );
+    // The buyer HAS paid in the fulfilment case — it must not read as "try again".
+    expect(rows[2].body).toContain("went through");
+    expect(rows.map((r) => r.dedupeKey)).toEqual([
+      "purchase:p1:completed",
+      "purchase:p1:payment_failed",
+      "purchase:p1:fulfilment_failed",
+    ]);
+    expect(rows.every((r) => r.category === "payments")).toBe(true);
+  });
+
+  it("booking reminder carries a TTL that ends with the booking", async () => {
+    const { service, prisma } = buildHarness({
+      walletSubs: [{ deviceToken: device }],
+    });
+    await service.sendBookingExpiringPush({
+      walletAddress: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+      bookingId: "b1",
+      productName: "Mobile Legends 86 Diamonds",
+      expiresAt: new Date(Date.now() + 120_000),
+    });
+    const row = (
+      prisma.notificationLog.createMany.mock.calls[0][0] as {
+        data: Array<Record<string, unknown>>;
+      }
+    ).data[0];
+    expect(row.title).toBe("Your price lock is about to expire");
+    expect(row.body).toBe(
+      "Complete your Mobile Legends 86 Diamonds purchase in the next 2 minutes to keep the locked price.",
+    );
+    expect(row.dedupeKey).toBe("booking-expiring:b1");
+    const expiresAt = row.expiresAt as Date;
+    expect(expiresAt.getTime() - Date.now()).toBeLessThanOrEqual(120_000);
+    expect(expiresAt.getTime() - Date.now()).toBeGreaterThan(100_000);
+  });
+
+  it("merchant payout push goes to the merchant's user with the fiat amount first", async () => {
+    const { service, prisma } = buildHarness({
+      directDevices: [device],
+      user: { id: "merchant_user", walletAddress: null },
+      intent: {
+        fiatAmountMinor: 48888,
+        fiatCurrency: "IDR",
+        merchant: {
+          userId: "merchant_user",
+          displayName: "GTron",
+          payoutChannelCode: "BCA",
+        },
+      },
+    });
+    await service.sendMerchantPayoutPush("intent_1");
+    const row = (
+      prisma.notificationLog.createMany.mock.calls[0][0] as {
+        data: Array<Record<string, unknown>>;
+      }
+    ).data[0];
+    expect(row.userId).toBe("merchant_user");
+    expect(row.title).toBe("Payout received Rp 48.888");
+    expect(row.body).toBe("A customer payment has landed in your BCA account.");
+    expect(row.dedupeKey).toBe("merchant-payout:intent_1");
+  });
+
+  it("merchant without a linked user → nothing to send", async () => {
+    const { service, prisma } = buildHarness({
+      intent: {
+        fiatAmountMinor: 1,
+        fiatCurrency: "IDR",
+        merchant: { userId: null },
+      },
+    });
+    await service.sendMerchantPayoutPush("intent_1");
+    expect(prisma.notificationLog.createMany).not.toHaveBeenCalled();
   });
 });

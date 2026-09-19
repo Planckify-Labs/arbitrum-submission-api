@@ -62,6 +62,11 @@ Wallet-based auth uses SIWE (Sign-In with Ethereum). Admin auth uses username/pa
 - **QueueModule**: BullMQ job queues - `purchase-processing`, `blockchain-verification`, `vendor-api-calls`.
 - **BlockchainVerificationModule**: Multi-chain support. Dynamically creates viem clients from database-stored blockchain configs.
 
+### Notifications
+
+- **PushModule** (`src/push/`): `NotificationLog` outbox → `push-dispatch` BullMQ worker → Expo. Every push carries a `category` (`notification-categories.ts`) that users can mute via `PATCH /users/me/notification-preferences`; `GET /users/me/notifications` is the inbox. A `dedupeKey` on the outbox row makes the same event from two producers one notification (unique index, `createMany(skipDuplicates)` so it is safe inside a caller's transaction).
+- **WalletActivityModule** (`src/wallet-activity/`): on-chain activity for every held wallet via Zerion transaction-subscription webhooks (`POST /webhooks/zerion/transactions`, RSA-verified). `ZerionSubscriptionSyncService` keeps one subscription equal to all push-registered wallets × all active `Blockchain` rows that map in `ZERION_CHAINS`. `wallet-activity.classifier.ts` is the pure payload→copy function (swap = one push, approvals = own category, failed txs). The callback host must be whitelisted in the Zerion dashboard.
+
 ### Vendor API Pattern
 
 New vendor integrations extend `BaseVendorService` in `src/providers/vendor-api/base/`. Current implementation: VCGamers (`src/providers/vendor-api/implementations/vcgamers/`).

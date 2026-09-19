@@ -2,6 +2,7 @@ import { Processor, WorkerHost, OnWorkerEvent } from "@nestjs/bullmq";
 import { Logger } from "@nestjs/common";
 import { Job } from "bullmq";
 import { PrismaService } from "../../prisma/prisma.service";
+import { PushService } from "../../push/push.service";
 import { BlockchainVerificationService } from "../../blockchain-verification/blockchain-verification.service";
 import { VCGamersService } from "../../providers/vendor-api/implementations/vcgamers/vcgamers.service";
 import { ReferenceIdService } from "../../reference-id/reference-id.service";
@@ -34,6 +35,7 @@ export class PurchaseProcessor extends WorkerHost {
     private readonly blockchainCache: BlockchainCacheService,
     private readonly contractCache: SmartContractCacheService,
     private readonly tokenCache: TokenCacheService,
+    private readonly pushService: PushService,
   ) {
     super();
   }
@@ -54,6 +56,12 @@ export class PurchaseProcessor extends WorkerHost {
     } = job.data;
 
     this.logger.log(`Processing purchase job ${job.id} for refId: ${refId}`);
+
+    // What the buyer is told on failure depends on how far we got: before
+    // the chain verified the payment nothing was delivered and the charge
+    // is in doubt; after it, they HAVE paid and the vendor is our problem.
+    let paymentVerified = false;
+    let productName: string | null = null;
 
     try {
       const existingPurchase = await this.prisma.purchase.findUnique({
@@ -78,6 +86,7 @@ export class PurchaseProcessor extends WorkerHost {
         networkId,
         contractAddress,
       );
+      productName = booking.productVariant.product.name;
 
       await this.prisma.purchase.update({
         where: { id: purchaseId },
@@ -116,6 +125,8 @@ export class PurchaseProcessor extends WorkerHost {
         booking.payment.amount,
         booking.blockchain.id,
       );
+
+      paymentVerified = true;
 
       const transaction = await this.prisma.transactionHistory.update({
         where: {
@@ -180,6 +191,14 @@ export class PurchaseProcessor extends WorkerHost {
         `Purchase job ${job.id} completed successfully for refId: ${refId}`,
       );
 
+      this.notifyBuyer({
+        walletAddress,
+        purchaseId,
+        bookingId,
+        productName: booking.productVariant.product.name,
+        outcome: "completed",
+      });
+
       return {
         success: true,
         purchaseId,
@@ -216,8 +235,36 @@ export class PurchaseProcessor extends WorkerHost {
         errorType: "purchase_processing_error",
       });
 
+      // Only once BullMQ is out of retries — an attempt that will be
+      // retried is not an outcome the buyer needs to hear about.
+      const budget = job.opts.attempts ?? 1;
+      if (job.attemptsMade + 1 >= budget) {
+        this.notifyBuyer({
+          walletAddress,
+          purchaseId,
+          bookingId,
+          productName: productName ?? "your order",
+          outcome: paymentVerified ? "fulfilment_failed" : "payment_failed",
+        });
+      }
+
       throw error;
     }
+  }
+
+  /** Best-effort: a push problem must never change the purchase outcome. */
+  private notifyBuyer(input: {
+    walletAddress: string;
+    purchaseId: string;
+    bookingId: string;
+    productName: string;
+    outcome: "completed" | "payment_failed" | "fulfilment_failed";
+  }): void {
+    void this.pushService.sendPurchaseOutcomePush(input).catch((err) => {
+      this.logger.warn(
+        `[purchase] ${input.outcome} push failed for purchase ${input.purchaseId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
   }
 
   private async validateAndPrepareBooking(

@@ -5,6 +5,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { PushService, type SendPushResult } from "../push/push.service";
 import { TokenIconService } from "../tokens/token-icon.service";
 import { truncateAddress } from "../utils/address";
+import { walletActivityDedupeKey } from "../wallet-activity/wallet-activity.classifier";
 import { CreateTransactionDto } from "./dto/create-transaction.dto";
 import { SearchTransactionDto } from "./dto/search-transaction.dto";
 import { UpdateTransactionDto } from "./dto/update-transaction.dto";
@@ -160,6 +161,15 @@ export class TransactionsService {
           },
           channelId: "transfers",
           source: "transfer",
+          // Same key the Zerion webhook uses for this (tx, recipient): the
+          // recipient hears about the transfer once, whichever producer
+          // gets there first.
+          dedupeKey: transaction.txHash
+            ? walletActivityDedupeKey(
+                transaction.txHash,
+                transaction.recipientAddress,
+              )
+            : undefined,
         },
         tx,
       );
