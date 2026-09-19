@@ -41,6 +41,14 @@ model Product {
   categoryId  String
   isActive    Boolean             @default(true)
   isVoucher   Boolean             @default(false)
+  /// How the vendor hands the product over. Null = derive from `isVoucher`
+  /// (see `resolveDeliveryType`). Drives the delivery card on mobile and
+  /// which parser tier runs on `voucher_code`.
+  deliveryType    DeliveryType?
+  /// Ops-editable positional parser for this product's `voucher_code`
+  /// (`VoucherTemplate` in src/delivery). Lets a new brand's format be
+  /// handled without a deploy.
+  voucherTemplate Json?
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
   variants    ProductVariant[]
@@ -74,6 +82,8 @@ model ProductVariant {
   product          Product           @relation(fields: [productId], references: [id])
   productId        String
   isActive         Boolean           @default(true)
+  /// Vendor-declared delivery SLA in seconds (VCGamers `sla`; 0/null = unknown).
+  slaSeconds       Int?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   ProductPrice     ProductPrice[]
@@ -127,6 +137,7 @@ model User {
   pointBalance      PointBalance?
   pointTransactions PointTransaction[]
   pointRedemptions  PointRedemption[]
+  fulfilmentRefunds FulfilmentRefund[]
   nftAssets         NftAsset[]
 
   // UMKM USDC payout rails (§6.6)
@@ -502,8 +513,27 @@ model Purchase {
   createdAt            DateTime       @default(now())
   updatedAt            DateTime       @updatedAt
 
+  // ── Fulfilment leg (see src/fulfilment). `status` above is the money
+  // leg; these track whether the vendor actually handed the product over.
+  fulfilmentStatus       FulfilmentStatus  @default(QUEUED)
+  fulfilmentError        String?
+  /// Structured `DeliveryPayload` (src/delivery) built from `deliveryRaw`.
+  delivery               Json?
+  /// Vendor's `voucher_code` verbatim — re-parsed by the backfill script
+  /// whenever a parser is added or fixed.
+  deliveryRaw            String?
+  expectedBy             DateTime?
+  fulfilledAt            DateTime?
+  vendorLastCheckedAt    DateTime?
+  vendorCheckCount       Int               @default(0)
+  /// Set when the vendor reported delivery AFTER points were refunded —
+  /// the clawback queue for ops.
+  deliveredAfterRefundAt DateTime?
+  refund                 FulfilmentRefund?
+
   @@unique([transactionId, transactionCreatedAt])
   @@index([refId])
+  @@index([fulfilmentStatus, updatedAt])
 }
 
 // TimescaleDB Hypertable - already configured with 1-day chunk intervals
@@ -944,6 +974,50 @@ enum PointTransactionType {
   SPEND
   REFUND
   BONUS
+  /// Ops correction — today only the reversal of a fulfilment refund whose
+  /// order turned out to be delivered after all (negative amount).
+  ADJUSTMENT
+}
+
+/// Whether the vendor actually handed the product over. Independent of the
+/// money leg (`PurchaseStatus` / `RedemptionStatus`), which only says the
+/// payment cleared and the vendor accepted the order.
+enum FulfilmentStatus {
+  /// Paid; vendor order not placed yet.
+  QUEUED
+  /// Vendor accepted (`trx_code`); outcome pending — the poller owns it.
+  SUBMITTED
+  /// Still pending past the variant's SLA. One push, then keep polling.
+  DELAYED
+  /// Vendor reported terminal success; `delivery` is populated.
+  DELIVERED
+  /// Vendor reported terminal failure; a refund is created or held.
+  FAILED
+  /// Outcome unknown (timeouts, lost responses, >24h pending). Ops decides.
+  NEEDS_RECONCILE
+  /// Points credited back.
+  REFUNDED
+}
+
+enum DeliveryType {
+  /// A code the buyer redeems somewhere else (Steam, Google Play, PLN token).
+  VOUCHER_CODE
+  /// Credited straight to the account/number in `customerInfo`.
+  DIRECT_TOPUP
+  /// A bill settled on the buyer's behalf; the "delivery" is the receipt.
+  BILL_PAYMENT
+  /// The VENDOR emails the product to an address in `customerInfo`.
+  EMAIL
+}
+
+enum FulfilmentRefundStatus {
+  /// Held for an admin: over the auto cap, the brand breaker tripped, or
+  /// the amount could not be derived safely.
+  PENDING_REVIEW
+  COMPLETED
+  REJECTED
+  /// Clawed back — the order was delivered after the refund.
+  REVERSED
 }
 
 enum PointTransactionStatus {
@@ -972,6 +1046,18 @@ model PointRedemption {
   createdAt                 DateTime         @default(now())
   updatedAt                 DateTime         @updatedAt
 
+  // ── Fulfilment leg — same columns as Purchase, see there.
+  fulfilmentStatus       FulfilmentStatus  @default(QUEUED)
+  fulfilmentError        String?
+  delivery               Json?
+  deliveryRaw            String?
+  expectedBy             DateTime?
+  fulfilledAt            DateTime?
+  vendorLastCheckedAt    DateTime?
+  vendorCheckCount       Int               @default(0)
+  deliveredAfterRefundAt DateTime?
+  refund                 FulfilmentRefund?
+
   user           User           @relation(fields: [userId], references: [id])
   productVariant ProductVariant @relation(fields: [productVariantId], references: [id])
   productPrice   ProductPrice   @relation(fields: [productPriceId], references: [id])
@@ -980,6 +1066,7 @@ model PointRedemption {
   @@index([userId])
   @@index([status])
   @@index([createdAt(sort: Desc)])
+  @@index([fulfilmentStatus, updatedAt])
 }
 
 enum RedemptionStatus {
@@ -1504,4 +1591,60 @@ model StrategyPositionEvent {
 
   @@unique([positionId, kind])
   @@index([positionId])
+}
+
+/// Points refund for an order the vendor could not fulfil. The ledger row a
+/// human reviews; the balance movement itself is the linked
+/// `PointTransaction` (hypertable — no FK, keyed by id + createdAt).
+model FulfilmentRefund {
+  id           String                 @id @default(ulid())
+  purchaseId   String?                @unique
+  redemptionId String?                @unique
+  userId       String
+  points       BigInt
+  fiatAmount   Decimal?               @db.Decimal(18, 2)
+  currency     String?
+  status       FulfilmentRefundStatus
+  /// "auto" (poller) or "admin" (manual resolve).
+  source       String
+  reason       String
+  vendorError  String?
+  /// Why it was held instead of auto-credited: over_cap | breaker | unknown_amount.
+  holdReason   String?
+  productCode  String?
+  reviewedBy   String?
+  reviewedAt   DateTime?
+  note         String?
+
+  pointTransactionId                String?
+  pointTransactionCreatedAt         DateTime?
+  reversalPointTransactionId        String?
+  reversalPointTransactionCreatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  purchase   Purchase?        @relation(fields: [purchaseId], references: [id])
+  redemption PointRedemption? @relation(fields: [redemptionId], references: [id])
+  user       User             @relation(fields: [userId], references: [id])
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+}
+
+/// Every distinct `voucher_code` shape seen per product, so ops can see
+/// which brands still land on the heuristic/raw tier and write a template
+/// for them. `signature` is the raw with digits→9 and letters→a.
+model VoucherShape {
+  id           String   @id @default(ulid())
+  productCode  String
+  signature    String
+  parseTier    String
+  sampleMasked String
+  count        Int      @default(1)
+  firstSeenAt  DateTime @default(now())
+  lastSeenAt   DateTime @default(now())
+
+  @@unique([productCode, signature])
+  @@index([parseTier, lastSeenAt(sort: Desc)])
 }

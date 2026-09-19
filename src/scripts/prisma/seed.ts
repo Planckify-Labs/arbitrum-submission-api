@@ -3635,6 +3635,9 @@ async function main() {
     const mappedCategoryId = mappedCategoryName
       ? (categoriesByName.get(mappedCategoryName)?.id ?? fallbackCategoryId)
       : fallbackCategoryId;
+    // Vendor-declared delivery mode for NEW products only. Existing rows
+    // keep whatever ops set (or null → derived from `isVoucher` on read).
+    const deliveryType = product.is_voucher ? "VOUCHER_CODE" : "DIRECT_TOPUP";
     const createdProduct = await prisma.product.upsert({
       where: { code: product.key },
       update: {},
@@ -3646,6 +3649,7 @@ async function main() {
         imageUrl: product.image_url,
         isActive: true,
         isVoucher: product.is_voucher,
+        deliveryType,
       },
     });
     productsMap.set(product.key, createdProduct);
@@ -3703,14 +3707,17 @@ async function main() {
 
     for (const variant of variantsResponse.data) {
       try {
+        // `sla` is seconds (1800 / 7200 dominate the feed); 0 = unknown.
+        const slaSeconds = variant.sla > 0 ? variant.sla : null;
         const createdVariant = await prisma.productVariant.upsert({
           where: { variantCode: variant.key },
-          update: {},
+          update: { slaSeconds },
           create: {
             name: variant.variation_name,
             variantCode: variant.key,
             description: `${variant.variation_name} for ${variant.brand_name}`,
             productId: createdProduct.id,
+            slaSeconds,
           },
         });
 

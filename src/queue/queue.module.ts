@@ -9,6 +9,7 @@ import { ReferenceIdModule } from "../reference-id/reference-id.module";
 import { QueueService } from "./queue.service";
 import { ValkeyModule } from "../valkey/valkey.module";
 import { PushModule } from "../push/push.module";
+import { FulfilmentModule } from "../fulfilment/fulfilment.module";
 
 @Module({
   imports: [
@@ -76,6 +77,7 @@ import { PushModule } from "../push/push.module";
     ReferenceIdModule,
     ValkeyModule,
     PushModule,
+    FulfilmentModule,
   ],
   providers: [PurchaseProcessor, QueueService],
   exports: [QueueService],

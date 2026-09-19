@@ -10,6 +10,12 @@ import { PrismaService } from "../prisma/prisma.service";
 import { PointsCacheService } from "../valkey/services/points-cache.service";
 import { ProductInputValidatorService } from "../products/services/product-input-validator.service";
 import { VCGamersService } from "../providers/vendor-api/implementations/vcgamers/vcgamers.service";
+import { FulfilmentService } from "../fulfilment/fulfilment.service";
+import {
+  fulfilmentView,
+  isWorthChecking,
+  legacyVoucherCode,
+} from "../fulfilment/fulfilment-view";
 import {
   Prisma,
   PointTransactionType,
@@ -30,6 +36,7 @@ export class RedeemService {
     private readonly productInputValidator: ProductInputValidatorService,
     private readonly pointsCache: PointsCacheService,
     private readonly vcGamersService: VCGamersService,
+    private readonly fulfilment: FulfilmentService,
     @InjectQueue("redeem-processing") private readonly redeemQueue: Queue,
   ) {}
 
@@ -139,7 +146,8 @@ export class RedeemService {
           pointTransactionCreatedAt: pointTx.createdAt,
           productVariantId: dto.productVariantId,
           productPriceId: dto.productPriceId,
-          customerInfo: validatedCustomerInfo as unknown as Prisma.InputJsonValue,
+          customerInfo:
+            validatedCustomerInfo as unknown as Prisma.InputJsonValue,
           status: "PENDING",
           pointsSpent: pointsRequired,
         },
@@ -147,7 +155,9 @@ export class RedeemService {
 
       // Link PointTransaction back to redemption
       await tx.pointTransaction.update({
-        where: { id_createdAt: { id: pointTx.id, createdAt: pointTx.createdAt } },
+        where: {
+          id_createdAt: { id: pointTx.id, createdAt: pointTx.createdAt },
+        },
         data: { referenceId: redemption.id },
       });
 
@@ -178,28 +188,45 @@ export class RedeemService {
   }
 
   async getRedeemById(userId: string, redemptionId: string) {
-    const redemption = await this.prisma.pointRedemption.findFirst({
+    const include = {
+      productVariant: { include: { product: true } },
+      productPrice: true,
+      refund: { select: { status: true, points: true } },
+    } as const;
+
+    let redemption = await this.prisma.pointRedemption.findFirst({
       where: { id: redemptionId, userId },
-      include: {
-        productVariant: { include: { product: true } },
-        productPrice: true,
-      },
+      include,
     });
 
     if (!redemption) {
       throw new NotFoundException("Redemption not found");
     }
 
-    const needsFreshStatus =
-      redemption.status === RedemptionStatus.COMPLETED &&
-      !!redemption.vendorRefId &&
-      this.shouldFetchFreshVendorStatus(redemption.vendorResponse);
+    // The user is looking and the poller hasn't asked recently: ask now,
+    // through the same state machine the pushes come from.
+    if (isWorthChecking(redemption)) {
+      try {
+        await this.fulfilment.check("redemption", redemptionId, {
+          reschedule: false,
+        });
+        redemption =
+          (await this.prisma.pointRedemption.findFirst({
+            where: { id: redemptionId, userId },
+            include,
+          })) ?? redemption;
+      } catch (error) {
+        this.logger.warn(
+          `Live fulfilment check failed for redemption ${redemptionId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
 
-    const vendorResponse = needsFreshStatus
-      ? await this.fetchAndUpdateVendorStatus(redemptionId, redemption.vendorRefId!)
-      : redemption.vendorResponse;
-
-    const voucherCode = this.extractVoucherCode(vendorResponse);
+    const fulfilment = fulfilmentView(redemption);
+    const voucherCode = legacyVoucherCode(
+      fulfilment.delivery,
+      redemption.deliveryRaw,
+    );
 
     return {
       id: redemption.id,
@@ -207,12 +234,14 @@ export class RedeemService {
       pointsSpent: redemption.pointsSpent.toString(),
       vendorRefId: redemption.vendorRefId,
       voucherCode,
+      fulfilment,
       customerInfo: redemption.customerInfo,
       product: {
         id: redemption.productVariant.product.id,
         name: redemption.productVariant.product.name,
         imageUrl: redemption.productVariant.product.imageUrl,
         isVoucher: redemption.productVariant.product.isVoucher,
+        deliveryType: fulfilment.deliveryType,
         variant: {
           id: redemption.productVariant.id,
           name: redemption.productVariant.name,
@@ -239,58 +268,12 @@ export class RedeemService {
     return {
       id: redemption.id,
       status: redemption.status,
+      fulfilmentStatus: redemption.fulfilmentStatus,
+      expectedBy: redemption.expectedBy?.toISOString() ?? null,
       pointsSpent: redemption.pointsSpent.toString(),
       vendorRefId: redemption.vendorRefId,
       createdAt: redemption.createdAt.toISOString(),
     };
-  }
-
-  // Returns true when vendorResponse is the initial createOrder response (no detail/voucher_code).
-  // Once getOrderStatus returns status=2 (final), that full response is cached and we skip live calls.
-  private shouldFetchFreshVendorStatus(vendorResponse: unknown): boolean {
-    const response = vendorResponse as { data?: { status?: number } } | null;
-    if (!response?.data) return true;
-    return response.data.status !== 2;
-  }
-
-  private async fetchAndUpdateVendorStatus(
-    redemptionId: string,
-    vendorRefId: string,
-  ): Promise<unknown> {
-    try {
-      const response = await this.vcGamersService.getOrderStatus(vendorRefId);
-
-      if (response.success && response.data) {
-        try {
-          await this.prisma.pointRedemption.update({
-            where: { id: redemptionId },
-            data: { vendorResponse: response.data as unknown as Prisma.InputJsonValue },
-          });
-        } catch (dbError) {
-          this.logger.error(
-            `Failed to cache vendorResponse for redemption ${redemptionId}`,
-            dbError,
-          );
-        }
-        return response.data;
-      }
-    } catch (error) {
-      this.logger.warn(
-        `Failed to fetch vendor status for redemption ${redemptionId}: ${error.message}`,
-      );
-    }
-    return null;
-  }
-
-  private extractVoucherCode(vendorResponse: unknown): string | null {
-    try {
-      const response = vendorResponse as {
-        data?: { detail?: { voucher_code?: string } };
-      };
-      return response?.data?.detail?.voucher_code || null;
-    } catch {
-      return null;
-    }
   }
 
   // ── Admin: list all redemptions ─────────────────────────────────────────

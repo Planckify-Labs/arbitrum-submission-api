@@ -8,6 +8,7 @@ import { VendorAPIModule } from "../providers/vendor-api/vendor-api.module";
 import { ValkeyModule } from "../valkey/valkey.module";
 import { ProductsModule } from "../products/products.module";
 import { PushModule } from "../push/push.module";
+import { FulfilmentModule } from "../fulfilment/fulfilment.module";
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { PushModule } from "../push/push.module";
     ValkeyModule,
     ProductsModule,
     PushModule,
+    FulfilmentModule,
   ],
   controllers: [RedeemController],
   providers: [RedeemService, RedeemProcessor],

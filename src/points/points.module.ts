@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { BullModule } from "@nestjs/bullmq";
 import { PointsService } from "./points.service";
+import { PointsRefundService } from "./points-refund.service";
 import { PointsController } from "./points.controller";
 import { PointDepositProcessor } from "./processors/point-deposit.processor";
 import { PrismaModule } from "../prisma/prisma.module";
@@ -32,7 +33,7 @@ import { PushModule } from "../push/push.module";
     PushModule,
   ],
   controllers: [PointsController],
-  providers: [PointsService, PointDepositProcessor],
-  exports: [PointsService],
+  providers: [PointsService, PointsRefundService, PointDepositProcessor],
+  exports: [PointsService, PointsRefundService],
 })
 export class PointsModule {}

@@ -130,6 +130,106 @@ export interface SendPushResult {
  * decimals). Other currencies fall back to a plain `CODE amount`; minor
  * units are assumed to be 2-decimal there.
  */
+export type FulfilmentPushStage =
+  | "paid"
+  | "delivered"
+  | "delayed"
+  | "reconcile"
+  | "refunded"
+  | "refund_pending"
+  | "refund_reversed";
+
+export interface FulfilmentPushInput {
+  userId?: string;
+  walletAddress?: string;
+  kind: "purchase" | "redemption";
+  id: string;
+  productName: string;
+  stage: FulfilmentPushStage;
+  /** For `delivered`: how the product was handed over. */
+  deliveryKind?: "voucher" | "topup" | "bill" | "email";
+  /** For `delivered` top-ups/emails: where it went ("0812…", "a@b.c"). */
+  target?: string;
+  /** For `paid`: the vendor SLA, if known. */
+  expectedMinutes?: number;
+  /** For refund stages. */
+  points?: bigint;
+}
+
+const POINTS_FORMAT = new Intl.NumberFormat("en-US");
+
+/** Pure so the copy can be unit-tested without a push pipeline. */
+export function fulfilmentPushCopy(
+  input: FulfilmentPushInput,
+): { title: string; body: string } | null {
+  const name = input.productName;
+  const pts =
+    input.points !== undefined ? POINTS_FORMAT.format(input.points) : "";
+  switch (input.stage) {
+    case "paid":
+      return {
+        title: "Payment received",
+        body: input.expectedMinutes
+          ? `We're preparing your ${name}. Usually ready within ${input.expectedMinutes} minute${input.expectedMinutes === 1 ? "" : "s"}.`
+          : `We're preparing your ${name}. We'll let you know the moment it's ready.`,
+      };
+    case "delivered":
+      switch (input.deliveryKind) {
+        case "topup":
+          return {
+            title: `${name} delivered`,
+            body: input.target
+              ? `Sent to ${input.target}. Tap to see the details.`
+              : "It's in your account. Tap to see the details.",
+          };
+        case "bill":
+          return {
+            title: `${name} paid`,
+            body: "Your bill is settled. Tap for the receipt.",
+          };
+        case "email":
+          return {
+            title: `${name} is on its way`,
+            body: input.target
+              ? `The provider is emailing it to ${input.target}. Check spam if it's not there in a few minutes.`
+              : "The provider is emailing it to you. Check spam if it's not there in a few minutes.",
+          };
+        default:
+          return {
+            title: `Your ${name} code is ready`,
+            body: "Tap to view and copy your code.",
+          };
+      }
+    case "delayed":
+      return {
+        title: "Taking longer than usual",
+        body: `${name} is still being processed by the provider. We're on it and will update you.`,
+      };
+    case "reconcile":
+      return {
+        title: "We're checking your order",
+        body: `${name} needs a manual check. Your money is safe — we'll update you within 24 hours.`,
+      };
+    case "refunded":
+      return {
+        title: pts ? `Refunded: ${pts} points` : "Refunded",
+        body: `We couldn't deliver ${name}. ${pts ? `${pts} points are` : "Your points are"} back in your balance — you can retry with points anytime.`,
+      };
+    case "refund_pending":
+      return {
+        title: "Refund in review",
+        body: `We couldn't deliver ${name}. Your refund is being reviewed — usually within 24 hours.`,
+      };
+    case "refund_reversed":
+      return {
+        title: `${name} was delivered`,
+        body: `It arrived after we refunded you, so ${pts || "the"} points were deducted again. Tap to see the details.`,
+      };
+    default:
+      return null;
+  }
+}
+
 export function formatFiatMinor(minor: number, currency: string): string {
   const whole = Math.max(0, Math.floor(minor));
   if (currency === "IDR") {
@@ -750,31 +850,23 @@ export class PushService {
    *   - `fulfilment_failed`: payment verified but the vendor call failed —
    *     the buyer HAS paid, and this must never read as "try again".
    */
+  /**
+   * The payment leg could not be verified on-chain. Everything after
+   * "paid" — preparing, delivered, delayed, refunded — is
+   * `sendFulfilmentPush`, so the buyer is never told "delivered" before
+   * the vendor confirms.
+   */
   async sendPurchaseOutcomePush(input: {
     walletAddress: string;
     purchaseId: string;
     bookingId: string;
     productName: string;
-    outcome: "completed" | "payment_failed" | "fulfilment_failed";
+    outcome: "payment_failed";
   }): Promise<void> {
-    const copy =
-      input.outcome === "completed"
-        ? {
-            title: "Your order is ready",
-            body: `${input.productName} has been delivered. Open TakumiPay to see the details.`,
-          }
-        : input.outcome === "payment_failed"
-          ? {
-              title: "We couldn't verify your payment",
-              body: `Your ${input.productName} order is on hold while we check the payment. You don't need to do anything, we'll update you.`,
-            }
-          : {
-              title: "Your order needs attention",
-              body: `Your payment for ${input.productName} went through but delivery hit a snag. We're on it and will update you.`,
-            };
     await this.sendToWallet({
       walletAddress: input.walletAddress,
-      ...copy,
+      title: "We couldn't verify your payment",
+      body: `Your ${input.productName} order is on hold while we check the payment. You don't need to do anything, we'll update you.`,
       source: "purchase",
       category: NotificationCategory.payments,
       channelId: "payouts",
@@ -786,6 +878,36 @@ export class PushService {
         bookingId: input.bookingId,
       },
     });
+  }
+
+  /**
+   * One push per stage of an order's fulfilment leg, for both crypto
+   * purchases and points redemptions. `dedupeKey` makes each stage fire at
+   * most once per order however many workers observe it. Copy never
+   * mentions the vendor — the buyer bought from TakumiPay.
+   */
+  async sendFulfilmentPush(input: FulfilmentPushInput): Promise<void> {
+    const copy = fulfilmentPushCopy(input);
+    if (!copy) return;
+    const base: SendPushArgs = {
+      ...copy,
+      source: input.kind === "purchase" ? "purchase" : "redemption",
+      category: NotificationCategory.payments,
+      channelId: input.kind === "purchase" ? "payouts" : "points",
+      dedupeKey: `fulfilment:${input.kind}:${input.id}:${input.stage}`,
+      data: {
+        type: input.kind,
+        status: input.stage,
+        ...(input.kind === "purchase"
+          ? { purchaseId: input.id }
+          : { redemptionId: input.id }),
+      },
+    };
+    if (input.userId) {
+      await this.sendToUser({ ...base, userId: input.userId });
+    } else if (input.walletAddress) {
+      await this.sendToWallet({ ...base, walletAddress: input.walletAddress });
+    }
   }
 
   /**

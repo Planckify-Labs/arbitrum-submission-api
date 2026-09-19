@@ -10,6 +10,7 @@ import { BlockchainCacheService } from "../../valkey/services/blockchain-cache.s
 import { SmartContractCacheService } from "../../valkey/services/smart-contract-cache.service";
 import { TokenCacheService } from "../../valkey/services/token-cache.service";
 import { addressesEqual } from "../../auth/address-compare";
+import { FulfilmentService } from "../../fulfilment/fulfilment.service";
 import {
   TPurchaseJobData,
   TPurchaseStatusUpdate,
@@ -36,6 +37,7 @@ export class PurchaseProcessor extends WorkerHost {
     private readonly contractCache: SmartContractCacheService,
     private readonly tokenCache: TokenCacheService,
     private readonly pushService: PushService,
+    private readonly fulfilment: FulfilmentService,
   ) {
     super();
   }
@@ -62,6 +64,10 @@ export class PurchaseProcessor extends WorkerHost {
     // is in doubt; after it, they HAVE paid and the vendor is our problem.
     let paymentVerified = false;
     let productName: string | null = null;
+    // Whether `createOrder` was called at all. Decides, once retries are
+    // gone, between "refund — the vendor never heard of this" and "ops —
+    // an order may exist on the vendor side".
+    let orderAttempted = false;
 
     try {
       const existingPurchase = await this.prisma.purchase.findUnique({
@@ -149,11 +155,32 @@ export class PurchaseProcessor extends WorkerHost {
       });
 
       if (booking.productPrice?.vendor?.name === "vcGamer") {
-        await this.processVendorOrder(
+        const accepted = await this.processVendorOrder(
           purchaseId,
           booking as unknown as TBookingWithRelations,
           refId,
+          () => {
+            orderAttempted = true;
+          },
         );
+        if (!accepted) {
+          // Definitive vendor rejection: the fulfilment leg has already
+          // marked the purchase FAILED and started the refund. Nothing to
+          // retry, nothing to complete.
+          await this.referenceIdService.markAsFailed(refId, {
+            requestType: "PURCHASE",
+            walletAddress,
+            bookingId,
+            purchaseId,
+            error: "Vendor rejected the order",
+            errorType: "vendor_rejected",
+          });
+          return { success: false, purchaseId, transactionId: transaction.id };
+        }
+        // Accepted. Whether the product actually arrives is the
+        // fulfilment leg's job from here — it sends the "preparing" push
+        // now and "ready" only once the vendor confirms.
+        await this.fulfilment.onVendorAccepted("purchase", purchaseId);
       }
 
       await this.prisma.bookingOrder.update({
@@ -161,6 +188,7 @@ export class PurchaseProcessor extends WorkerHost {
         data: { status: BookingStatus.EXECUTED },
       });
 
+      // Money leg done: paid, and the vendor has the order.
       await this.prisma.purchase.update({
         where: { id: purchaseId },
         data: { status: PurchaseStatus.COMPLETED },
@@ -190,14 +218,6 @@ export class PurchaseProcessor extends WorkerHost {
       this.logger.log(
         `Purchase job ${job.id} completed successfully for refId: ${refId}`,
       );
-
-      this.notifyBuyer({
-        walletAddress,
-        purchaseId,
-        bookingId,
-        productName: booking.productVariant.product.name,
-        outcome: "completed",
-      });
 
       return {
         success: true,
@@ -239,13 +259,28 @@ export class PurchaseProcessor extends WorkerHost {
       // retried is not an outcome the buyer needs to hear about.
       const budget = job.opts.attempts ?? 1;
       if (job.attemptsMade + 1 >= budget) {
-        this.notifyBuyer({
-          walletAddress,
-          purchaseId,
-          bookingId,
-          productName: productName ?? "your order",
-          outcome: paymentVerified ? "fulfilment_failed" : "payment_failed",
-        });
+        if (paymentVerified) {
+          // They HAVE paid. Refund if the vendor was never reached, hand
+          // to ops if an order might exist over there.
+          await this.fulfilment
+            .onOrderRetriesExhausted("purchase", purchaseId, {
+              orderAttempted,
+              error: errorMessage,
+            })
+            .catch((err) =>
+              this.logger.error(
+                `[purchase] fulfilment settle failed for ${purchaseId}: ${err instanceof Error ? err.message : String(err)}`,
+              ),
+            );
+        } else {
+          this.notifyBuyer({
+            walletAddress,
+            purchaseId,
+            bookingId,
+            productName: productName ?? "your order",
+            outcome: "payment_failed",
+          });
+        }
       }
 
       throw error;
@@ -258,7 +293,7 @@ export class PurchaseProcessor extends WorkerHost {
     purchaseId: string;
     bookingId: string;
     productName: string;
-    outcome: "completed" | "payment_failed" | "fulfilment_failed";
+    outcome: "payment_failed";
   }): void {
     void this.pushService.sendPurchaseOutcomePush(input).catch((err) => {
       this.logger.warn(
@@ -418,11 +453,18 @@ export class PurchaseProcessor extends WorkerHost {
     return verificationResult;
   }
 
+  /**
+   * Place the vendor order. Returns whether it was ACCEPTED (a
+   * `trx_code` exists). A definitive rejection returns false after the
+   * fulfilment leg has settled it; an ambiguous failure throws so BullMQ
+   * retries (VCGamers is expected to dedupe on `ref_id`).
+   */
   private async processVendorOrder(
     purchaseId: string,
     booking: TBookingWithRelations,
     refId: string,
-  ) {
+    onAttempt: () => void,
+  ): Promise<boolean> {
     await this.updatePurchaseStatus(refId, {
       refId,
       purchaseId,
@@ -467,6 +509,7 @@ export class PurchaseProcessor extends WorkerHost {
       vendorAction: "creating_order",
     });
 
+    onAttempt();
     const orderResponse = await this.vcGamersService.createOrder(
       brandKey,
       variationKey,
@@ -475,11 +518,17 @@ export class PurchaseProcessor extends WorkerHost {
       refId,
     );
 
-    if (!orderResponse.success) {
+    const vendorRefId = orderResponse.data?.data?.trx_code;
+    if (!orderResponse.success || !vendorRefId) {
+      const cls = await this.fulfilment.onVendorRejected(
+        "purchase",
+        purchaseId,
+        orderResponse,
+      );
+      if (cls === "definitive") return false;
       throw new Error(`Failed to process order: ${orderResponse.message}`);
     }
 
-    const vendorRefId = orderResponse.data?.data.trx_code;
     const vendorResponse = orderResponse.data as unknown as Prisma.JsonValue;
 
     await this.prisma.purchase.update({
@@ -489,6 +538,7 @@ export class PurchaseProcessor extends WorkerHost {
         vendorResponse: vendorResponse as Prisma.InputJsonValue,
       },
     });
+    return true;
   }
 
   private async updatePurchaseStatus(

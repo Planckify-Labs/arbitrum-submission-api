@@ -1214,44 +1214,99 @@ describe("registerToken — new device", () => {
 describe("product pushes — purchases, bookings, merchant payouts", () => {
   const device = { id: "dev_1", token: "ExponentPushToken[abc]" };
 
-  it("purchase outcomes are worded from the buyer's side and keyed per outcome", async () => {
+  it("payment failure is worded from the buyer's side and keyed per purchase", async () => {
+    const { service, prisma } = buildHarness({
+      walletSubs: [{ deviceToken: device }],
+    });
+    await service.sendPurchaseOutcomePush({
+      walletAddress: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+      purchaseId: "p1",
+      bookingId: "b1",
+      productName: "Steam Wallet 100k",
+      outcome: "payment_failed",
+    });
+    const row = (
+      prisma.notificationLog.createMany.mock.calls[0][0] as {
+        data: Array<Record<string, unknown>>;
+      }
+    ).data[0];
+    expect(row.title).toBe("We couldn't verify your payment");
+    expect(row.dedupeKey).toBe("purchase:p1:payment_failed");
+    expect(row.category).toBe("payments");
+  });
+
+  it("fulfilment stages fire once each per order and only say 'ready' on delivered", async () => {
     const { service, prisma } = buildHarness({
       walletSubs: [{ deviceToken: device }],
     });
     const base = {
       walletAddress: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
-      purchaseId: "p1",
-      bookingId: "b1",
+      kind: "purchase" as const,
+      id: "p1",
       productName: "Steam Wallet 100k",
     };
-    await service.sendPurchaseOutcomePush({ ...base, outcome: "completed" });
-    await service.sendPurchaseOutcomePush({
+    await service.sendFulfilmentPush({
       ...base,
-      outcome: "payment_failed",
+      stage: "paid",
+      expectedMinutes: 30,
     });
-    await service.sendPurchaseOutcomePush({
+    await service.sendFulfilmentPush({ ...base, stage: "delayed" });
+    await service.sendFulfilmentPush({
       ...base,
-      outcome: "fulfilment_failed",
+      stage: "delivered",
+      deliveryKind: "voucher",
+    });
+    await service.sendFulfilmentPush({
+      ...base,
+      stage: "refunded",
+      points: 150000n,
     });
     const rows = prisma.notificationLog.createMany.mock.calls.map(
       (c) => (c[0] as { data: Array<Record<string, unknown>> }).data[0],
     );
     expect(rows.map((r) => r.title)).toEqual([
-      "Your order is ready",
-      "We couldn't verify your payment",
-      "Your order needs attention",
+      "Payment received",
+      "Taking longer than usual",
+      "Your Steam Wallet 100k code is ready",
+      "Refunded: 150,000 points",
     ]);
-    expect(rows[0].body).toBe(
-      "Steam Wallet 100k has been delivered. Open TakumiPay to see the details.",
-    );
-    // The buyer HAS paid in the fulfilment case — it must not read as "try again".
-    expect(rows[2].body).toContain("went through");
+    // "paid" must not read as delivered.
+    expect(rows[0].body).toContain("preparing");
+    expect(rows[0].body).toContain("30 minutes");
     expect(rows.map((r) => r.dedupeKey)).toEqual([
-      "purchase:p1:completed",
-      "purchase:p1:payment_failed",
-      "purchase:p1:fulfilment_failed",
+      "fulfilment:purchase:p1:paid",
+      "fulfilment:purchase:p1:delayed",
+      "fulfilment:purchase:p1:delivered",
+      "fulfilment:purchase:p1:refunded",
     ]);
     expect(rows.every((r) => r.category === "payments")).toBe(true);
+    expect((rows[2].data as Record<string, unknown>).purchaseId).toBe("p1");
+  });
+
+  it("a top-up delivery names where it went; a redemption is keyed by redemptionId", async () => {
+    const { service, prisma } = buildHarness({
+      directDevices: [device],
+      user: { walletAddress: null },
+    });
+    await service.sendFulfilmentPush({
+      userId: "u1",
+      kind: "redemption",
+      id: "r1",
+      productName: "Mobile Legends 86 Diamonds",
+      stage: "delivered",
+      deliveryKind: "topup",
+      target: "0812••••1234",
+    });
+    const row = (
+      prisma.notificationLog.createMany.mock.calls[0][0] as {
+        data: Array<Record<string, unknown>>;
+      }
+    ).data[0];
+    expect(row.title).toBe("Mobile Legends 86 Diamonds delivered");
+    expect(row.body).toContain("0812••••1234");
+    expect(row.dedupeKey).toBe("fulfilment:redemption:r1:delivered");
+    expect((row.data as Record<string, unknown>).redemptionId).toBe("r1");
+    expect((row.data as Record<string, unknown>).type).toBe("redemption");
   });
 
   it("booking reminder carries a TTL that ends with the booking", async () => {

@@ -7,13 +7,14 @@ import {
   Put,
   Query,
   Res,
+  Request,
   ConflictException,
   Logger,
   UseGuards,
 } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { Response } from "express";
-import { PurchasesService } from "./purchases.service";
+import { PurchasesService, PurchaseViewer } from "./purchases.service";
 import { QueueService } from "../queue/queue.service";
 import { CreatePurchaseDto, UpdatePurchaseDto } from "./dto/purchase.dto";
 import { SearchPurchaseDto } from "./dto/search-purchase.dto";
@@ -128,8 +129,7 @@ export class PurchasesController {
     @Query() paginationDto: CursorPaginationDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const { items, total } =
-      await this.purchasesService.findAll(paginationDto);
+    const { items, total } = await this.purchasesService.findAll(paginationDto);
     res.setHeader("X-Total-Count", String(total));
     return items;
   }
@@ -201,15 +201,16 @@ export class PurchasesController {
   @Get(":id")
   @ApiGetPurchase()
   findOne(
+    @Request() req: { user: PurchaseViewer },
     @Param("id") id: string,
     @Query("vendorResponse") vendorResponse?: string,
   ) {
     const includeVendorResponse = vendorResponse === "true";
     return this.purchasesService.findOne(id, {
-      vendorResponse: includeVendorResponse
+      vendorResponse: includeVendorResponse,
+      viewer: req.user,
     });
   }
-
 
   @Put(":id/status")
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)

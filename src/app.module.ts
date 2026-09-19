@@ -7,6 +7,7 @@ import { AuditLogsModule } from "./admin/audit-logs/audit-logs.module";
 import { AdminMerchantsModule } from "./admin/merchants/admin-merchants.module";
 import { AdminPaymentIntentsModule } from "./admin/payment-intents/admin-payment-intents.module";
 import { QrisDisputesModule } from "./admin/qris-disputes/qris-disputes.module";
+import { AdminFulfilmentModule } from "./admin/fulfilment/admin-fulfilment.module";
 import { ApiKeysModule } from "./api-keys/api-keys.module";
 import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
@@ -85,6 +86,7 @@ import { X402Module } from "./x402/x402.module";
     PayoutModule,
     MerchantsModule,
     QrisDisputesModule,
+    AdminFulfilmentModule,
     AdminMerchantsModule,
     AdminPaymentIntentsModule,
     AuditLogsModule,

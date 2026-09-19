@@ -18,6 +18,20 @@ import { VCGamersService } from "../providers/vendor-api/implementations/vcgamer
 import { BlockchainCacheService } from "../valkey/services/blockchain-cache.service";
 import { SmartContractCacheService } from "../valkey/services/smart-contract-cache.service";
 import { TokenCacheService } from "../valkey/services/token-cache.service";
+import { FulfilmentService } from "../fulfilment/fulfilment.service";
+import {
+  fulfilmentView,
+  isWorthChecking,
+  legacyVoucherCode,
+} from "../fulfilment/fulfilment-view";
+import { UserRole } from "@generated/prisma";
+
+/** The caller of a read, for ownership checks. Admins see everything. */
+export interface PurchaseViewer {
+  id: string;
+  walletAddress: string | null;
+  role: UserRole;
+}
 
 @Injectable()
 export class PurchasesService {
@@ -31,6 +45,7 @@ export class PurchasesService {
     private readonly blockchainCache: BlockchainCacheService,
     private readonly contractCache: SmartContractCacheService,
     private readonly tokenCache: TokenCacheService,
+    private readonly fulfilment: FulfilmentService,
   ) {}
 
   async create(createPurchaseDto: CreatePurchaseDto) {
@@ -116,9 +131,7 @@ export class PurchasesService {
       throw new NotFoundException(`Booking with ID ${bookingId} not found`);
     }
 
-    if (
-      !addressesEqual(bookingForMetadata.walletAddress, walletAddress)
-    ) {
+    if (!addressesEqual(bookingForMetadata.walletAddress, walletAddress)) {
       throw new BadRequestException(
         `Wallet address mismatch: booking belongs to ${bookingForMetadata.walletAddress}`,
       );
@@ -351,23 +364,26 @@ export class PurchasesService {
     return { items, total };
   }
 
-  async findOne(id: string, options?: { vendorResponse?: boolean }) {
-    const purchase = await this.prisma.purchase.findUnique({
-      where: { id },
-      include: {
-        productVariant: {
-          include: {
-            product: true,
-          },
-        },
-        bookingOrder: {
-          select: {
-            id: true,
-            createdAt: true,
-            customerInfo: true,
-          },
+  async findOne(
+    id: string,
+    options?: { vendorResponse?: boolean; viewer?: PurchaseViewer },
+  ) {
+    const include = {
+      productVariant: { include: { product: true } },
+      bookingOrder: {
+        select: {
+          id: true,
+          createdAt: true,
+          customerInfo: true,
+          walletAddress: true,
         },
       },
+      refund: { select: { status: true, points: true } },
+    } as const;
+
+    let purchase = await this.prisma.purchase.findUnique({
+      where: { id },
+      include,
     });
 
     if (!purchase) {
@@ -390,45 +406,84 @@ export class PurchasesService {
       },
     });
 
-    const needsFreshStatus = this.shouldFetchFreshVendorStatus(purchase);
+    // A voucher code is the product. Only its buyer (or ops) may read it;
+    // a stranger with a guessed id gets the same 404 as a missing row.
+    const viewer = options?.viewer;
+    if (viewer && !this.isAdmin(viewer)) {
+      const ownsWallet =
+        !!viewer.walletAddress &&
+        addressesEqual(
+          purchase.bookingOrder.walletAddress,
+          viewer.walletAddress,
+        );
+      const ownsTx = transaction?.userId === viewer.id;
+      if (!ownsWallet && !ownsTx) {
+        throw new NotFoundException(`Purchase with ID ${id} not found`);
+      }
+    }
 
-    const vendorStatusResponse =
-      needsFreshStatus && purchase.vendorRefId
-        ? await this.fetchAndUpdateVendorStatus({
-            id: purchase.id,
-            vendorRefId: purchase.vendorRefId,
-          })
-        : purchase.vendorStatusResponse;
+    // The user is looking and the poller hasn't asked recently: ask now,
+    // through the same state machine, so what they see is what the push
+    // will say.
+    if (isWorthChecking(purchase)) {
+      try {
+        await this.fulfilment.check("purchase", id, { reschedule: false });
+        purchase =
+          (await this.prisma.purchase.findUnique({ where: { id }, include })) ??
+          purchase;
+      } catch (error) {
+        this.logger.warn(
+          `Live fulfilment check failed for purchase ${id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
 
-    const voucherCode = this.extractVoucherCode(vendorStatusResponse);
-
-    const vendorName = this.extractVendorName(vendorStatusResponse);
+    const fulfilment = fulfilmentView(purchase);
+    const voucherCode = legacyVoucherCode(
+      fulfilment.delivery,
+      purchase.deliveryRaw,
+    );
+    const { bookingOrder, refund: _refund, ...rest } = purchase;
+    const booking = {
+      id: bookingOrder.id,
+      createdAt: bookingOrder.createdAt,
+      customerInfo: bookingOrder.customerInfo,
+    };
 
     if (options?.vendorResponse) {
       return {
-        ...purchase,
+        ...rest,
+        bookingOrder: booking,
         transaction,
-        vendorName,
+        vendorName: this.extractVendorName(purchase.vendorStatusResponse),
         voucherCode,
-        lastChecked: purchase.updatedAt,
-        vendorStatusResponse:
-          this.extractRawVendorResponse(vendorStatusResponse),
-      };
-    } else {
-      return {
-        id: purchase.id,
-        status: purchase.status,
-        transactionId: purchase.transactionId,
-        productVariantId: purchase.productVariantId,
-        refId: purchase.refId,
-        createdAt: purchase.createdAt,
-        updatedAt: purchase.updatedAt,
-        transaction,
-        productVariant: purchase.productVariant,
-        voucherCode,
-        booking: purchase.bookingOrder,
+        fulfilment,
+        lastChecked: purchase.vendorLastCheckedAt ?? purchase.updatedAt,
+        vendorStatusResponse: this.extractRawVendorResponse(
+          purchase.vendorStatusResponse,
+        ),
       };
     }
+    return {
+      id: purchase.id,
+      status: purchase.status,
+      transactionId: purchase.transactionId,
+      productVariantId: purchase.productVariantId,
+      refId: purchase.refId,
+      createdAt: purchase.createdAt,
+      updatedAt: purchase.updatedAt,
+      transaction,
+      productVariant: purchase.productVariant,
+      voucherCode,
+      fulfilment,
+      booking,
+    };
+  }
+
+  private isAdmin(viewer: PurchaseViewer): boolean {
+    return (
+      viewer.role === UserRole.ADMIN || viewer.role === UserRole.SUPER_ADMIN
+    );
   }
 
   async updateStatus(id: string, updatePurchaseDto: UpdatePurchaseDto) {
@@ -730,170 +785,6 @@ export class PurchasesService {
     ]);
 
     return { items, total };
-  }
-
-  private shouldFetchFreshVendorStatus(purchase: {
-    id: string;
-    vendorStatusResponse: unknown;
-  }): boolean {
-    const existingVendorStatus = purchase.vendorStatusResponse as {
-      vendorName?: string;
-      vendorStatusResponse?: { data?: { status?: 1 | 2 } };
-    } | null;
-
-    if (
-      !existingVendorStatus ||
-      !existingVendorStatus.vendorStatusResponse?.data
-    ) {
-      return true;
-    }
-
-    if (existingVendorStatus.vendorStatusResponse.data.status === 2) {
-      this.logger.debug(
-        `Purchase ${purchase.id} has final vendor status, using cached response`,
-        {
-          purchaseId: purchase.id,
-          vendorStatus: existingVendorStatus.vendorStatusResponse.data.status,
-        },
-      );
-      return false;
-    }
-
-    this.logger.debug(
-      `Purchase ${purchase.id} needs fresh vendor status check`,
-      {
-        purchaseId: purchase.id,
-        vendorStatus: existingVendorStatus.vendorStatusResponse.data.status,
-      },
-    );
-    return true;
-  }
-
-  private async fetchAndUpdateVendorStatus(purchase: {
-    id: string;
-    vendorRefId: string;
-  }): Promise<unknown> {
-    this.logger.debug(
-      `Fetching fresh vendor status for purchase ${purchase.id}`,
-      { purchaseId: purchase.id, vendorRefId: purchase.vendorRefId },
-    );
-
-    try {
-      const vendorStatusResponse = await this.vcGamersService.getOrderStatus(
-        purchase.vendorRefId,
-      );
-
-      if (vendorStatusResponse.success && vendorStatusResponse.data) {
-        const wrappedResponse = {
-          vendorName: "vcGamer",
-          vendorStatusResponse: vendorStatusResponse.data,
-        };
-
-        try {
-          await this.prisma.purchase.update({
-            where: { id: purchase.id },
-            data: {
-              vendorStatusResponse:
-                wrappedResponse as unknown as Prisma.InputJsonValue,
-            },
-          });
-          this.logger.debug(
-            `Successfully updated vendor status for purchase ${purchase.id}`,
-            {
-              purchaseId: purchase.id,
-              vendorStatus: vendorStatusResponse.data.data?.status,
-            },
-          );
-        } catch (dbError) {
-          this.logger.error(
-            `Failed to update vendor status in database for purchase ${purchase.id} - continuing with response`,
-            {
-              purchaseId: purchase.id,
-              error: dbError.message,
-              vendorStatus: vendorStatusResponse.data.data?.status,
-            },
-          );
-        }
-
-        return wrappedResponse;
-      } else {
-        const wrappedErrorResponse = {
-          vendorName: "vcGamer",
-          vendorStatusResponse: vendorStatusResponse,
-        };
-
-        try {
-          await this.prisma.purchase.update({
-            where: { id: purchase.id },
-            data: {
-              vendorStatusResponse:
-                wrappedErrorResponse as unknown as Prisma.InputJsonValue,
-            },
-          });
-        } catch (dbError) {
-          this.logger.error(
-            `Failed to store error vendor status response for purchase ${purchase.id}`,
-            {
-              purchaseId: purchase.id,
-              dbError: dbError.message,
-              vendorError: vendorStatusResponse.error,
-            },
-          );
-        }
-
-        throw mapVendorErrorToException(
-          vendorStatusResponse.statusCode,
-          vendorStatusResponse.message || "Vendor API error",
-          vendorStatusResponse.originalError,
-        );
-      }
-    } catch (error) {
-      const wrappedErrorResponse = {
-        vendorName: "vcGamer",
-        vendorStatusResponse: {
-          success: false,
-          statusCode: 500,
-          message: "Unexpected error occurred while checking order status",
-          error: error.message || "Unknown error",
-        },
-      };
-
-      try {
-        await this.prisma.purchase.update({
-          where: { id: purchase.id },
-          data: {
-            vendorStatusResponse: wrappedErrorResponse as Prisma.InputJsonValue,
-          },
-        });
-      } catch (dbError) {
-        this.logger.error(
-          `Failed to store error vendor status response for purchase ${purchase.id}`,
-          {
-            purchaseId: purchase.id,
-            originalError: error.message,
-            dbError: dbError.message,
-          },
-        );
-      }
-
-      throw error;
-    }
-  }
-
-  private extractVoucherCode(vendorStatusResponse: unknown): string | null {
-    try {
-      const response = vendorStatusResponse as {
-        vendorStatusResponse?: {
-          data?: { detail?: { voucher_code?: string } };
-        };
-      };
-      return response?.vendorStatusResponse?.data?.detail?.voucher_code || null;
-    } catch (error) {
-      this.logger.debug("Failed to extract voucher code", {
-        error: (error as Error).message,
-      });
-      return null;
-    }
   }
 
   private extractVendorName(vendorStatusResponse: unknown): string | null {

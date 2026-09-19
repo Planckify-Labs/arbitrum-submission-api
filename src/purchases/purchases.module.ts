@@ -8,6 +8,7 @@ import { ReferenceIdModule } from "../reference-id/reference-id.module";
 import { BlockchainVerificationModule } from "../blockchain-verification/blockchain-verification.module";
 import { QueueModule } from "../queue/queue.module";
 import { ValkeyModule } from "../valkey/valkey.module";
+import { FulfilmentModule } from "../fulfilment/fulfilment.module";
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { ValkeyModule } from "../valkey/valkey.module";
     BlockchainVerificationModule,
     QueueModule,
     ValkeyModule,
+    FulfilmentModule,
   ],
   controllers: [PurchasesController],
   providers: [PurchasesService],

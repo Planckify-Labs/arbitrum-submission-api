@@ -27,6 +27,7 @@ import {
 import { ProductCacheService } from "../valkey/services/product-cache.service";
 import { CacheManagerService } from "../valkey/services/cache-manager.service";
 import { PaymentFeaturedResponseDto } from "./dto/payment-featured.dto";
+import { resolveDeliveryType } from "../delivery/delivery.types";
 
 // Known product codes for featured payment items
 const PULSA_DATA_PRODUCT_CODES = ["PSATL", "PSAIN", "XL"];
@@ -789,7 +790,16 @@ export class ProductsService {
       throw new NotFoundException(`Product variant with ID ${id} not found`);
     }
 
-    return variant;
+    // `voucherTemplate` is ops parser config, not product data; the
+    // resolved `deliveryType` is what checkout needs ("Delivered as …").
+    const { voucherTemplate: _template, ...product } = variant.product;
+    return {
+      ...variant,
+      product: {
+        ...product,
+        deliveryType: resolveDeliveryType(variant.product),
+      },
+    };
   }
 
   async searchVariants(

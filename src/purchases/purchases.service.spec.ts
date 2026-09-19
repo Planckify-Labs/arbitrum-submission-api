@@ -6,7 +6,11 @@ import type { VCGamersService } from "../providers/vendor-api/implementations/vc
 import type { BlockchainCacheService } from "../valkey/services/blockchain-cache.service";
 import type { SmartContractCacheService } from "../valkey/services/smart-contract-cache.service";
 import type { TokenCacheService } from "../valkey/services/token-cache.service";
+// PushService (reached via FulfilmentService) pulls in the ESM expo SDK.
+jest.mock("expo-server-sdk", () => ({ Expo: class {} }));
+
 import { PurchasesService } from "./purchases.service";
+import type { FulfilmentService } from "../fulfilment/fulfilment.service";
 
 /**
  * PurchasesService unit tests.
@@ -41,7 +45,11 @@ function buildHarness(d: Defaults = {}) {
             blockchainNetworkId: "bc_polygon",
             amount: "6000000",
           },
-          exchangeRate: { rate: 15700, fromCurrency: "USDC", toCurrency: "IDR" },
+          exchangeRate: {
+            rate: 15700,
+            fromCurrency: "USDC",
+            toCurrency: "IDR",
+          },
         }
       : d.booking;
   const blockchain =
@@ -118,14 +126,21 @@ function buildHarness(d: Defaults = {}) {
   } as unknown as VCGamersService;
 
   const passThroughCache = {
-    getById: jest.fn(async (_id: string, fallback: () => unknown) => fallback()),
+    getById: jest.fn(async (_id: string, fallback: () => unknown) =>
+      fallback(),
+    ),
     getByBlockchainAndAddress: jest.fn(
       async (_a: string, _b: string, fallback: () => unknown) => fallback(),
     ),
   };
   const blockchainCache = passThroughCache as unknown as BlockchainCacheService;
-  const contractCache = passThroughCache as unknown as SmartContractCacheService;
+  const contractCache =
+    passThroughCache as unknown as SmartContractCacheService;
   const tokenCache = passThroughCache as unknown as TokenCacheService;
+
+  const fulfilment = {
+    check: jest.fn(async () => "DELIVERED"),
+  } as unknown as FulfilmentService;
 
   const svc = new PurchasesService(
     prisma,
@@ -135,9 +150,17 @@ function buildHarness(d: Defaults = {}) {
     blockchainCache,
     contractCache,
     tokenCache,
+    fulfilment,
   );
 
-  return { svc, prisma, referenceIdService, queueService, vcGamersService };
+  return {
+    svc,
+    prisma,
+    referenceIdService,
+    queueService,
+    vcGamersService,
+    fulfilment,
+  };
 }
 
 const validDto = () => ({
@@ -191,7 +214,9 @@ describe("PurchasesService.create — idempotency on refId", () => {
         metadata: { purchaseId: "pur_old", bookingId: "book_old" },
       },
     });
-    (prisma.purchase.findUnique as jest.Mock).mockResolvedValueOnce(existingPurchase);
+    (prisma.purchase.findUnique as jest.Mock).mockResolvedValueOnce(
+      existingPurchase,
+    );
 
     const out = await svc.create(validDto());
     expect(out).toMatchObject({ id: "pur_old", bookingId: "book_old" });
@@ -215,7 +240,9 @@ describe("PurchasesService.create — idempotency on refId", () => {
 describe("PurchasesService.create — input validation", () => {
   it("404s when booking does not exist", async () => {
     const { svc } = buildHarness({ booking: null });
-    await expect(svc.create(validDto())).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.create(validDto())).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 
   it("rejects wallet address mismatch (400)", async () => {
@@ -260,7 +287,9 @@ describe("PurchasesService.create — input validation", () => {
 
   it("404s when blockchain not found", async () => {
     const { svc } = buildHarness({ blockchain: null });
-    await expect(svc.create(validDto())).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.create(validDto())).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 
   it("rejects inactive blockchain", async () => {
@@ -298,7 +327,9 @@ describe("PurchasesService.create — input validation", () => {
 
 describe("PurchasesService.create — queue failure rollback", () => {
   it("marks the purchase FAILED and the refId failed when enqueue throws", async () => {
-    const { svc, prisma, referenceIdService } = buildHarness({ queueThrows: true });
+    const { svc, prisma, referenceIdService } = buildHarness({
+      queueThrows: true,
+    });
     await expect(svc.create(validDto())).rejects.toBeInstanceOf(
       BadRequestException,
     );
@@ -311,32 +342,53 @@ describe("PurchasesService.create — queue failure rollback", () => {
 });
 
 describe("PurchasesService.findOne", () => {
+  const row = (overrides: Record<string, unknown> = {}) => ({
+    id: "pur_x",
+    transactionId: "tx_y",
+    transactionCreatedAt: new Date(),
+    productVariantId: "pv",
+    refId: "ref",
+    status: "COMPLETED",
+    vendorStatusResponse: null,
+    vendorRefId: "vendor_ref",
+    fulfilmentStatus: "DELIVERED",
+    fulfilmentError: null,
+    delivery: {
+      kind: "voucher",
+      primary: { label: "Code", value: "ABC123", copyable: true },
+      fields: [],
+      raw: "ABC123",
+      parse: "heuristic",
+      parserId: "heuristic@1",
+    },
+    deliveryRaw: "ABC123",
+    expectedBy: null,
+    fulfilledAt: new Date("2026-09-19T00:00:00Z"),
+    vendorLastCheckedAt: new Date(),
+    refund: null,
+    productVariant: { product: { deliveryType: null, isVoucher: true } },
+    bookingOrder: {
+      id: "b",
+      createdAt: new Date(),
+      customerInfo: [],
+      walletAddress: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+    },
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  });
+
   it("404s on missing", async () => {
     const { svc, prisma } = buildHarness();
     (prisma.purchase.findUnique as jest.Mock).mockResolvedValueOnce(null);
-    await expect(svc.findOne("missing")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.findOne("missing")).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 
-  it("returns purchase + transaction joined manually for hypertable", async () => {
-    const { svc, prisma } = buildHarness();
-    (prisma.purchase.findUnique as jest.Mock).mockResolvedValueOnce({
-      id: "pur_x",
-      transactionId: "tx_y",
-      transactionCreatedAt: new Date(),
-      productVariantId: "pv",
-      refId: "ref",
-      vendorStatusResponse: {
-        vendorName: "vcGamer",
-        vendorStatusResponse: {
-          data: { status: 2, detail: { voucher_code: "ABC123" } },
-        },
-      },
-      vendorRefId: "vendor_ref",
-      productVariant: {},
-      bookingOrder: { id: "b" },
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
+  it("returns purchase + transaction joined manually for hypertable, with the fulfilment block", async () => {
+    const { svc, prisma, fulfilment } = buildHarness();
+    (prisma.purchase.findUnique as jest.Mock).mockResolvedValueOnce(row());
     (prisma.transactionHistory.findFirst as jest.Mock).mockResolvedValueOnce({
       id: "tx_y",
       token: { blockchain: {} },
@@ -344,33 +396,84 @@ describe("PurchasesService.findOne", () => {
 
     const out = (await svc.findOne("pur_x")) as Record<string, unknown>;
     expect(out.id).toBe("pur_x");
+    // Legacy field for app versions that predate `delivery`.
     expect(out.voucherCode).toBe("ABC123");
+    const f = out.fulfilment as Record<string, unknown>;
+    expect(f.status).toBe("DELIVERED");
+    expect(f.deliveryType).toBe("VOUCHER_CODE");
+    expect((f.delivery as { primary: { value: string } }).primary.value).toBe(
+      "ABC123",
+    );
+    // Delivered: nothing to ask the vendor.
+    expect(fulfilment.check).not.toHaveBeenCalled();
   });
 
-  it("fetches fresh vendor status when the cached status is non-final (status != 2)", async () => {
-    const { svc, prisma, vcGamersService } = buildHarness({
-      vendorStatusOk: true,
-    });
-    (prisma.purchase.findUnique as jest.Mock).mockResolvedValueOnce({
-      id: "pur_q",
-      transactionId: "tx_q",
-      transactionCreatedAt: new Date(),
-      productVariantId: "pv",
-      refId: "ref",
-      vendorStatusResponse: {
-        vendorName: "vcGamer",
-        vendorStatusResponse: { data: { status: 1 } },
-      },
-      vendorRefId: "vendor_ref",
-      productVariant: {},
-      bookingOrder: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-    (prisma.transactionHistory.findFirst as jest.Mock).mockResolvedValueOnce(null);
+  it("asks the vendor through the state machine when the order is still open", async () => {
+    const { svc, prisma, fulfilment } = buildHarness();
+    (prisma.purchase.findUnique as jest.Mock)
+      .mockResolvedValueOnce(
+        row({
+          fulfilmentStatus: "SUBMITTED",
+          delivery: null,
+          deliveryRaw: null,
+          vendorLastCheckedAt: null,
+        }),
+      )
+      .mockResolvedValueOnce(row());
+    (prisma.transactionHistory.findFirst as jest.Mock).mockResolvedValueOnce(
+      null,
+    );
 
-    await svc.findOne("pur_q", { vendorResponse: true });
-    expect(vcGamersService.getOrderStatus).toHaveBeenCalledWith("vendor_ref");
+    const out = (await svc.findOne("pur_x", {
+      vendorResponse: true,
+    })) as Record<string, unknown>;
+    expect(fulfilment.check).toHaveBeenCalledWith("purchase", "pur_x", {
+      reschedule: false,
+    });
+    // The re-read after the check is what the caller sees.
+    expect((out.fulfilment as { status: string }).status).toBe("DELIVERED");
+  });
+
+  it("a signed-in stranger gets a 404, the buyer and an admin get the row", async () => {
+    const { svc, prisma } = buildHarness();
+    (prisma.purchase.findUnique as jest.Mock).mockResolvedValue(row());
+    (prisma.transactionHistory.findFirst as jest.Mock).mockResolvedValue({
+      id: "tx_y",
+      userId: "buyer",
+      token: { blockchain: {} },
+    });
+
+    await expect(
+      svc.findOne("pur_x", {
+        viewer: {
+          id: "someone",
+          walletAddress: "0x0000000000000000000000000000000000000001",
+          role: "USER" as never,
+        },
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    await expect(
+      svc.findOne("pur_x", {
+        viewer: {
+          id: "other",
+          walletAddress: "0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+          role: "USER" as never,
+        },
+      }),
+    ).resolves.toMatchObject({ id: "pur_x" });
+
+    await expect(
+      svc.findOne("pur_x", {
+        viewer: { id: "buyer", walletAddress: null, role: "USER" as never },
+      }),
+    ).resolves.toMatchObject({ id: "pur_x" });
+
+    await expect(
+      svc.findOne("pur_x", {
+        viewer: { id: "ops", walletAddress: null, role: "ADMIN" as never },
+      }),
+    ).resolves.toMatchObject({ id: "pur_x" });
   });
 });
 
@@ -404,21 +507,22 @@ describe("PurchasesService.search", () => {
     const { svc, prisma } = buildHarness();
     (prisma.purchase.findMany as jest.Mock).mockResolvedValueOnce([]);
     (prisma.purchase.count as jest.Mock).mockResolvedValueOnce(0);
-    await svc.search(
-      { productId: "p1", vendorId: "v1" } as never,
-      {},
-    );
+    await svc.search({ productId: "p1", vendorId: "v1" } as never, {});
     const findMany = (prisma.purchase.findMany as jest.Mock).mock.calls[0][0];
     // vendorId block is spread after productId, so the productVariant filter
     // becomes the ProductPrice/vendor variant.
-    expect(findMany.where.productVariant.ProductPrice.some.vendor.id).toBe("v1");
+    expect(findMany.where.productVariant.ProductPrice.some.vendor.id).toBe(
+      "v1",
+    );
   });
 });
 
 describe("PurchasesService.findByUser / findByToken / findByBlockchain", () => {
   it("findByUser 404s when user missing", async () => {
     const { svc } = buildHarness({ user: null });
-    await expect(svc.findByUser("u", {})).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.findByUser("u", {})).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 
   it("findByToken 404s when token missing", async () => {

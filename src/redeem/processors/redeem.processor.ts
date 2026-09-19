@@ -1,36 +1,25 @@
-import {
-  PointTransactionStatus,
-  PointTransactionType,
-  Prisma,
-  RedemptionStatus,
-} from "@generated/prisma";
+import { Prisma, RedemptionStatus } from "@generated/prisma";
 import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
 import { Logger } from "@nestjs/common";
 import { Job } from "bullmq";
 import { PrismaService } from "../../prisma/prisma.service";
 import { VCGamersService } from "../../providers/vendor-api/implementations/vcgamers/vcgamers.service";
-import { PushService } from "../../push/push.service";
-import { PointsCacheService } from "../../valkey/services/points-cache.service";
-
-// Matches the "en-US" grouping used for points/currency everywhere else
-// in the app (see mobile `utils/currencyUtils.ts` formatNumber) — accepts
-// bigint directly, no need to round-trip through Number.
-const POINTS_NUMBER_FORMAT = new Intl.NumberFormat("en-US");
+import { FulfilmentService } from "../../fulfilment/fulfilment.service";
 
 @Processor("redeem-processing", { concurrency: 5 })
 export class RedeemProcessor extends WorkerHost {
+  private readonly logger = new Logger(RedeemProcessor.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly vcGamersService: VCGamersService,
-    private readonly pointsCache: PointsCacheService,
-    private readonly pushService: PushService,
+    private readonly fulfilment: FulfilmentService,
   ) {
     super();
   }
 
   async process(job: Job<{ redemptionId: string }>): Promise<void> {
     const { redemptionId } = job.data;
-    const logger = new Logger(RedeemProcessor.name);
 
     const redemption = await this.prisma.pointRedemption.findUnique({
       where: { id: redemptionId },
@@ -42,7 +31,7 @@ export class RedeemProcessor extends WorkerHost {
     });
 
     if (!redemption) {
-      logger.warn(`Redemption ${redemptionId} not found`);
+      this.logger.warn(`Redemption ${redemptionId} not found`);
       return;
     }
 
@@ -52,6 +41,11 @@ export class RedeemProcessor extends WorkerHost {
     ) {
       return;
     }
+
+    // Whether `createOrder` was called. Once retries are gone this decides
+    // between "refund — the vendor never heard of it" and "ops — an order
+    // may exist on the vendor side".
+    let orderAttempted = false;
 
     try {
       await this.prisma.pointRedemption.update({
@@ -82,6 +76,7 @@ export class RedeemProcessor extends WorkerHost {
         );
       }
 
+      orderAttempted = true;
       const orderResponse = await this.vcGamersService.createOrder(
         brandKey,
         variationKey,
@@ -90,47 +85,37 @@ export class RedeemProcessor extends WorkerHost {
         redemptionId,
       );
 
-      if (!orderResponse.success) {
+      const vendorRefId = orderResponse.data?.data?.trx_code;
+      if (!orderResponse.success || !vendorRefId) {
+        // Definitive rejection → the fulfilment leg has marked it FAILED
+        // and refunded. Ambiguous → throw so BullMQ retries; the vendor
+        // is expected to dedupe on `ref_id` (= redemptionId).
+        const cls = await this.fulfilment.onVendorRejected(
+          "redemption",
+          redemptionId,
+          orderResponse,
+        );
+        if (cls === "definitive") return;
         throw new Error(`Vendor error: ${orderResponse.message}`);
       }
 
+      // Money leg done: points spent, vendor has the order. The "ready"
+      // push comes from the fulfilment leg once the vendor confirms.
       await this.prisma.pointRedemption.update({
         where: { id: redemptionId },
         data: {
           status: RedemptionStatus.COMPLETED,
-          vendorRefId: orderResponse.data?.data.trx_code,
+          vendorRefId,
           vendorResponse:
             orderResponse.data as unknown as Prisma.InputJsonValue,
         },
       });
+      await this.fulfilment.onVendorAccepted("redemption", redemptionId);
 
-      logger.log(`Redemption ${redemptionId} completed`);
-
-      // Best-effort. Product name only — never the fulfillment vendor
-      // (e.g. "vcGamer") or any vendor reference/order data.
-      const productName =
-        `${redemption.productVariant.product.name} ${redemption.productVariant.name}`.trim();
-      await this.pushService
-        .sendToUser({
-          userId: redemption.user.id,
-          title: "Redemption Ready",
-          body: `Your ${productName} is ready to use!`,
-          data: {
-            type: "redemption",
-            redemptionId,
-            status: "COMPLETED",
-          },
-          channelId: "points",
-          source: "redemption",
-        })
-        .catch((err) => {
-          logger.warn(
-            `[redeem] push failed for ${redemptionId}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        });
+      this.logger.log(`Redemption ${redemptionId} accepted by vendor`);
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : "Unknown error";
-      logger.error(`Redemption ${redemptionId} failed: ${msg}`);
+      this.logger.error(`Redemption ${redemptionId} failed: ${msg}`);
 
       await this.prisma.pointRedemption.update({
         where: { id: redemptionId },
@@ -143,103 +128,37 @@ export class RedeemProcessor extends WorkerHost {
         },
       });
 
+      // Out of retries: refund only if the vendor was never reached.
+      // Refunding a timed-out order that the vendor did place would hand
+      // the buyer both the product and the points.
+      const budget = job.opts.attempts ?? 1;
+      if (job.attemptsMade + 1 >= budget) {
+        await this.fulfilment
+          .onOrderRetriesExhausted("redemption", redemptionId, {
+            orderAttempted,
+            error: msg,
+          })
+          .catch((err) =>
+            this.logger.error(
+              `[redeem] fulfilment settle failed for ${redemptionId}: ${err instanceof Error ? err.message : String(err)}`,
+            ),
+          );
+      }
+
       throw error; // allow BullMQ retries
     }
   }
 
   @OnWorkerEvent("failed")
-  async onFailed(job: Job, err: Error) {
-    const logger = new Logger(RedeemProcessor.name);
+  onFailed(job: Job, err: Error) {
     const maxAttempts = job.opts?.attempts ?? 1;
-    logger.error(
+    this.logger.error(
       `Redemption job ${job.id} failed (attempt ${job.attemptsMade}/${maxAttempts}): ${err.message}`,
     );
-
-    // Only refund on the final attempt
-    if (job.attemptsMade >= maxAttempts) {
-      await this.refundRedemption(job.data.redemptionId);
-    }
-  }
-
-  private async refundRedemption(redemptionId: string): Promise<void> {
-    const logger = new Logger(RedeemProcessor.name);
-
-    const redemption = await this.prisma.pointRedemption.findUnique({
-      where: { id: redemptionId },
-      include: { productVariant: { include: { product: true } } },
-    });
-
-    if (!redemption || redemption.status === RedemptionStatus.REFUNDED) return;
-
-    await this.prisma.$transaction(async (tx) => {
-      const balance = await tx.pointBalance.findUnique({
-        where: { userId: redemption.userId },
-      });
-
-      const currentBalance = balance?.balance ?? BigInt(0);
-      const newBalance = currentBalance + redemption.pointsSpent;
-
-      if (balance) {
-        await tx.pointBalance.update({
-          where: { userId: redemption.userId },
-          data: { balance: newBalance },
-        });
-      } else {
-        await tx.pointBalance.create({
-          data: { userId: redemption.userId, balance: newBalance },
-        });
-      }
-
-      await tx.pointTransaction.create({
-        data: {
-          userId: redemption.userId,
-          type: PointTransactionType.REFUND,
-          status: PointTransactionStatus.COMPLETED,
-          amount: redemption.pointsSpent,
-          balanceBefore: currentBalance,
-          balanceAfter: newBalance,
-          referenceType: "POINT_REDEMPTION",
-          referenceId: redemptionId,
-        },
-      });
-
-      await tx.pointRedemption.update({
-        where: { id: redemptionId },
-        data: { status: RedemptionStatus.REFUNDED },
-      });
-    });
-
-    await this.pointsCache.invalidateBalance(redemption.userId);
-    logger.log(
-      `Refunded ${redemption.pointsSpent} points for redemption ${redemptionId}`,
-    );
-
-    // Best-effort. Product name only — never the fulfillment vendor.
-    const productName =
-      `${redemption.productVariant.product.name} ${redemption.productVariant.name}`.trim();
-    const pointsFormatted = POINTS_NUMBER_FORMAT.format(redemption.pointsSpent);
-    await this.pushService
-      .sendToUser({
-        userId: redemption.userId,
-        title: "Redemption Failed",
-        body: `Your ${productName} redemption didn't go through, but no worries, ${pointsFormatted} points have been refunded to your balance.`,
-        data: {
-          type: "redemption",
-          redemptionId,
-          status: "REFUNDED",
-        },
-        channelId: "points",
-        source: "redemption",
-      })
-      .catch((err) => {
-        logger.warn(
-          `[redeem] refund push failed for ${redemptionId}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      });
   }
 
   @OnWorkerEvent("completed")
   onCompleted(job: Job) {
-    new Logger(RedeemProcessor.name).log(`Redemption job ${job.id} completed`);
+    this.logger.log(`Redemption job ${job.id} completed`);
   }
 }
