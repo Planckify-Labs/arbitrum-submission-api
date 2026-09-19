@@ -1208,6 +1208,32 @@ async function main() {
         isActive: true,
       },
     }),
+    // takumi_pay on Monad mainnet — TakumiPay 2.1.0 behind a UUPS proxy, see
+    // ../contract/evm/deployments/143.json (deployed 2026-09-19). This is
+    // the REAL Agora AUSD leg (mobile-app/docs/monad-metropolis-2026-spec.md
+    // §2), not the MockAUSD stand-in used on Monad testnet. Same deployer key
+    // as the testnet contract, already funded on mainnet, hence the address
+    // collision with the Arbitrum mainnet / Arbitrum Sepolia rows above — a
+    // genuine CREATE match (same nonce sequence), not a copy-paste; see the
+    // deployment record's `todo.addressCollision`. Converges `address` on
+    // re-seed, same as the Arc/Monad-testnet rows.
+    prisma.smartContract.upsert({
+      where: { id: "smart-contract-payment-monad-mainnet" },
+      update: {
+        name: "takumi_pay",
+        type: "payment",
+        address: "0x479B0843C3e0627f36551660506dEd5b349Fa968",
+        isActive: true,
+      },
+      create: {
+        id: "smart-contract-payment-monad-mainnet",
+        name: "takumi_pay",
+        type: "payment",
+        blockchainId: evmChain(143).id, // Monad mainnet
+        address: "0x479B0843C3e0627f36551660506dEd5b349Fa968",
+        isActive: true,
+      },
+    }),
     // takumi_pay on Solana Devnet — Anchor program deployed via `anchor deploy`.
     // `name` is a stable machine key here, not a display label — every
     // chain's takumi_pay contract/program uses the same "takumi_pay" name so
@@ -2480,6 +2506,12 @@ async function main() {
   // logo component renders SVG and raster alike. This one row is what
   // makes AUSD appear in get_wallet_assets, the send-screen token picker and
   // the agent's send_token tool — no other backend change needed.
+  //
+  // `isPaymentEnabled: true` — flipped 2026-09-19 once takumi_pay was
+  // actually deployed to Monad mainnet (deployments/143.json,
+  // smart-contract-payment-monad-mainnet above) and AUSD was allowlisted +
+  // sweep-capped on-chain (postDeployConfig in that record). This flag plus
+  // the SmartContract row are the only server-side gates for point deposits.
   await prisma.token.upsert({
     where: {
       blockchainId_contractAddress: {
@@ -2494,6 +2526,7 @@ async function main() {
       logoUrl: "https://dsvxs4ecepqgj.cloudfront.net/tokens/AUSD/logo.svg",
       isStablecoin: true,
       isNativeCurrency: false,
+      isPaymentEnabled: true,
       isActive: true,
       peggedCurrency: "USD",
     },
@@ -2506,6 +2539,7 @@ async function main() {
       logoUrl: "https://dsvxs4ecepqgj.cloudfront.net/tokens/AUSD/logo.svg",
       isStablecoin: true,
       isNativeCurrency: false,
+      isPaymentEnabled: true,
       isActive: true,
       peggedCurrency: "USD",
     },
