@@ -18,7 +18,9 @@ const SECRET = "test-secret-please-change-me";
 function buildSvc() {
   const config = { get: jest.fn() } as unknown as ConfigService;
   const prisma = {
-    vendor: { findUnique: jest.fn(async () => ({ id: "v_vc", name: "vcGamer" })) },
+    vendor: {
+      findUnique: jest.fn(async () => ({ id: "v_vc", name: "vcGamer" })),
+    },
   } as unknown as PrismaService;
   const cache = {
     getVendorAPI: jest.fn(async () => ({
@@ -45,7 +47,9 @@ describe("VCGamersService.createSignature", () => {
   it("produces base64(HMAC-SHA512(secret, params)) — verifiable round-trip", () => {
     const svc = buildSvc();
     const params = `${SECRET}brand`;
-    const sig = (svc as unknown as { createSignature: (p: string) => string }).createSignature(params);
+    const sig = (
+      svc as unknown as { createSignature: (p: string) => string }
+    ).createSignature(params);
 
     const expected = Buffer.from(
       crypto.createHmac("sha512", SECRET).update(params).digest("hex"),
@@ -56,19 +60,20 @@ describe("VCGamersService.createSignature", () => {
   it("throws when params are empty", () => {
     const svc = buildSvc();
     expect(() =>
-      (svc as unknown as { createSignature: (p: string) => string }).createSignature(
-        "",
-      ),
+      (
+        svc as unknown as { createSignature: (p: string) => string }
+      ).createSignature(""),
     ).toThrow();
   });
 
   it("throws when API secret is missing", () => {
     const svc = buildSvc();
-    (svc as unknown as { config: { apiSecret?: string } }).config.apiSecret = undefined;
+    (svc as unknown as { config: { apiSecret?: string } }).config.apiSecret =
+      undefined;
     expect(() =>
-      (svc as unknown as { createSignature: (p: string) => string }).createSignature(
-        "brand",
-      ),
+      (
+        svc as unknown as { createSignature: (p: string) => string }
+      ).createSignature("brand"),
     ).toThrow();
   });
 });
@@ -171,18 +176,18 @@ describe("VCGamersService.getOrderStatus", () => {
 
   it("maps an upstream 500 to a 503 (mapped via base-class error mapper)", async () => {
     const svc = buildSvc();
-    jest
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue({
-        ok: false,
-        status: 500,
-        json: async () => ({ message: "boom" }),
-      } as Response);
+    jest.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({ message: "boom" }),
+    } as Response);
     // 4 attempts (1 + 3 retries) — keep retry delays from blowing the test budget
-    jest.spyOn(globalThis, "setTimeout").mockImplementation((fn: TimerHandler) => {
-      if (typeof fn === "function") fn();
-      return 0 as unknown as NodeJS.Timeout;
-    });
+    jest
+      .spyOn(globalThis, "setTimeout")
+      .mockImplementation((fn: TimerHandler) => {
+        if (typeof fn === "function") fn();
+        return 0 as unknown as NodeJS.Timeout;
+      });
     const out = await svc.getOrderStatus("TRX_500");
     expect(out.success).toBe(false);
     expect(out.statusCode).toBe(503);
@@ -200,7 +205,9 @@ describe("VCGamersService.getProductVariants", () => {
     const out = await svc.getProductVariants("ML");
     expect(out.success).toBe(true);
     expect(out.data?.length).toBe(1);
-    expect((fetchMock.mock.calls[0][0] as string).toString()).toContain("brand_key=ML");
+    expect((fetchMock.mock.calls[0][0] as string).toString()).toContain(
+      "brand_key=ML",
+    );
   });
 
   it("returns empty data when upstream gives no payload", async () => {

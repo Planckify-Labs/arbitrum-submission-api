@@ -39,7 +39,11 @@ export class RedeemController {
   ) {
     const result = await this.redeemService.findAllAdmin(query);
     res.setHeader("X-Total-Count", String(result.total));
-    return { data: result.data, nextCursor: result.nextCursor, hasMore: result.hasMore };
+    return {
+      data: result.data,
+      nextCursor: result.nextCursor,
+      hasMore: result.hasMore,
+    };
   }
 
   @Get("admin/:id")
@@ -71,7 +75,9 @@ export class RedeemController {
   @UseGuards(JwtAuthGuard)
   @ApiKey()
   @ApiBearerAuth()
-  @ApiOperation({ summary: "Get full detail of a specific redemption including voucher code" })
+  @ApiOperation({
+    summary: "Get full detail of a specific redemption including voucher code",
+  })
   getRedeemById(@Request() req, @Param("id") id: string) {
     return this.redeemService.getRedeemById(req.user.id, id);
   }
@@ -80,7 +86,9 @@ export class RedeemController {
   @UseGuards(JwtAuthGuard)
   @ApiKey()
   @ApiBearerAuth()
-  @ApiOperation({ summary: "Poll the status of a specific redemption (lightweight)" })
+  @ApiOperation({
+    summary: "Poll the status of a specific redemption (lightweight)",
+  })
   getRedeemStatus(@Request() req, @Param("id") id: string) {
     return this.redeemService.getRedeemStatus(req.user.id, id);
   }

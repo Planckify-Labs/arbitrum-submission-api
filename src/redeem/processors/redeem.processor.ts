@@ -3,7 +3,7 @@ import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
 import { Logger } from "@nestjs/common";
 import { Job } from "bullmq";
 import { PrismaService } from "../../prisma/prisma.service";
-import { VCGamersService } from "../../providers/vendor-api/implementations/vcgamers/vcgamers.service";
+import { VendorRegistry } from "../../providers/vendor-api/vendor-registry.service";
 import { FulfilmentService } from "../../fulfilment/fulfilment.service";
 
 @Processor("redeem-processing", { concurrency: 5 })
@@ -12,7 +12,7 @@ export class RedeemProcessor extends WorkerHost {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly vcGamersService: VCGamersService,
+    private readonly vendors: VendorRegistry,
     private readonly fulfilment: FulfilmentService,
   ) {
     super();
@@ -69,15 +69,12 @@ export class RedeemProcessor extends WorkerHost {
         );
       }
 
-      // Only call VCGamers if vendor is vcGamer
-      if (redemption.productPrice.vendor.name !== "vcGamer") {
-        throw new Error(
-          `Unsupported vendor: ${redemption.productPrice.vendor.name}`,
-        );
-      }
+      // Throws UnsupportedVendorError before any order is placed — that
+      // path refunds, since the vendor never heard of it.
+      const vendor = this.vendors.get(redemption.productPrice.vendor.name);
 
       orderAttempted = true;
-      const orderResponse = await this.vcGamersService.createOrder(
+      const orderResponse = await vendor.createOrder(
         brandKey,
         variationKey,
         price,

@@ -14,5 +14,7 @@ export class ExecuteRedeemDto {
 
   @ApiPropertyOptional({ description: "Customer info required by the product" })
   @IsOptional()
-  customerInfo?: Record<string, unknown> | Array<{ key: string; value: string }>;
+  customerInfo?:
+    | Record<string, unknown>
+    | Array<{ key: string; value: string }>;
 }

@@ -22,7 +22,9 @@ export class RedeemHistoryQueryDto {
   @Max(50)
   limit?: number = 20;
 
-  @ApiPropertyOptional({ description: "Offset for pagination (used for jump-to-page)" })
+  @ApiPropertyOptional({
+    description: "Offset for pagination (used for jump-to-page)",
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()

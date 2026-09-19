@@ -174,14 +174,16 @@ export class PurchaseResponseDto {
   vendorRefId?: string;
 
   @ApiProperty({
-    description: "Voucher code extracted from vendor response for easy client access",
+    description:
+      "Voucher code extracted from vendor response for easy client access",
     example: "ABC123XYZ",
     required: false,
   })
   voucherCode?: string | null;
 
   @ApiProperty({
-    description: "Complete vendor status response data (only included when vendorResponse=true query parameter is used)",
+    description:
+      "Complete vendor status response data (only included when vendorResponse=true query parameter is used)",
     example: {
       vendorName: "vcGamer",
       vendorStatusResponse: {
@@ -190,10 +192,10 @@ export class PurchaseResponseDto {
         data: {
           status: 2,
           detail: {
-            voucher_code: "ABC123XYZ"
-          }
-        }
-      }
+            voucher_code: "ABC123XYZ",
+          },
+        },
+      },
     },
     required: false,
   })

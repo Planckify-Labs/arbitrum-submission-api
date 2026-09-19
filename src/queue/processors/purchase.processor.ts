@@ -4,7 +4,7 @@ import { Job } from "bullmq";
 import { PrismaService } from "../../prisma/prisma.service";
 import { PushService } from "../../push/push.service";
 import { BlockchainVerificationService } from "../../blockchain-verification/blockchain-verification.service";
-import { VCGamersService } from "../../providers/vendor-api/implementations/vcgamers/vcgamers.service";
+import { VendorRegistry } from "../../providers/vendor-api/vendor-registry.service";
 import { ReferenceIdService } from "../../reference-id/reference-id.service";
 import { BlockchainCacheService } from "../../valkey/services/blockchain-cache.service";
 import { SmartContractCacheService } from "../../valkey/services/smart-contract-cache.service";
@@ -31,7 +31,7 @@ export class PurchaseProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly blockchainVerificationService: BlockchainVerificationService,
-    private readonly vcGamersService: VCGamersService,
+    private readonly vendors: VendorRegistry,
     private readonly referenceIdService: ReferenceIdService,
     private readonly blockchainCache: BlockchainCacheService,
     private readonly contractCache: SmartContractCacheService,
@@ -154,7 +154,9 @@ export class PurchaseProcessor extends WorkerHost {
         message: "Blockchain transaction verified successfully",
       });
 
-      if (booking.productPrice?.vendor?.name === "vcGamer") {
+      // Any vendor with an adapter is fulfilled the same way; the adapter
+      // is resolved from the price row, never named here.
+      if (this.vendors.has(booking.productPrice?.vendor?.name)) {
         const accepted = await this.processVendorOrder(
           purchaseId,
           booking as unknown as TBookingWithRelations,
@@ -457,7 +459,7 @@ export class PurchaseProcessor extends WorkerHost {
    * Place the vendor order. Returns whether it was ACCEPTED (a
    * `trx_code` exists). A definitive rejection returns false after the
    * fulfilment leg has settled it; an ambiguous failure throws so BullMQ
-   * retries (VCGamers is expected to dedupe on `ref_id`).
+   * retries (the vendor is expected to dedupe on our `ref_id`).
    */
   private async processVendorOrder(
     purchaseId: string,
@@ -510,7 +512,8 @@ export class PurchaseProcessor extends WorkerHost {
     });
 
     onAttempt();
-    const orderResponse = await this.vcGamersService.createOrder(
+    const vendor = this.vendors.get(booking.productPrice?.vendor?.name);
+    const orderResponse = await vendor.createOrder(
       brandKey,
       variationKey,
       price,

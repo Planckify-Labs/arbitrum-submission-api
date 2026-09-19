@@ -9,7 +9,6 @@ import { Queue } from "bullmq";
 import { PrismaService } from "../prisma/prisma.service";
 import { PointsCacheService } from "../valkey/services/points-cache.service";
 import { ProductInputValidatorService } from "../products/services/product-input-validator.service";
-import { VCGamersService } from "../providers/vendor-api/implementations/vcgamers/vcgamers.service";
 import { FulfilmentService } from "../fulfilment/fulfilment.service";
 import {
   fulfilmentView,
@@ -35,7 +34,6 @@ export class RedeemService {
     private readonly prisma: PrismaService,
     private readonly productInputValidator: ProductInputValidatorService,
     private readonly pointsCache: PointsCacheService,
-    private readonly vcGamersService: VCGamersService,
     private readonly fulfilment: FulfilmentService,
     @InjectQueue("redeem-processing") private readonly redeemQueue: Queue,
   ) {}

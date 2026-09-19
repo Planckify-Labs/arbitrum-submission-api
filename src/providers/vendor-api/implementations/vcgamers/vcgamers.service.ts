@@ -1,6 +1,11 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { BaseVendorService } from "../../base/base-vendor.service";
+import {
+  BaseVendorService,
+  VendorOrderFailure,
+  VendorOrderStatus,
+} from "../../base/base-vendor.service";
+import { classifyOrderFailure, classifyVendorStatus } from "./vcgamers-status";
 import {
   TVCgamerResponse,
   TVCGamerProduct,
@@ -31,6 +36,8 @@ interface VCGamersProductResponse {
 
 @Injectable()
 export class VCGamersService extends BaseVendorService {
+  readonly vendorName = "vcGamer";
+
   constructor(
     configService: ConfigService,
     prisma: PrismaService,
@@ -180,6 +187,29 @@ export class VCGamersService extends BaseVendorService {
       data: response.data,
       error: response.error,
     };
+  }
+
+  // ── Fulfilment port ────────────────────────────────────────────────
+
+  async checkOrder(vendorRefId: string): Promise<VendorOrderStatus> {
+    const resp = await this.getOrderStatus(vendorRefId);
+    if (!resp.success || !resp.data?.data) {
+      return {
+        outcome: "pending",
+        raw: null,
+        reason: `${resp.statusCode}: ${resp.message}`,
+        response: resp,
+        unavailable: true,
+      };
+    }
+    const verdict = classifyVendorStatus(resp.data.data);
+    return { ...verdict, response: resp.data };
+  }
+
+  classifyOrderFailure(
+    resp: TVCgamerResponse<TVCGamerOrderResponse>,
+  ): VendorOrderFailure {
+    return classifyOrderFailure(resp);
   }
 
   async getOrderStatus(

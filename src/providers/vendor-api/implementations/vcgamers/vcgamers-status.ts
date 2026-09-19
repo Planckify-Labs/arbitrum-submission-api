@@ -2,12 +2,20 @@ import {
   TVCgamerResponse,
   TVCGamerOrderResponse,
   TVCGamersOrderStatusData,
-} from "../providers/vendor-api/types/vcgamer-api.types";
+} from "../../types/vcgamer-api.types";
+import type {
+  VendorOrderFailure,
+  VendorOrderOutcome,
+} from "../../base/base-vendor.service";
 
-export type VendorOutcome = "delivered" | "failed" | "pending";
+/**
+ * VCGamers-specific: how their order-status body maps onto the
+ * provider-agnostic fulfilment port. Nothing outside this adapter reads
+ * `data.status` or `history_status`.
+ */
 
 export interface VendorStatusClassification {
-  outcome: VendorOutcome;
+  outcome: VendorOrderOutcome;
   /** `detail.voucher_code` verbatim, or null. */
   raw: string | null;
   /** Human-readable reason for `failed`, from the vendor's status history. */
@@ -15,17 +23,19 @@ export interface VendorStatusClassification {
 }
 
 export interface VendorStatusCodes {
-  /** `data.status` values that mean delivered. VCGamers: 2. */
+  /** `data.status` values that mean delivered. */
   success: number[];
-  /**
-   * `data.status` values that mean terminal failure. Not documented
-   * publicly — confirm with the VCGamers integration team; until then the
-   * status-history name match below is the safety net.
-   */
+  /** `data.status` values that mean terminal failure. */
   failed: number[];
 }
 
-export const DEFAULT_VENDOR_STATUS_CODES: VendorStatusCodes = {
+/**
+ * 2 = final/success is established by the existing integration. The
+ * failure code is not in VCGamers' public docs — confirm with their
+ * integration team and adjust here; until then the status-history name
+ * match in `classifyVendorStatus` is the safety net.
+ */
+export const VCGAMERS_STATUS_CODES: VendorStatusCodes = {
   success: [2],
   failed: [3],
 };
@@ -44,7 +54,7 @@ const SUCCESS_STATUS_NAME =
  */
 export function classifyVendorStatus(
   data: TVCGamersOrderStatusData,
-  codes: VendorStatusCodes = DEFAULT_VENDOR_STATUS_CODES,
+  codes: VendorStatusCodes = VCGAMERS_STATUS_CODES,
 ): VendorStatusClassification {
   const raw = data.detail?.voucher_code?.trim() || null;
   const latest = [...(data.history_status ?? [])].sort((a, b) =>
@@ -73,13 +83,6 @@ export function classifyVendorStatus(
   return { outcome: "pending", raw };
 }
 
-export type OrderFailureClass = "definitive" | "ambiguous";
-
-export interface OrderFailureClassification {
-  cls: OrderFailureClass;
-  reason: string;
-}
-
 // Business-level rejections: the vendor understood the request and said
 // no (bad player id, sold out, price mismatch). Safe to refund.
 const DEFINITIVE_HTTP = new Set([400, 402, 404, 409, 410, 422]);
@@ -94,7 +97,7 @@ const DEFINITIVE_HTTP = new Set([400, 402, 404, 409, 410, 422]);
  */
 export function classifyOrderFailure(
   resp: TVCgamerResponse<TVCGamerOrderResponse>,
-): OrderFailureClassification {
+): VendorOrderFailure {
   if (resp.success && resp.data) {
     const txStatus = resp.data.data?.transaction_status ?? "";
     const status = resp.data.status ?? "";

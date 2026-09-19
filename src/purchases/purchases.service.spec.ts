@@ -2,7 +2,6 @@ import { BadRequestException, NotFoundException } from "@nestjs/common";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { ReferenceIdService } from "../reference-id/reference-id.service";
 import type { QueueService } from "../queue/queue.service";
-import type { VCGamersService } from "../providers/vendor-api/implementations/vcgamers/vcgamers.service";
 import type { BlockchainCacheService } from "../valkey/services/blockchain-cache.service";
 import type { SmartContractCacheService } from "../valkey/services/smart-contract-cache.service";
 import type { TokenCacheService } from "../valkey/services/token-cache.service";
@@ -114,17 +113,6 @@ function buildHarness(d: Defaults = {}) {
     }),
   } as unknown as QueueService;
 
-  const vcGamersService = {
-    getOrderStatus: jest.fn(async () => ({
-      success: !!d.vendorStatusOk,
-      data: d.vendorStatusOk
-        ? { data: { status: 2, detail: { voucher_code: "VVV" } } }
-        : null,
-      statusCode: 500,
-      message: "fail",
-    })),
-  } as unknown as VCGamersService;
-
   const passThroughCache = {
     getById: jest.fn(async (_id: string, fallback: () => unknown) =>
       fallback(),
@@ -146,7 +134,6 @@ function buildHarness(d: Defaults = {}) {
     prisma,
     referenceIdService,
     queueService,
-    vcGamersService,
     blockchainCache,
     contractCache,
     tokenCache,
@@ -158,7 +145,6 @@ function buildHarness(d: Defaults = {}) {
     prisma,
     referenceIdService,
     queueService,
-    vcGamersService,
     fulfilment,
   };
 }

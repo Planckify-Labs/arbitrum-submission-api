@@ -14,7 +14,6 @@ import { Prisma, PurchaseStatus, ReferenceIdStatus } from "@generated/prisma";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import { ReferenceIdService } from "../reference-id/reference-id.service";
 import { QueueService } from "../queue/queue.service";
-import { VCGamersService } from "../providers/vendor-api/implementations/vcgamers/vcgamers.service";
 import { BlockchainCacheService } from "../valkey/services/blockchain-cache.service";
 import { SmartContractCacheService } from "../valkey/services/smart-contract-cache.service";
 import { TokenCacheService } from "../valkey/services/token-cache.service";
@@ -41,7 +40,6 @@ export class PurchasesService {
     private readonly prisma: PrismaService,
     private readonly referenceIdService: ReferenceIdService,
     private readonly queueService: QueueService,
-    private readonly vcGamersService: VCGamersService,
     private readonly blockchainCache: BlockchainCacheService,
     private readonly contractCache: SmartContractCacheService,
     private readonly tokenCache: TokenCacheService,

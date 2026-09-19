@@ -27,6 +27,8 @@ export interface FulfilmentTarget {
   /** Redemptions have a user; purchases are keyed by wallet (+ user via the tx). */
   userId: string | null;
   walletAddress: string | null;
+  /** `Vendor.name` — resolves the adapter through `VendorRegistry`. */
+  vendorName: string;
   productCode: string;
   productName: string;
   deliveryType: DeliveryType;

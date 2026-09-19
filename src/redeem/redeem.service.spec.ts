@@ -2,7 +2,6 @@ import { BadRequestException, NotFoundException } from "@nestjs/common";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { ProductInputValidatorService } from "../products/services/product-input-validator.service";
 import type { PointsCacheService } from "../valkey/services/points-cache.service";
-import type { VCGamersService } from "../providers/vendor-api/implementations/vcgamers/vcgamers.service";
 import type { Queue } from "bullmq";
 // PushService (reached via FulfilmentService) pulls in the ESM expo SDK.
 jest.mock("expo-server-sdk", () => ({ Expo: class {} }));
@@ -74,10 +73,6 @@ function buildHarness(
     invalidateBalance: jest.fn(async () => undefined),
   } as unknown as PointsCacheService;
 
-  const vcGamersService = {
-    getOrderStatus: jest.fn(async () => ({ success: false, statusCode: 500 })),
-  } as unknown as VCGamersService;
-
   const queue = {
     add: jest.fn(async () => ({ id: "j_1" })),
   } as unknown as Queue;
@@ -90,7 +85,6 @@ function buildHarness(
     prisma,
     productInputValidator,
     pointsCache,
-    vcGamersService,
     fulfilment,
     queue,
   );
@@ -99,7 +93,6 @@ function buildHarness(
     prisma,
     queue,
     pointsCache,
-    vcGamersService,
     fulfilment,
     txCalls,
   };

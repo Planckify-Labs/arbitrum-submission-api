@@ -1,8 +1,5 @@
-import {
-  classifyOrderFailure,
-  classifyVendorStatus,
-} from "./vendor-status.classifier";
-import type { TVCGamersOrderStatusData } from "../providers/vendor-api/types/vcgamer-api.types";
+import { classifyOrderFailure, classifyVendorStatus } from "./vcgamers-status";
+import type { TVCGamersOrderStatusData } from "../../types/vcgamer-api.types";
 
 function status(
   overrides: Partial<TVCGamersOrderStatusData>,

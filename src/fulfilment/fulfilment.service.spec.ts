@@ -2,11 +2,11 @@ jest.mock("expo-server-sdk", () => ({ Expo: class {} }));
 
 import { FulfilmentService } from "./fulfilment.service";
 import type { PrismaService } from "../prisma/prisma.service";
-import type { VCGamersService } from "../providers/vendor-api/implementations/vcgamers/vcgamers.service";
+import type { VendorRegistry } from "../providers/vendor-api/vendor-registry.service";
+import type { VendorOrderStatus } from "../providers/vendor-api/base/base-vendor.service";
 import type { DeliveryParserService } from "../delivery/delivery-parser.service";
 import type { PointsRefundService } from "../points/points-refund.service";
 import type { PushService } from "../push/push.service";
-import type { ConfigService } from "@nestjs/config";
 import type { Queue } from "bullmq";
 
 type AnyFn = jest.Mock;
@@ -25,7 +25,11 @@ function purchaseRow(overrides: Record<string, unknown> = {}) {
     bookingOrder: {
       walletAddress: "0xabc",
       customerInfo: [{ key: "userId", value: "0812" }],
-      productPrice: { sellPrice: "50000", currency: "IDR" },
+      productPrice: {
+        sellPrice: "50000",
+        currency: "IDR",
+        vendor: { name: "acmePpob" },
+      },
     },
     productVariant: {
       name: "86 Diamonds",
@@ -42,35 +46,17 @@ function purchaseRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function vendorStatus(status: number, voucher = "", history: string[] = []) {
+/** What any adapter hands back through the fulfilment port. */
+function vendorStatus(
+  outcome: VendorOrderStatus["outcome"],
+  raw = "",
+  extra: Partial<VendorOrderStatus> = {},
+): VendorOrderStatus {
   return {
-    success: true,
-    statusCode: 200,
-    message: "ok",
-    data: {
-      code: 200,
-      status: "ok",
-      data: {
-        code: "TRX1",
-        status,
-        date: "d",
-        grand_total: 1,
-        delivery_duration: 0,
-        ref_id: "r",
-        detail: {
-          variation_key: "v",
-          variation_name: "v",
-          price: 1,
-          customer_data: {},
-          voucher_code: voucher,
-          order_param: [],
-        },
-        history_status: history.map((n, i) => ({
-          status_name: n,
-          timestamp: `2026-09-19T10:0${i}:00Z`,
-        })),
-      },
-    },
+    outcome,
+    raw: raw || null,
+    response: { vendorBody: true, outcome },
+    ...extra,
   };
 }
 
@@ -103,9 +89,23 @@ function buildHarness(
     adminAuditLog: { create: jest.fn(async () => ({})) },
   } as unknown as PrismaService;
   const queue = { add: jest.fn(async () => ({ id: "j" })) } as unknown as Queue;
-  const vcGamers = {
-    getOrderStatus: jest.fn(async () => opts.vendor ?? vendorStatus(1)),
-  } as unknown as VCGamersService;
+  const adapter = {
+    vendorName: "acmePpob",
+    checkOrder: jest.fn(async () => opts.vendor ?? vendorStatus("pending")),
+    classifyOrderFailure: jest.fn(
+      (resp: { originalError?: { status?: number; message?: string } }) =>
+        resp.originalError?.status === 422
+          ? { cls: "definitive", reason: `422: ${resp.originalError.message}` }
+          : { cls: "ambiguous", reason: "transport" },
+    ),
+  };
+  const vendors = {
+    get: jest.fn((name: string) => {
+      if (name !== "acmePpob") throw new Error(`Unsupported vendor: ${name}`);
+      return adapter;
+    }),
+    has: jest.fn((name: string) => name === "acmePpob"),
+  } as unknown as VendorRegistry;
   const parser = {
     parseAndRecord: jest.fn(async (input: { raw: string | null }) => ({
       kind: "topup",
@@ -126,18 +126,15 @@ function buildHarness(
   const push = {
     sendFulfilmentPush: jest.fn(async () => undefined),
   } as unknown as PushService;
-  const config = { get: jest.fn(() => undefined) } as unknown as ConfigService;
-
   const svc = new FulfilmentService(
     prisma,
     queue,
-    vcGamers,
+    vendors,
     parser,
     refunds,
     push,
-    config,
   );
-  return { svc, prisma, queue, vcGamers, parser, refunds, push, row };
+  return { svc, prisma, queue, vendors, adapter, parser, refunds, push, row };
 }
 
 const flushPush = () => new Promise((r) => setImmediate(r));
@@ -189,7 +186,7 @@ describe("FulfilmentService.onVendorAccepted", () => {
 describe("FulfilmentService.check", () => {
   it("vendor status 2 → DELIVERED, delivery parsed and stored, money leg COMPLETED, 'ready' push", async () => {
     const { svc, prisma, parser, push, queue } = buildHarness({
-      vendor: vendorStatus(2, "SERIAL-1"),
+      vendor: vendorStatus("delivered", "SERIAL-1"),
     });
     const out = await svc.check("purchase", "pur_1", {
       attempt: 0,
@@ -233,7 +230,7 @@ describe("FulfilmentService.check", () => {
 
   it("vendor failure → FAILED, money leg FAILED, refund with the IDR amount from the locked tx", async () => {
     const { svc, prisma, refunds, queue } = buildHarness({
-      vendor: vendorStatus(9, "", ["Pending", "Gagal"]),
+      vendor: vendorStatus("failed", "", { reason: "Gagal" }),
     });
     const out = await svc.check("purchase", "pur_1", {
       attempt: 2,
@@ -262,7 +259,7 @@ describe("FulfilmentService.check", () => {
 
   it("still pending inside the SLA → touch and schedule the next attempt with backoff", async () => {
     const { svc, prisma, queue, push } = buildHarness({
-      vendor: vendorStatus(1),
+      vendor: vendorStatus("pending"),
     });
     const out = await svc.check("purchase", "pur_1", {
       attempt: 3,
@@ -285,7 +282,7 @@ describe("FulfilmentService.check", () => {
 
   it("pending past the SLA → DELAYED once, with a push", async () => {
     const { svc, prisma, push } = buildHarness({
-      vendor: vendorStatus(1),
+      vendor: vendorStatus("pending"),
       row: { expectedBy: new Date(Date.now() - 1000) },
     });
     const out = await svc.check("purchase", "pur_1", {
@@ -307,7 +304,7 @@ describe("FulfilmentService.check", () => {
 
   it("pending for more than 24h → NEEDS_RECONCILE, ops-facing, no refund", async () => {
     const { svc, prisma, refunds, push } = buildHarness({
-      vendor: vendorStatus(1),
+      vendor: vendorStatus("pending"),
       row: {
         fulfilmentStatus: "DELAYED",
         createdAt: new Date(Date.now() - 25 * HOUR),
@@ -331,7 +328,10 @@ describe("FulfilmentService.check", () => {
 
   it("a vendor transport failure is treated as pending, not as an outcome", async () => {
     const { svc, queue, refunds } = buildHarness({
-      vendor: { success: false, statusCode: 503, message: "down" },
+      vendor: vendorStatus("pending", "", {
+        unavailable: true,
+        reason: "503: down",
+      }),
     });
     const out = await svc.check("purchase", "pur_1", {
       attempt: 0,
@@ -344,7 +344,7 @@ describe("FulfilmentService.check", () => {
 
   it("delivered AFTER a refund keeps REFUNDED and flags the clawback", async () => {
     const { svc, prisma, refunds, push } = buildHarness({
-      vendor: vendorStatus(2, "LATE-1"),
+      vendor: vendorStatus("delivered", "LATE-1"),
       row: { fulfilmentStatus: "REFUNDED" },
     });
     const out = await svc.check("purchase", "pur_1", {
@@ -365,13 +365,13 @@ describe("FulfilmentService.check", () => {
   it("terminal rows and rows that never reached the vendor are not asked about", async () => {
     const delivered = buildHarness({ row: { fulfilmentStatus: "DELIVERED" } });
     expect(await delivered.svc.check("purchase", "pur_1")).toBe("DELIVERED");
-    expect(delivered.vcGamers.getOrderStatus).not.toHaveBeenCalled();
+    expect(delivered.adapter.checkOrder).not.toHaveBeenCalled();
 
     const queued = buildHarness({
       row: { fulfilmentStatus: "QUEUED", vendorRefId: null },
     });
     expect(await queued.svc.check("purchase", "pur_1")).toBe("QUEUED");
-    expect(queued.vcGamers.getOrderStatus).not.toHaveBeenCalled();
+    expect(queued.adapter.checkOrder).not.toHaveBeenCalled();
   });
 });
 

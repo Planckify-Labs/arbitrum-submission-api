@@ -1,5 +1,4 @@
 import { Injectable, Logger, NotFoundException } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 import {
@@ -9,11 +8,11 @@ import {
   RedemptionStatus,
 } from "@generated/prisma";
 import { PrismaService } from "../prisma/prisma.service";
-import { VCGamersService } from "../providers/vendor-api/implementations/vcgamers/vcgamers.service";
+import { VendorRegistry } from "../providers/vendor-api/vendor-registry.service";
+import type { VendorOrderFailure } from "../providers/vendor-api/base/base-vendor.service";
 import {
   TVCgamerResponse,
   TVCGamerOrderResponse,
-  TVCGamersOrderStatusResponse,
 } from "../providers/vendor-api/types/vcgamer-api.types";
 import { DeliveryParserService } from "../delivery/delivery-parser.service";
 import {
@@ -23,13 +22,6 @@ import {
 } from "../delivery/delivery.types";
 import { PointsRefundService } from "../points/points-refund.service";
 import { PushService, FulfilmentPushInput } from "../push/push.service";
-import {
-  classifyOrderFailure,
-  classifyVendorStatus,
-  DEFAULT_VENDOR_STATUS_CODES,
-  OrderFailureClass,
-  VendorStatusCodes,
-} from "./vendor-status.classifier";
 import {
   FULFILMENT_QUEUE,
   FulfilmentCheckJob,
@@ -54,48 +46,32 @@ const DEFAULT_EXPECTED_SECONDS = 15 * 60;
 /** Keep looking for a late delivery this long after a refund (clawback). */
 export const POST_REFUND_WATCH_MS = 24 * 60 * 60 * 1000;
 
-function parseCodes(value: string | undefined, fallback: number[]): number[] {
-  if (!value) return fallback;
-  const parsed = value
-    .split(",")
-    .map((v) => Number(v.trim()))
-    .filter((n) => Number.isInteger(n));
-  return parsed.length ? parsed : fallback;
-}
-
 /**
  * The fulfilment leg of an order, from "vendor accepted" to "product in
  * the buyer's hands" (or "money back"). Purchases and redemptions share
  * it. Every transition is a compare-and-set on `fulfilmentStatus`, so the
  * poller, the sweeper, the lazy read path and an admin can all observe
  * the same vendor answer without double-delivering or double-refunding.
+ *
+ * Provider-agnostic: the vendor is resolved per order from
+ * `productPrice.vendor.name` and only ever spoken to through the
+ * fulfilment port on `BaseVendorService` (`checkOrder`,
+ * `classifyOrderFailure`). Status codes and body shapes stay inside the
+ * adapters.
  */
 @Injectable()
 export class FulfilmentService {
   private readonly logger = new Logger(FulfilmentService.name);
-  private readonly codes: VendorStatusCodes;
 
   constructor(
     private readonly prisma: PrismaService,
     @InjectQueue(FULFILMENT_QUEUE)
     private readonly queue: Queue<FulfilmentCheckJob>,
-    private readonly vcGamers: VCGamersService,
+    private readonly vendors: VendorRegistry,
     private readonly parser: DeliveryParserService,
     private readonly refunds: PointsRefundService,
     private readonly push: PushService,
-    config: ConfigService,
-  ) {
-    this.codes = {
-      success: parseCodes(
-        config.get<string>("VCGAMERS_SUCCESS_STATUS_CODES"),
-        DEFAULT_VENDOR_STATUS_CODES.success,
-      ),
-      failed: parseCodes(
-        config.get<string>("VCGAMERS_FAILED_STATUS_CODES"),
-        DEFAULT_VENDOR_STATUS_CODES.failed,
-      ),
-    };
-  }
+  ) {}
 
   // ── entry points for the order workers ─────────────────────────────
 
@@ -137,8 +113,11 @@ export class FulfilmentService {
     kind: FulfilmentKind,
     id: string,
     resp: TVCgamerResponse<TVCGamerOrderResponse>,
-  ): Promise<OrderFailureClass> {
-    const { cls, reason } = classifyOrderFailure(resp);
+  ): Promise<VendorOrderFailure["cls"]> {
+    const target = await this.load(kind, id);
+    const { cls, reason } = this.vendors
+      .get(target.vendorName)
+      .classifyOrderFailure(resp);
     if (cls === "definitive") {
       await this.settleFailed(kind, id, `vendor rejected: ${reason}`, "auto");
     } else {
@@ -222,18 +201,19 @@ export class FulfilmentService {
       return target.fulfilmentStatus;
     }
 
-    const resp = await this.vcGamers.getOrderStatus(target.vendorRefId);
+    const verdict = await this.vendors
+      .get(target.vendorName)
+      .checkOrder(target.vendorRefId);
     await this.touch(kind, id);
 
-    if (!resp.success || !resp.data?.data) {
+    if (verdict.unavailable) {
       this.logger.warn(
-        `[fulfilment] status check failed for ${kind} ${id}: ${resp.message} (${resp.statusCode})`,
+        `[fulfilment] status check unavailable for ${kind} ${id}: ${verdict.reason ?? "unknown"}`,
       );
       return this.applyPending(target, opts);
     }
 
-    await this.cacheVendorStatus(target, resp.data);
-    const verdict = classifyVendorStatus(resp.data.data, this.codes);
+    await this.cacheVendorStatus(target, verdict.response);
 
     switch (verdict.outcome) {
       case "delivered":
@@ -481,7 +461,13 @@ export class FulfilmentService {
       const p = await this.prisma.purchase.findUnique({
         where: { id },
         include: {
-          bookingOrder: { select: { walletAddress: true, customerInfo: true } },
+          bookingOrder: {
+            select: {
+              walletAddress: true,
+              customerInfo: true,
+              productPrice: { select: { vendor: { select: { name: true } } } },
+            },
+          },
           productVariant: {
             select: {
               name: true,
@@ -510,6 +496,7 @@ export class FulfilmentService {
         vendorCheckCount: p.vendorCheckCount,
         userId: null,
         walletAddress: p.bookingOrder.walletAddress,
+        vendorName: p.bookingOrder.productPrice.vendor.name,
         productCode: p.productVariant.product.code,
         productName: p.productVariant.product.name,
         deliveryType: resolveDeliveryType(p.productVariant.product),
@@ -526,6 +513,7 @@ export class FulfilmentService {
     const r = await this.prisma.pointRedemption.findUnique({
       where: { id },
       include: {
+        productPrice: { select: { vendor: { select: { name: true } } } },
         productVariant: {
           select: {
             name: true,
@@ -554,6 +542,7 @@ export class FulfilmentService {
       vendorCheckCount: r.vendorCheckCount,
       userId: r.userId,
       walletAddress: null,
+      vendorName: r.productPrice.vendor.name,
       productCode: r.productVariant.product.code,
       productName:
         `${r.productVariant.product.name} ${r.productVariant.name}`.trim(),
@@ -635,17 +624,14 @@ export class FulfilmentService {
    * Keep the vendor's answer in the shape each read path already parses:
    * purchases wrap it, redemptions store the body as-is.
    */
-  private async cacheVendorStatus(
-    target: FulfilmentTarget,
-    body: TVCGamersOrderStatusResponse,
-  ) {
+  private async cacheVendorStatus(target: FulfilmentTarget, body: unknown) {
     try {
       if (target.kind === "purchase") {
         await this.prisma.purchase.update({
           where: { id: target.id },
           data: {
             vendorStatusResponse: {
-              vendorName: "vcGamer",
+              vendorName: target.vendorName,
               vendorStatusResponse: body,
             } as unknown as Prisma.InputJsonValue,
           },
@@ -668,9 +654,7 @@ export class FulfilmentService {
    * from the locked record. Anything that would need a live rate is left
    * for a human (`points: null` → held).
    */
-  private async refundAmount(
-    target: FulfilmentTarget,
-  ): Promise<{
+  private async refundAmount(target: FulfilmentTarget): Promise<{
     points: bigint | null;
     fiatAmount: string | null;
     currency: string | null;

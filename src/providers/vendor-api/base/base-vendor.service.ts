@@ -11,8 +11,42 @@ import { TVendorRequestError } from "../types/error.types";
 import { PrismaService } from "../../../prisma/prisma.service";
 import { VendorAPICacheService } from "../../../valkey/services/vendor-api-cache.service";
 
+// ── Fulfilment port ───────────────────────────────────────────────────
+// The only vendor knowledge the fulfilment leg (src/fulfilment) has. Each
+// adapter maps its own status codes / response bodies onto these; nothing
+// vendor-specific (codes, field names, env vars) may leak past this file.
+
+export type VendorOrderOutcome = "delivered" | "failed" | "pending";
+
+export interface VendorOrderStatus {
+  outcome: VendorOrderOutcome;
+  /** What the vendor handed over, verbatim (voucher code, token, serial), or null. */
+  raw: string | null;
+  /** Vendor's own words for a `failed` outcome, for ops. */
+  reason?: string;
+  /** The vendor body, cached on the order for audit. Shape is the adapter's business. */
+  response: unknown;
+  /** The lookup itself failed (transport, auth): nothing was learned — treat as pending. */
+  unavailable?: boolean;
+}
+
+/**
+ * Whether money can go back automatically after `createOrder` did not
+ * yield an accepted order. `definitive`: the vendor understood the
+ * request and said no (bad target id, sold out). `ambiguous`: a timeout,
+ * 5xx, rate limit, our own auth problem or a lost response — an order
+ * may exist on the vendor side, so a human decides.
+ */
+export interface VendorOrderFailure {
+  cls: "definitive" | "ambiguous";
+  reason: string;
+}
+
 @Injectable()
 export abstract class BaseVendorService {
+  /** Matches `Vendor.name` — how `VendorRegistry` finds this adapter. */
+  abstract readonly vendorName: string;
+
   protected readonly logger = new Logger(this.constructor.name);
   protected config: TVCGamerAPIConfig;
 
@@ -237,4 +271,12 @@ export abstract class BaseVendorService {
     data: Array<{ key: string; value: string }>,
     customRefId?: string,
   ): Promise<TVCgamerResponse<TVCGamerOrderResponse>>;
+
+  /** Ask the vendor how an accepted order is doing, normalised. */
+  abstract checkOrder(vendorRefId: string): Promise<VendorOrderStatus>;
+
+  /** Classify a `createOrder` result that did not produce an accepted order. */
+  abstract classifyOrderFailure(
+    resp: TVCgamerResponse<TVCGamerOrderResponse>,
+  ): VendorOrderFailure;
 }
