@@ -14,17 +14,24 @@ import { BridgeController } from "./bridge.controller";
 import { BridgeService } from "./bridge.service";
 import { CctpStellarAdapter } from "./providers/cctp-stellar.adapter";
 import { LifiBridgeAdapter } from "./providers/lifi.adapter";
+import { TowerSwapAdapter } from "./providers/tower.adapter";
 import { registerBridgeAdapter } from "./registry";
 
 @Module({
   controllers: [BridgeController],
-  providers: [BridgeService, LifiBridgeAdapter, CctpStellarAdapter],
+  providers: [
+    BridgeService,
+    LifiBridgeAdapter,
+    CctpStellarAdapter,
+    TowerSwapAdapter,
+  ],
   exports: [BridgeService],
 })
 export class BridgeModule implements OnModuleInit {
   constructor(
     private readonly lifi: LifiBridgeAdapter,
     private readonly cctpStellar: CctpStellarAdapter,
+    private readonly tower: TowerSwapAdapter,
   ) {}
 
   onModuleInit(): void {
@@ -38,5 +45,10 @@ export class BridgeModule implements OnModuleInit {
     // problem without adding a single new capability. With no overlap
     // there is nothing to arbitrate.
     registerBridgeAdapter(this.cctpStellar);
+
+    // `tower` — SAME-CHAIN swaps on Arc only. It never overlaps the two
+    // above: they refuse same-chain routes and it refuses cross-chain
+    // ones. LI.FI's Arc mainnet is dark, so this is Arc's only swap route.
+    registerBridgeAdapter(this.tower);
   }
 }

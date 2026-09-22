@@ -109,9 +109,10 @@ export class BridgeService {
   }
 
   async quote(req: BridgeQuoteRequest): Promise<BridgeQuoteResult> {
-    if (req.fromChain === req.toChain) {
-      return { routable: false, reason: "same_chain" };
-    }
+    // A same-chain request is a swap. It is routable only where an adapter
+    // explicitly serves one (`tower` on Arc); everywhere else it stays the
+    // `same_chain` capability boundary, decided below by `supports()`
+    // rather than a chain list here.
 
     // An asset id carries its own chain; a mismatch is a caller bug that
     // would otherwise quote a route for the wrong pair entirely.
@@ -130,6 +131,9 @@ export class BridgeService {
     );
 
     if (candidates.length === 0) {
+      if (req.fromChain === req.toChain) {
+        return { routable: false, reason: "same_chain" };
+      }
       // Distinguish "we don't reach that chain" from "we reach it but not
       // with that asset" so the card can say something true. A non-USDC
       // asset on Stellar is the canonical example (§3.2).
