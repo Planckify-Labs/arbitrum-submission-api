@@ -64,6 +64,8 @@ function buildHarness(
   opts: {
     row?: Record<string, unknown>;
     vendor?: unknown;
+    /** What the adapter reads from the order's cached vendor body. */
+    cached?: unknown;
     flipCount?: number;
   } = {},
 ) {
@@ -92,6 +94,7 @@ function buildHarness(
   const adapter = {
     vendorName: "acmePpob",
     checkOrder: jest.fn(async () => opts.vendor ?? vendorStatus("pending")),
+    readCachedStatus: jest.fn(() => opts.cached ?? null),
     classifyOrderFailure: jest.fn(
       (resp: { originalError?: { status?: number; message?: string } }) =>
         resp.originalError?.status === 422
@@ -472,5 +475,77 @@ describe("FulfilmentService.resolveManually", () => {
         }),
       }),
     );
+  });
+});
+
+describe("FulfilmentService.check — legacy QUEUED orders", () => {
+  // Vendor-accepted long ago but never entered the state machine (the
+  // migration backfill was skipped by `prisma db push`).
+  const legacy = {
+    fulfilmentStatus: "QUEUED",
+    createdAt: new Date(Date.now() - 40 * 24 * HOUR),
+    expectedBy: null,
+    vendorStatusResponse: {
+      vendorName: "acmePpob",
+      vendorStatusResponse: { cachedBody: true },
+    },
+  };
+
+  it("a cached delivery is recovered quietly without calling the vendor", async () => {
+    const { svc, prisma, adapter, push, refunds } = buildHarness({
+      row: legacy,
+      cached: { outcome: "delivered", raw: "TOKEN-1" },
+    });
+    expect(await svc.check("purchase", "pur_1")).toBe("DELIVERED");
+    expect(adapter.readCachedStatus).toHaveBeenCalledWith({ cachedBody: true });
+    expect(adapter.checkOrder).not.toHaveBeenCalled();
+    const delivered = (prisma.purchase.updateMany as AnyFn).mock.calls
+      .map((c) => c[0])
+      .find((f) => f.data.fulfilmentStatus === "DELIVERED");
+    expect(delivered.where.fulfilmentStatus.in).toContain("QUEUED");
+    expect(delivered.data.deliveryRaw).toBe("TOKEN-1");
+    await flushPush();
+    expect(push.sendFulfilmentPush).not.toHaveBeenCalled();
+    expect(refunds.refund).not.toHaveBeenCalled();
+  });
+
+  it("no usable cache → asks the vendor once; a delivery is applied quietly", async () => {
+    const { svc, adapter, push } = buildHarness({
+      row: legacy,
+      vendor: vendorStatus("delivered", "SERIAL-9"),
+    });
+    expect(await svc.check("purchase", "pur_1")).toBe("DELIVERED");
+    expect(adapter.checkOrder).toHaveBeenCalledWith("TRX1");
+    await flushPush();
+    expect(push.sendFulfilmentPush).not.toHaveBeenCalled();
+  });
+
+  it("anything short of a delivery goes to ops, never an automatic refund", async () => {
+    for (const outcome of ["pending", "failed"] as const) {
+      const { svc, prisma, push, refunds } = buildHarness({
+        row: legacy,
+        vendor: vendorStatus(outcome),
+      });
+      expect(await svc.check("purchase", "pur_1")).toBe("NEEDS_RECONCILE");
+      const flip = (prisma.purchase.updateMany as AnyFn).mock.calls
+        .map((c) => c[0])
+        .find((f) => f.data.fulfilmentStatus === "NEEDS_RECONCILE");
+      expect(flip).toBeDefined();
+      expect(refunds.refund).not.toHaveBeenCalled();
+      await flushPush();
+      expect(push.sendFulfilmentPush).not.toHaveBeenCalled();
+    }
+  });
+
+  it("an unreachable vendor leaves the row QUEUED for the next try", async () => {
+    const { svc, prisma } = buildHarness({
+      row: legacy,
+      vendor: vendorStatus("pending", "", { unavailable: true }),
+    });
+    expect(await svc.check("purchase", "pur_1")).toBe("QUEUED");
+    const statusFlip = (prisma.purchase.updateMany as AnyFn).mock.calls.find(
+      (c) => c[0].data.fulfilmentStatus,
+    );
+    expect(statusFlip).toBeUndefined();
   });
 });

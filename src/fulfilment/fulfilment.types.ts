@@ -35,6 +35,8 @@ export interface FulfilmentTarget {
   voucherTemplate: VoucherTemplate | null;
   slaSeconds: number | null;
   customerInfo: unknown;
+  /** The last vendor status body cached on the order; only its adapter can read it. */
+  cachedVendorStatus: unknown;
 }
 
 /** Terminal for the poller: nothing more to ask the vendor. */

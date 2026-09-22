@@ -3,6 +3,7 @@ import { Cron, CronExpression } from "@nestjs/schedule";
 import { FulfilmentStatus } from "@generated/prisma";
 import { PrismaService } from "../prisma/prisma.service";
 import { FulfilmentService, POST_REFUND_WATCH_MS } from "./fulfilment.service";
+import { LEGACY_QUEUED_AFTER_MS } from "./fulfilment-view";
 import { FulfilmentKind } from "./fulfilment.types";
 
 /** A SUBMITTED/DELAYED order nobody has asked the vendor about in this long lost its job. */
@@ -33,6 +34,7 @@ export class FulfilmentSweeperService {
     const staleBefore = new Date(Date.now() - STALE_CHECK_MS);
     const since = new Date(Date.now() - LOOKBACK_MS);
     const refundWatchSince = new Date(Date.now() - POST_REFUND_WATCH_MS);
+    const legacyBefore = new Date(Date.now() - LEGACY_QUEUED_AFTER_MS);
 
     const openWhere = {
       vendorRefId: { not: null },
@@ -46,6 +48,12 @@ export class FulfilmentSweeperService {
         {
           fulfilmentStatus: FulfilmentStatus.REFUNDED,
           createdAt: { gte: refundWatchSince },
+        },
+        // Accepted by the vendor but never entered the state machine;
+        // `check` recovers these quietly (see `isLegacyQueued`).
+        {
+          fulfilmentStatus: FulfilmentStatus.QUEUED,
+          createdAt: { lt: legacyBefore },
         },
       ],
       AND: [

@@ -275,6 +275,17 @@ export abstract class BaseVendorService {
   /** Ask the vendor how an accepted order is doing, normalised. */
   abstract checkOrder(vendorRefId: string): Promise<VendorOrderStatus>;
 
+  /**
+   * Optional: read a status body this adapter cached on the order earlier
+   * (`VendorOrderStatus.response`, or whatever it stored before the
+   * fulfilment leg existed) without calling the vendor. `null` when the
+   * body isn't one it recognises. Lets old orders be recovered after the
+   * vendor has stopped answering for them.
+   */
+  readCachedStatus?(
+    stored: unknown,
+  ): Omit<VendorOrderStatus, "response" | "unavailable"> | null;
+
   /** Classify a `createOrder` result that did not produce an accepted order. */
   abstract classifyOrderFailure(
     resp: TVCgamerResponse<TVCGamerOrderResponse>,

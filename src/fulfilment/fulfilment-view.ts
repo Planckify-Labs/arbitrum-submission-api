@@ -76,6 +76,32 @@ export function legacyVoucherCode(
   return deliveryRaw ?? delivery?.raw ?? delivery?.primary?.value ?? null;
 }
 
+/**
+ * Past this age a QUEUED order holding a vendor ref never went through the
+ * state machine: the worker moves it to SUBMITTED within seconds.
+ */
+export const LEGACY_QUEUED_AFTER_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The vendor accepted it, yet it sits at the column default: it predates
+ * the fulfilment leg, or its migration's backfill never ran (`prisma db
+ * push` applies columns but skips a migration's data SQL).
+ */
+export function isLegacyQueued(
+  row: {
+    fulfilmentStatus: FulfilmentStatus;
+    vendorRefId: string | null;
+    createdAt: Date;
+  },
+  now = Date.now(),
+): boolean {
+  return (
+    row.fulfilmentStatus === FulfilmentStatus.QUEUED &&
+    !!row.vendorRefId &&
+    now - row.createdAt.getTime() > LEGACY_QUEUED_AFTER_MS
+  );
+}
+
 /** A read path should ask the vendor when the user is looking and nobody has recently. */
 export function isWorthChecking(
   row: {
@@ -87,6 +113,7 @@ export function isWorthChecking(
 ): boolean {
   if (!row.vendorRefId) return false;
   if (
+    row.fulfilmentStatus !== FulfilmentStatus.QUEUED &&
     row.fulfilmentStatus !== FulfilmentStatus.SUBMITTED &&
     row.fulfilmentStatus !== FulfilmentStatus.DELAYED &&
     row.fulfilmentStatus !== FulfilmentStatus.NEEDS_RECONCILE

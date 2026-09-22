@@ -206,6 +206,20 @@ export class VCGamersService extends BaseVendorService {
     return { ...verdict, response: resp.data };
   }
 
+  /**
+   * `checkOrder` caches `resp.data` (the order-status body); the redeem
+   * path cached the same body before the fulfilment leg existed. Anything
+   * without a `data.detail` (e.g. the createOrder body) is not ours to read.
+   */
+  readCachedStatus(
+    stored: unknown,
+  ): Omit<VendorOrderStatus, "response" | "unavailable"> | null {
+    const data = (stored as Partial<TVCGamersOrderStatusResponse> | null)
+      ?.data;
+    if (!data || typeof data !== "object" || !data.detail) return null;
+    return classifyVendorStatus(data);
+  }
+
   classifyOrderFailure(
     resp: TVCgamerResponse<TVCGamerOrderResponse>,
   ): VendorOrderFailure {

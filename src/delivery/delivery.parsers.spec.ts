@@ -166,3 +166,41 @@ describe("resolveDeliveryType", () => {
     );
   });
 });
+
+describe("DeliveryParserService.parse — code recognition by content", () => {
+  // The prod PLN product is `isVoucher: false` in the vendor feed, so it
+  // resolves to DIRECT_TOPUP; the token must still come out as a code.
+  const { DeliveryParserService } =
+    require("./delivery-parser.service") as typeof import("./delivery-parser.service");
+  const parser = new DeliveryParserService({} as never);
+  const plnRaw = "1234-5678-9012-3456-7890/BUDI SANTOSO/R1/900VA/32,1";
+
+  it("a PLN token on a top-up-typed product is a voucher with the token as primary", () => {
+    const out = parser.parse({
+      productCode: "PLN",
+      deliveryType: DeliveryType.DIRECT_TOPUP,
+      raw: plnRaw,
+      template: null,
+      customerInfo: [{ key: "userId", value: "14466306140" }],
+    });
+    expect(out.kind).toBe("voucher");
+    expect(out.primary).toEqual({
+      label: "Token",
+      value: "1234-5678-9012-3456-7890",
+      copyable: true,
+    });
+    expect(out.raw).toBe(plnRaw);
+    expect(out.target).toBe("14466306140");
+  });
+
+  it("an ordinary top-up serial stays a top-up", () => {
+    const out = parser.parse({
+      productCode: "MLBB",
+      deliveryType: DeliveryType.DIRECT_TOPUP,
+      raw: "SN-99887766",
+      template: null,
+      customerInfo: [],
+    });
+    expect(out.kind).toBe("topup");
+  });
+});

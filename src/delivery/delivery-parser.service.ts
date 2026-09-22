@@ -13,6 +13,19 @@ import { parseHeuristic } from "./parsers/heuristic.parser";
 
 type CustomerInfoEntry = { key: string; value: unknown };
 
+/** Format-specific code parsers, tier 2. Each returns null unless the raw is unmistakably its format. */
+const CODE_PARSERS: Array<(raw: string) => DeliveryPayload | null> = [
+  parsePln,
+];
+
+function recogniseCode(raw: string): DeliveryPayload | null {
+  for (const parse of CODE_PARSERS) {
+    const hit = parse(raw);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 /**
  * Turns whatever the vendor put in `voucher_code` into the one
  * `DeliveryPayload` shape mobile renders. Tiers, first match wins:
@@ -34,6 +47,14 @@ export class DeliveryParserService {
   parse(input: ParseInput): DeliveryPayload {
     const raw = input.raw?.trim() || null;
     const target = this.extractTarget(input.customerInfo, input.deliveryType);
+
+    // Code parsers match on content (a PLN token's exact 5×4-digit shape),
+    // so a recognised code is a code whatever the product's delivery type
+    // says: vendor feeds label prepaid electricity a top-up.
+    if (raw && input.deliveryType !== DeliveryType.VOUCHER_CODE) {
+      const code = recogniseCode(raw);
+      if (code) return { ...code, target };
+    }
 
     switch (input.deliveryType) {
       case DeliveryType.VOUCHER_CODE:
@@ -85,7 +106,7 @@ export class DeliveryParserService {
    */
   async parseAndRecord(input: ParseInput): Promise<DeliveryPayload> {
     const payload = this.parse(input);
-    if (payload.raw && input.deliveryType === DeliveryType.VOUCHER_CODE) {
+    if (payload.raw && payload.kind === "voucher") {
       await this.recordShape(input.productCode, payload.raw, payload.parse);
     }
     return payload;
@@ -114,10 +135,7 @@ export class DeliveryParserService {
       );
     }
 
-    const pln = parsePln(raw);
-    if (pln) return pln;
-
-    return parseHeuristic(raw);
+    return recogniseCode(raw) ?? parseHeuristic(raw);
   }
 
   private async recordShape(

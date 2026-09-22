@@ -22,6 +22,7 @@ import {
 } from "../delivery/delivery.types";
 import { PointsRefundService } from "../points/points-refund.service";
 import { PushService, FulfilmentPushInput } from "../push/push.service";
+import { isLegacyQueued } from "./fulfilment-view";
 import {
   FULFILMENT_QUEUE,
   FulfilmentCheckJob,
@@ -192,6 +193,7 @@ export class FulfilmentService {
     if (TERMINAL_FULFILMENT.has(target.fulfilmentStatus))
       return target.fulfilmentStatus;
     if (!target.vendorRefId) return target.fulfilmentStatus; // never reached the vendor
+    if (isLegacyQueued(target)) return this.recoverLegacy(target);
 
     // After a refund we still look, but only for a late delivery (clawback).
     if (
@@ -281,6 +283,7 @@ export class FulfilmentService {
   private async applyDelivered(
     target: FulfilmentTarget,
     raw: string | null,
+    { notify = true }: { notify?: boolean } = {},
   ): Promise<FulfilmentStatus> {
     const delivery = await this.parser.parseAndRecord({
       productCode: target.productCode,
@@ -313,7 +316,7 @@ export class FulfilmentService {
       deliveryRaw: raw,
       ...this.moneyLeg(target.kind, "completed"),
     });
-    if (flipped) {
+    if (flipped && notify) {
       this.notify(target, {
         stage: "delivered",
         deliveryKind: delivery.kind,
@@ -382,6 +385,7 @@ export class FulfilmentService {
     kind: FulfilmentKind,
     id: string,
     reason: string,
+    { notify = true }: { notify?: boolean } = {},
   ) {
     const target = await this.load(kind, id);
     const flipped = await this.flip(
@@ -401,8 +405,47 @@ export class FulfilmentService {
       this.logger.error(
         `[fulfilment] ${kind} ${id} NEEDS_RECONCILE: ${reason}`,
       );
-      this.notify(target, { stage: "reconcile" });
+      if (notify) this.notify(target, { stage: "reconcile" });
     }
+  }
+
+  /**
+   * A vendor-accepted order that never entered this state machine (see
+   * `isLegacyQueued`). The buyer was told about it at the time, so this is
+   * quiet: no pushes. The adapter's cached answer wins when it shows a
+   * delivery (the vendor may no longer answer for old orders); otherwise
+   * ask once. Anything short of a delivery goes to ops, never an automatic
+   * refund of an old order.
+   */
+  private async recoverLegacy(
+    target: FulfilmentTarget,
+  ): Promise<FulfilmentStatus> {
+    const adapter = this.vendors.get(target.vendorName);
+    const cached =
+      adapter.readCachedStatus?.(target.cachedVendorStatus) ?? null;
+    if (cached?.outcome === "delivered") {
+      return this.applyDelivered(target, cached.raw, { notify: false });
+    }
+
+    const live = await adapter.checkOrder(target.vendorRefId as string);
+    await this.touch(target.kind, target.id);
+    if (live.unavailable) {
+      this.logger.warn(
+        `[fulfilment] legacy ${target.kind} ${target.id}: status check unavailable: ${live.reason ?? "unknown"}`,
+      );
+      return target.fulfilmentStatus;
+    }
+    await this.cacheVendorStatus(target, live.response);
+    if (live.outcome === "delivered") {
+      return this.applyDelivered(target, live.raw, { notify: false });
+    }
+    await this.markReconcile(
+      target.kind,
+      target.id,
+      `legacy order, vendor says ${live.outcome}${live.reason ? `: ${live.reason}` : ""}`,
+      { notify: false },
+    );
+    return FulfilmentStatus.NEEDS_RECONCILE;
   }
 
   private async applyPending(
@@ -507,6 +550,10 @@ export class FulfilmentService {
           : null,
         slaSeconds: p.productVariant.slaSeconds,
         customerInfo: p.bookingOrder.customerInfo,
+        // `cacheVendorStatus` wraps the purchase body with the vendor name.
+        cachedVendorStatus:
+          (p.vendorStatusResponse as { vendorStatusResponse?: unknown } | null)
+            ?.vendorStatusResponse ?? null,
       };
     }
 
@@ -554,6 +601,7 @@ export class FulfilmentService {
         : null,
       slaSeconds: r.productVariant.slaSeconds,
       customerInfo: r.customerInfo,
+      cachedVendorStatus: r.vendorResponse,
     };
   }
 

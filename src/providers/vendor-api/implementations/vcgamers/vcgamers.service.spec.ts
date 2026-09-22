@@ -236,3 +236,30 @@ beforeEach(() => {
 afterEach(() => {
   jest.restoreAllMocks();
 });
+
+describe("VCGamersService.readCachedStatus", () => {
+  it("reads a cached order-status body, including the pre-fulfilment redeem cache", () => {
+    const svc = buildSvc();
+    const stored = {
+      code: 200,
+      status: "success",
+      rc_code: "00",
+      data: {
+        status: 2,
+        detail: { voucher_code: "1234 5678 9012 3456 7890/BUDI/R1/900VA/32,1" },
+        history_status: [],
+      },
+    };
+    expect(svc.readCachedStatus(stored)).toEqual({
+      outcome: "delivered",
+      raw: "1234 5678 9012 3456 7890/BUDI/R1/900VA/32,1",
+    });
+  });
+
+  it("does not claim bodies that are not order-status bodies", () => {
+    const svc = buildSvc();
+    expect(svc.readCachedStatus(null)).toBeNull();
+    expect(svc.readCachedStatus({ data: { status: 4 } })).toBeNull();
+    expect(svc.readCachedStatus("nope")).toBeNull();
+  });
+});
