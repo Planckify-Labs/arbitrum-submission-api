@@ -1784,7 +1784,7 @@ async function main() {
         symbol: "USDC",
         decimals: 6,
         logoUrl:
-          "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
+          "https://static.alchemyapi.io/images/assets/3408.png",
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "USD",
@@ -1796,7 +1796,7 @@ async function main() {
         blockchainId: evmChain(1).id, // Ethereum
         contractAddress: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
         logoUrl:
-          "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
+          "https://static.alchemyapi.io/images/assets/3408.png",
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "USD",
@@ -1815,7 +1815,7 @@ async function main() {
         symbol: "USDT",
         decimals: 6,
         logoUrl:
-          "https://assets.coingecko.com/coins/images/325/small/Tether.png",
+          "https://static.alchemyapi.io/images/assets/825.png",
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "USD",
@@ -1827,7 +1827,7 @@ async function main() {
         blockchainId: evmChain(1).id, // Ethereum
         contractAddress: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
         logoUrl:
-          "https://assets.coingecko.com/coins/images/325/small/Tether.png",
+          "https://static.alchemyapi.io/images/assets/825.png",
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "USD",
@@ -1846,7 +1846,7 @@ async function main() {
         symbol: "USDT",
         decimals: 6,
         logoUrl:
-          "https://assets.coingecko.com/coins/images/325/small/Tether.png",
+          "https://static.alchemyapi.io/images/assets/825.png",
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "USD",
@@ -1858,7 +1858,7 @@ async function main() {
         blockchainId: evmChain(11155111).id, // Ethereum Sepolia
         contractAddress: "0xA6ffC6d992F4C6e173836035Aebb8AF3dBBB15cd",
         logoUrl:
-          "https://assets.coingecko.com/coins/images/325/small/Tether.png",
+          "https://static.alchemyapi.io/images/assets/825.png",
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "USD",
@@ -1877,7 +1877,7 @@ async function main() {
         symbol: "IDRX",
         decimals: 2,
         logoUrl:
-          "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/polygon/assets/0x649a2DA7B28E0D54c13D5eFf95d3A660652742cC/logo.png",
+          "https://static.alchemyapi.io/images/assets/26732.png",
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "IDR",
@@ -1889,7 +1889,7 @@ async function main() {
         blockchainId: evmChain(84532).id, // Base
         contractAddress: "0x1aC593085Fa34c651E805085da4b2cabAC676F99",
         logoUrl:
-          "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/polygon/assets/0x649a2DA7B28E0D54c13D5eFf95d3A660652742cC/logo.png",
+          "https://static.alchemyapi.io/images/assets/26732.png",
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "IDR",
@@ -1910,7 +1910,7 @@ async function main() {
         symbol: "USDC",
         decimals: 6,
         logoUrl:
-          "https://assets.coingecko.com/coins/images/6319/small/usdc.png",
+          "https://static.alchemyapi.io/images/assets/3408.png",
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "USD",
@@ -1922,7 +1922,7 @@ async function main() {
         blockchainId: evmChain(84532).id, // Base Sepolia
         contractAddress: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
         logoUrl:
-          "https://assets.coingecko.com/coins/images/6319/small/usdc.png",
+          "https://static.alchemyapi.io/images/assets/3408.png",
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "USD",
@@ -1943,7 +1943,7 @@ async function main() {
         symbol: "USDT",
         decimals: 6,
         logoUrl:
-          "https://assets.coingecko.com/coins/images/325/small/Tether.png",
+          "https://static.alchemyapi.io/images/assets/825.png",
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "USD",
@@ -1955,7 +1955,7 @@ async function main() {
         blockchainId: evmChain(42161).id, // Arbitrum mainnet
         contractAddress: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",
         logoUrl:
-          "https://assets.coingecko.com/coins/images/325/small/Tether.png",
+          "https://static.alchemyapi.io/images/assets/825.png",
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "USD",
@@ -1979,7 +1979,7 @@ async function main() {
         symbol: "USDC",
         decimals: 6,
         logoUrl:
-          "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
+          "https://static.alchemyapi.io/images/assets/3408.png",
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "USD",
@@ -1992,7 +1992,7 @@ async function main() {
         contractAddress:
           "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC",
         logoUrl:
-          "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
+          "https://static.alchemyapi.io/images/assets/3408.png",
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "USD",
@@ -2291,7 +2291,7 @@ async function main() {
         symbol: "USDC",
         decimals: 6,
         logoUrl:
-          "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
+          "https://static.alchemyapi.io/images/assets/3408.png",
         isStablecoin: true,
         isActive: true,
         isPaymentEnabled: true,
@@ -2304,7 +2304,7 @@ async function main() {
         blockchainId: slugChain("solana-devnet").id, // Solana Devnet
         contractAddress: "4qFejVSp46Q4SZCGDrXbkFJC1qw5uo1JBnbXLnKZurey",
         logoUrl:
-          "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
+          "https://static.alchemyapi.io/images/assets/3408.png",
         isStablecoin: true,
         isActive: true,
         isPaymentEnabled: true,
@@ -2324,7 +2324,7 @@ async function main() {
         symbol: "USDC",
         decimals: 6,
         logoUrl:
-          "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
+          "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png",
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "USD",
@@ -2336,7 +2336,7 @@ async function main() {
         blockchainId: slugChain("solana-mainnet").id, // Solana Mainnet
         contractAddress: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         logoUrl:
-          "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png",
+          "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png",
         isStablecoin: true,
         isActive: true,
         peggedCurrency: "USD",
@@ -2380,7 +2380,7 @@ async function main() {
         symbol: "USDC",
         decimals: 6,
         logoUrl:
-          "https://pbs.twimg.com/profile_images/1955238194443849732/sHyVRItm_400x400.jpg",
+          "https://static.alchemyapi.io/images/assets/3408.png",
         isStablecoin: true,
         isNativeCurrency: false,
         isPaymentEnabled: true,
@@ -2394,7 +2394,7 @@ async function main() {
         blockchainId: evmChain(5042002).id, // Arc Testnet
         contractAddress: "0x3600000000000000000000000000000000000000",
         logoUrl:
-          "https://pbs.twimg.com/profile_images/1955238194443849732/sHyVRItm_400x400.jpg",
+          "https://static.alchemyapi.io/images/assets/3408.png",
         isStablecoin: true,
         isNativeCurrency: false,
         isPaymentEnabled: true,
@@ -2809,7 +2809,7 @@ async function main() {
           name: label,
           symbol: "USDC",
           decimals: 7,
-          logoUrl: "https://cryptologos.cc/logos/usd-coin-usdc-logo.png",
+          logoUrl: "https://static.alchemyapi.io/images/assets/3408.png",
           isStablecoin: true,
           isNativeCurrency: false,
           isActive: true,
@@ -2825,7 +2825,7 @@ async function main() {
           decimals: 7,
           blockchainId: stellarChainId,
           contractAddress,
-          logoUrl: "https://cryptologos.cc/logos/usd-coin-usdc-logo.png",
+          logoUrl: "https://static.alchemyapi.io/images/assets/3408.png",
           isStablecoin: true,
           isNativeCurrency: false,
           isActive: true,
@@ -2953,8 +2953,10 @@ async function main() {
           decimals: underlyingDecimals,
           logoUrl:
             reserve.symbol === "USDC"
-              ? "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png"
-              : null,
+              ? "https://static.alchemyapi.io/images/assets/3408.png"
+              : reserve.symbol === "USDT"
+                ? "https://static.alchemyapi.io/images/assets/825.png"
+                : null,
           isStablecoin: reserve.symbol === "USDC" || reserve.symbol === "USDT",
           isActive: true,
           peggedCurrency: reserve.symbol === "USDC" ? "USD" : null,
@@ -2967,8 +2969,10 @@ async function main() {
           contractAddress: reserve.tokenAddress.toLowerCase(),
           logoUrl:
             reserve.symbol === "USDC"
-              ? "https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png"
-              : null,
+              ? "https://static.alchemyapi.io/images/assets/3408.png"
+              : reserve.symbol === "USDT"
+                ? "https://static.alchemyapi.io/images/assets/825.png"
+                : null,
           isStablecoin: reserve.symbol === "USDC" || reserve.symbol === "USDT",
           isActive: true,
           peggedCurrency: reserve.symbol === "USDC" ? "USD" : null,
