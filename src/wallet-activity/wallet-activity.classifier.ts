@@ -1,3 +1,4 @@
+import type { ContactLabelLookup } from "../address-book/contact-labels";
 import { NotificationCategory } from "../push/notification-categories";
 import { truncateAddress } from "../utils/address";
 import {
@@ -70,6 +71,8 @@ export interface ClassifyInput {
   watchedAddress: string;
   /** Display name for a Zerion chain id ("monad" → "Monad"). */
   chainName: (zerionChainId: string) => string;
+  /** The watched wallet's own address-book names, keyed by counterparty. */
+  contactLabel?: ContactLabelLookup;
 }
 
 // Matches the "en-US" grouping used for points/currency everywhere else.
@@ -153,7 +156,12 @@ function counterpartyLabel(
   address: string | null,
   appName: string | null,
   appContract: string | null,
+  contactLabel: ContactLabelLookup | undefined,
 ): string | null {
+  // A name the user saved for this address beats both the app name and the
+  // shortened address: it is the one label they are sure to recognise.
+  const contact = contactLabel?.(address);
+  if (contact) return contact;
   if (appName && (!address || !appContract || same(appContract, address))) {
     return appName;
   }
@@ -259,10 +267,13 @@ export function classifyActivity(
   if (op === "approve" || op === "revoke") {
     const approval: ZerionApproval | undefined = attrs.approvals?.[0];
     const asset = approval?.fungible_info?.symbol?.trim();
+    // No contact names here: a friendly label on a spender would make an
+    // approval look safer than the warning below means it to.
     const spender = counterpartyLabel(
       approval?.sender ?? attrs.sent_to ?? null,
       app,
       appContract,
+      undefined,
     );
     if (op === "revoke") {
       return build(
@@ -314,14 +325,24 @@ export function classifyActivity(
       );
     }
     if (inNft.length > 0) {
-      const from = counterpartyLabel(inNft[0].sender ?? null, app, appContract);
+      const from = counterpartyLabel(
+        inNft[0].sender ?? null,
+        app,
+        appContract,
+        input.contactLabel,
+      );
       return build(
         "nft_receive",
         "NFT received",
         `You received ${name(inNft[0])}${from ? ` from ${from}` : ""}${on}.`,
       );
     }
-    const to = counterpartyLabel(outNft[0].recipient ?? null, app, appContract);
+    const to = counterpartyLabel(
+      outNft[0].recipient ?? null,
+      app,
+      appContract,
+      input.contactLabel,
+    );
     return build(
       "nft_send",
       "NFT sent",
@@ -343,7 +364,12 @@ export function classifyActivity(
   }
 
   if (inF.length > 0 && outF.length === 0) {
-    const from = counterpartyLabel(inF[0].counterparty, app, appContract);
+    const from = counterpartyLabel(
+      inF[0].counterparty,
+      app,
+      appContract,
+      input.contactLabel,
+    );
     switch (op) {
       case "claim":
         return build(
@@ -373,7 +399,12 @@ export function classifyActivity(
   }
 
   if (outF.length > 0 && inF.length === 0) {
-    const to = counterpartyLabel(outF[0].counterparty, app, appContract);
+    const to = counterpartyLabel(
+      outF[0].counterparty,
+      app,
+      appContract,
+      input.contactLabel,
+    );
     switch (op) {
       case "deposit":
         return build(

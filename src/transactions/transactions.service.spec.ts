@@ -132,9 +132,15 @@ describe("TransactionsService.create", () => {
 describe("TransactionsService.create — transfer notifications", () => {
   function buildTransferPrismaStub(
     tokenOverrides: Record<string, unknown> = {},
-    opts: { earlierRow?: { id: string } | null } = {},
+    opts: {
+      earlierRow?: { id: string } | null;
+      contacts?: { address: string; label: string }[];
+    } = {},
   ) {
     const prisma = {
+      addressBook: {
+        findMany: jest.fn(async () => opts.contacts ?? []),
+      },
       transactionHistory: {
         create: jest.fn(
           async ({ data }: { data: Record<string, unknown> }) => ({
@@ -214,6 +220,49 @@ describe("TransactionsService.create — transfer notifications", () => {
       attempted: 1,
       notificationLogId: "log_1",
     });
+  });
+
+  it("names the sender by the recipient's saved contact, not the address", async () => {
+    const sender = "0x9f83e8d1c3b0a2e4f5a6b7c8d9e0f1a2dbb8e94f";
+    const recipient = "0x425e71b2c3d4e5f6a7b8c9d0e1f2a3b40ce69fc9";
+    const prisma = buildTransferPrismaStub(
+      {},
+      // Saved with different casing than the transfer carries.
+      {
+        contacts: [
+          { address: sender.toUpperCase().replace("0X", "0x"), label: "Alice" },
+        ],
+      },
+    );
+    const { push, stageToWallet } = buildPushStub();
+    const svc = new TransactionsService(prisma, push, tokenIconStub);
+
+    await svc.create("user_1", {
+      tokenId: "tk_usdc",
+      type: "TRANSFER",
+      amount: "50000000",
+      txHash: "0xhash",
+      fromAddress: sender,
+      toAddress: recipient,
+    } as never);
+
+    expect(stageToWallet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: "You received 50 USDC from Alice to 0x425e71...0ce69fc9.",
+      }),
+      prisma,
+    );
+    // The recipient's book, looked up by the recipient's canonical address.
+    expect(
+      (prisma as unknown as { addressBook: { findMany: jest.Mock } })
+        .addressBook.findMany,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          user: { walletAddress: "0x425e71B2c3d4E5F6a7B8C9d0e1f2A3b40CE69fC9" },
+        },
+      }),
+    );
   });
 
   it("does not ring the recipient twice when the same on-chain transfer is recorded again", async () => {

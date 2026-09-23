@@ -2,6 +2,7 @@ import { Prisma, TransactionStatus, TransactionType } from "@generated/prisma";
 import { Processor, WorkerHost } from "@nestjs/bullmq";
 import { Logger } from "@nestjs/common";
 import { type Job, UnrecoverableError } from "bullmq";
+import { loadContactLabels } from "../address-book/contact-labels";
 import { ZerionApiError } from "../external/zerion/zerion-subscriptions.client";
 import { chainFromZerionId } from "../external/zerion/zerion.chains";
 import { PrismaService } from "../prisma/prisma.service";
@@ -140,6 +141,7 @@ export class WalletActivityProcessor extends WorkerHost {
       tx,
       watchedAddress: watched,
       chainName: (id) => chainRow?.name ?? humanizeChainId(id),
+      contactLabel: await loadContactLabels(this.prisma, watched),
     });
     if (!plan) return false;
 

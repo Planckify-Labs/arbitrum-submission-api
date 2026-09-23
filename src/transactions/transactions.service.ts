@@ -1,5 +1,6 @@
 import { Prisma, TransactionType } from "@generated/prisma";
 import { Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { loadContactLabels } from "../address-book/contact-labels";
 import { CursorPaginationDto } from "../dto/common/pagination.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import { PushService, type SendPushResult } from "../push/push.service";
@@ -138,8 +139,13 @@ export class TransactionsService {
         .div(new Prisma.Decimal(10).pow(transaction.token.decimals))
         .toNumber();
       const amountFormatted = AMOUNT_NUMBER_FORMAT.format(humanAmount);
-      const senderShort = transaction.senderAddress
-        ? truncateAddress(transaction.senderAddress)
+      // The recipient's own name for the sender, if they saved one ("from
+      // Alice"), read outside `tx` — see loadContactLabels.
+      const contactName = (
+        await loadContactLabels(this.prisma, transaction.recipientAddress)
+      )(transaction.senderAddress);
+      const senderLabel = transaction.senderAddress
+        ? (contactName ?? truncateAddress(transaction.senderAddress))
         : "another wallet";
       const recipientShort = truncateAddress(transaction.recipientAddress);
 
@@ -147,7 +153,7 @@ export class TransactionsService {
         {
           walletAddress: transaction.recipientAddress,
           title: "Transfer Received",
-          body: `You received ${amountFormatted} ${transaction.token.symbol} from ${senderShort} to ${recipientShort}.`,
+          body: `You received ${amountFormatted} ${transaction.token.symbol} from ${senderLabel} to ${recipientShort}.`,
           // Our own PNG endpoint, not the raw logoUrl: Android decodes the
           // push image with BitmapFactory and silently drops SVGs and
           // hot-link-blocked hosts — see TokenIconService.

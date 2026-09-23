@@ -210,6 +210,62 @@ describe("classifyActivity — transfers", () => {
   });
 });
 
+describe("classifyActivity — contact names", () => {
+  // Mixed case on purpose: the lookup, not the classifier, owns matching.
+  const contacts = (address: string | null | undefined) =>
+    address?.toLowerCase() === OTHER || address?.toLowerCase() === ROUTER
+      ? "Alice"
+      : null;
+
+  it("received: a saved contact replaces the shortened sender address", () => {
+    const plan = classifyActivity({
+      tx: tx({
+        operation_type: "receive",
+        sent_from: OTHER,
+        sent_to: ME,
+        transfers: [transfer("in", "USDC", 25)],
+      }),
+      watchedAddress: ME,
+      chainName,
+      contactLabel: contacts,
+    });
+    expect(plan!.body).toBe("You received 25 USDC from Alice on Monad.");
+  });
+
+  it("sent: names the contact the funds went to", () => {
+    const plan = classifyActivity({
+      tx: tx({
+        operation_type: "send",
+        transfers: [transfer("out", "MON", 1.5)],
+      }),
+      watchedAddress: ME,
+      chainName,
+      contactLabel: contacts,
+    });
+    expect(plan!.body).toBe("You sent 1.5 MON to Alice on Monad.");
+  });
+
+  it("an approval never borrows a contact name for the spender", () => {
+    const plan = classifyActivity({
+      tx: tx({
+        operation_type: "approve",
+        approvals: [
+          {
+            sender: ROUTER,
+            quantity: { float: 5, int: "5000000", decimals: 6 },
+            fungible_info: { symbol: "USDC", name: "USD Coin" },
+          },
+        ],
+      }),
+      watchedAddress: ME,
+      chainName,
+      contactLabel: contacts,
+    });
+    expect(plan!.body).toContain("for 0x7a250d...59f2488d");
+    expect(plan!.body).not.toContain("Alice");
+  });
+});
+
 describe("classifyActivity — approvals are their own category", () => {
   it("an unlimited approval says so and asks the user to check the app", () => {
     const plan = classify(
