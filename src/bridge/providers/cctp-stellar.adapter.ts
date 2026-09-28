@@ -1,51 +1,59 @@
 /**
- * `cctp` — Circle CCTP, scoped to routes touching STELLAR ONLY.
+ * `cctp` — Circle CCTP V2 for routes touching STELLAR, both directions.
  *
  * Spec: docs/bridge-capability-spec.md §5.4, §5.4.1, §10.5, §10.6.
  *
- * ## Why this adapter exists at all
+ * ## Why this adapter exists
  *
- * Stellar is absent from LI.FI entirely (§3.2), and we ship Stellar. CCTP
- * reaches it directly as domain 27. That is precisely the case the
- * provider registry exists to absorb: a second adapter covers what the
- * first cannot, and no shared code learns the difference.
+ * Stellar is absent from LI.FI entirely (§3.2), and Arc App Kit (the
+ * `circle-cctp` adapter) does not reach Stellar either: App Kit's bridge
+ * chain list is EVM + Solana. CCTP reaches Stellar directly as domain 27,
+ * so this adapter makes raw contract calls. The EVM-side facts (domain,
+ * USDC, `TokenMessengerV2`, forwarding support) come from App Kit's chain
+ * definitions, so there is one Circle-sourced table, not two.
  *
- * ## Why it is Stellar-only and not a general CCTP provider
+ * ## EVM → Stellar
  *
- * Decision §10.5. LI.FI already aggregates CCTP through four tool keys
- * and picks it when it is the best USDC route (§2.1), so an EVM-capable
- * `cctp` adapter would add an arbitration problem without adding a single
- * new capability. Scoping to Stellar makes `supports()` deterministic,
- * removes the "optimise for cost or time?" question entirely, and
- * confines this phase's risk to one chain.
+ * `depositForBurnWithHook` on the EVM source, with BOTH `mintRecipient`
+ * and `destinationCaller` set to the pinned `CctpForwarder` and the real
+ * recipient in the hook (`stellar-burn-params.ts`, unconstructible if
+ * wrong). Stellar has NO Forwarding Service, so once Circle attests the
+ * burn, somebody must call `CctpForwarder.mint_and_forward(message,
+ * attestation)` on Stellar. That is the recipient's own wallet: `status()`
+ * returns the invocation as `destinationAction` once the burn is attested
+ * and the nonce is still unused, and the transfer is `completed` only
+ * when the MessageTransmitter reports the nonce used — never merely on
+ * attestation.
  *
- * ## Why the SDK is not used
+ * ## Stellar → EVM
  *
- * Circle ships Bridge Kit, but its self-custody adapters cover EVM and
- * Solana only; its any-chain claim is scoped to Circle Wallets, which is
- * custodial and therefore not an option for us. The one chain we need
- * CCTP for is the one Bridge Kit cannot serve non-custodially, so this is
- * raw contract calls.
+ * `TokenMessengerMinter.deposit_for_burn_with_hook` on Soroban (argument
+ * layout read from the deployed contract's own spec), carrying Circle's
+ * Forwarding Service hook so Circle submits the EVM mint. Only EVM
+ * destinations with Forwarding Service support are offered.
  *
- * ## Direction
+ * ## Mainnet gate
  *
- * EVM → Stellar is implemented: the burn is a `depositForBurnWithHook`
- * call on `TokenMessengerV2`, whose ABI is verified against Circle
- * primary source, and the destination mint is atomic and non-custodial
- * inside `CctpForwarder` (so risk concentrates in constructing the SOURCE
- * burn, which `stellar-burn-params.ts` makes unconstructible-if-wrong).
- *
- * Stellar → EVM is deliberately NOT implemented. It needs a Soroban burn
- * whose argument layout we have not verified from primary source, and
- * guessing it is exactly the failure mode §5.4.1 warns about. `supports()`
- * reports false for that direction, so it renders the plain "no route"
- * capability boundary (§7.6) rather than a broken path.
+ * Both directions stay behind `isStellarCctpEnabled` until the §10.6
+ * testnet dry-run signs them off.
  */
 
+import { randomUUID } from "crypto";
 import { Injectable, Logger } from "@nestjs/common";
+import {
+  Account,
+  BASE_FEE,
+  Contract,
+  Keypair,
+  Networks,
+  TransactionBuilder,
+  rpc,
+  scValToNative,
+  xdr,
+} from "@stellar/stellar-sdk";
 import { encodeFunctionData } from "viem";
 import { DefiError } from "../../strategies/errors/defi-error";
-import { buildCaip19, parseCaip19, parseCaip2 } from "../caip";
+import { buildCaip19, parseCaip2, parseCaip19 } from "../caip";
 import type { BridgeRouteAdapter } from "../registry";
 import type {
   BridgeExecutionPayload,
@@ -55,27 +63,38 @@ import type {
   BridgeStatus,
   BridgeSupportedChain,
   BridgeToken,
-  Caip19,
   Caip2,
+  Caip19,
 } from "../types";
 import {
-  buildStellarBurnParams,
   CctpParamError,
   EVM_USDC_DECIMALS,
-  isStellarCctpEnabled,
-  sourceUsdcToStellarUnits,
   STELLAR_CCTP_CONTRACTS,
+  STELLAR_CCTP_DOMAIN,
+  STELLAR_USDC_ASSET,
   STELLAR_USDC_DECIMALS,
   type StellarCctpNetwork,
+  buildMintAndForwardInvocation,
+  buildStellarBurnParams,
+  buildStellarSourceBurn,
+  isStellarCctpEnabled,
+  sourceUsdcToStellarUnits,
 } from "./cctp/stellar-burn-params";
-import { randomUUID } from "crypto";
-
-/**
- * `TokenMessengerV2`, verified against Circle's EVM contract-address
- * reference. Circle deploys it at the same address on every V2 EVM chain.
- */
-const TOKEN_MESSENGER_V2 =
-  "0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d" as const;
+import { CircleAppKitClient } from "./circle/app-kit.client";
+import {
+  type CircleChainDef,
+  type IrisMessage,
+  assetIsToken,
+  circleToken,
+  explorerLink,
+  fetchIrisMessage,
+  findCircleChain,
+  irisBaseUrl,
+  isStandardAttestationAcceptable,
+  standardDurationRange,
+  statusFromIrisMessage,
+  supportRow,
+} from "./circle/circle-route";
 
 const DEPOSIT_FOR_BURN_WITH_HOOK_ABI = [
   {
@@ -96,69 +115,32 @@ const DEPOSIT_FOR_BURN_WITH_HOOK_ABI = [
   },
 ] as const;
 
-/**
- * Source chains we can burn from, with their Circle domain and canonical
- * USDC. Pinned rather than discovered because a wrong USDC address here
- * burns the wrong token.
- *
- * This table is intentionally narrow: it is the set of EVM chains this
- * app already ships. Adding one is a row here, never a branch.
- */
-const EVM_SOURCES: Record<
-  number,
-  { domain: number; usdc: `0x${string}`; name: string }
-> = {
-  1: {
-    domain: 0,
-    usdc: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-    name: "Ethereum",
-  },
-  10: {
-    domain: 2,
-    usdc: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
-    name: "OP Mainnet",
-  },
-  137: {
-    domain: 7,
-    usdc: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
-    name: "Polygon PoS",
-  },
-  8453: {
-    domain: 6,
-    usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-    name: "Base",
-  },
-  42161: {
-    domain: 3,
-    usdc: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
-    name: "Arbitrum",
-  },
-  43114: {
-    domain: 1,
-    usdc: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E",
-    name: "Avalanche",
-  },
-};
-
-/**
- * Stellar USDC, as a classic asset. Stellar assets are `CODE:ISSUER`, and
- * the issuer strkey is CASE-SENSITIVE — never fold it
- * (`feedback_address_case_per_encoding`).
- */
-const STELLAR_USDC: Record<StellarCctpNetwork, string> = {
-  pubnet: "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-  testnet: "USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
-};
-
-/**
- * Standard transfer window (§2.3). Stellar has NO Fast Transfer, so there
- * is no faster tier to offer and the range is quoted honestly rather than
- * shown as a bare spinner (§7.7).
- */
-const STANDARD_DURATION_RANGE_SECONDS: [number, number] = [900, 1140];
-
-/** Standard transfers carry no protocol fee; only Fast Transfer does. */
+/** Standard transfers carry no protocol fee, and Stellar has no forwarding. */
 const STANDARD_MAX_FEE_RAW = 0n;
+
+const QUOTE_TTL_MS = 5 * 60_000;
+
+const NETWORK_PASSPHRASE: Record<StellarCctpNetwork, string> = {
+  pubnet: Networks.PUBLIC,
+  testnet: Networks.TESTNET,
+};
+
+/**
+ * Soroban RPC for the read-only nonce check. Configurable because SDF runs
+ * no public mainnet RPC; the defaults are public endpoints verified to
+ * serve `simulateTransaction` against these contracts on 2026-09-26.
+ */
+function sorobanRpcUrl(network: StellarCctpNetwork): string {
+  return network === "pubnet"
+    ? (process.env.STELLAR_SOROBAN_RPC_URL_PUBNET ??
+        "https://mainnet.sorobanrpc.com")
+    : (process.env.STELLAR_SOROBAN_RPC_URL_TESTNET ??
+        "https://soroban-testnet.stellar.org");
+}
+
+type Direction =
+  | { kind: "inbound"; network: StellarCctpNetwork; evm: CircleChainDef }
+  | { kind: "outbound"; network: StellarCctpNetwork; evm: CircleChainDef };
 
 @Injectable()
 export class CctpStellarAdapter implements BridgeRouteAdapter {
@@ -166,28 +148,9 @@ export class CctpStellarAdapter implements BridgeRouteAdapter {
 
   private readonly logger = new Logger(CctpStellarAdapter.name);
 
+  constructor(private readonly circle: CircleAppKitClient) {}
+
   // ── capability seam ───────────────────────────────────────────────────
-
-  supports(from: Caip2, to: Caip2): boolean {
-    // Destination must be Stellar, and source must be an EVM chain we can
-    // burn from. Stellar-as-source is a Soroban burn we have not verified
-    // (see the file header) and is reported as unsupported on purpose.
-    const network = this.stellarNetworkOf(to);
-    if (!network) return false;
-    if (!isStellarCctpEnabled(network)) return false;
-    return this.evmSourceOf(from) !== null;
-  }
-
-  /**
-   * CCTP is burn-and-mint: it requires the token ISSUER to hold mint
-   * authority on the destination. There is no "extend CCTP to more
-   * tokens" path — that is a category error. So this is USDC only, and an
-   * ETH-to-Stellar request correctly falls through to the no-route state
-   * rather than failing mid-flight.
-   */
-  supportsAsset(from: Caip19, to: Caip19): boolean {
-    return this.isUsdc(from) && this.isUsdc(to);
-  }
 
   private stellarNetworkOf(chain: Caip2): StellarCctpNetwork | null {
     const parsed = parseCaip2(chain);
@@ -198,67 +161,109 @@ export class CctpStellarAdapter implements BridgeRouteAdapter {
     return null;
   }
 
-  private evmSourceOf(chain: Caip2): (typeof EVM_SOURCES)[number] | null {
-    const parsed = parseCaip2(chain);
-    if (parsed?.namespace !== "eip155") return null;
-    const id = Number.parseInt(parsed.reference, 10);
-    return EVM_SOURCES[id] ?? null;
+  /** The EVM counterpart, from App Kit's chain definitions. */
+  private evmSide(
+    chain: Caip2,
+    network: StellarCctpNetwork,
+  ): CircleChainDef | null {
+    const def = findCircleChain(this.circle.bridgeChains(), chain);
+    if (!def || def.type !== "evm") return null;
+    // Never pair a Stellar testnet with an EVM mainnet, or vice versa.
+    if (def.isTestnet !== (network === "testnet")) return null;
+    if (!def.cctp?.contracts?.v2 || !def.usdcAddress) return null;
+    return def;
   }
 
-  private isUsdc(asset: Caip19): boolean {
+  private direction(from: Caip2, to: Caip2): Direction | null {
+    const toStellar = this.stellarNetworkOf(to);
+    const fromStellar = this.stellarNetworkOf(from);
+
+    if (toStellar && !fromStellar) {
+      if (!isStellarCctpEnabled(toStellar)) return null;
+      const evm = this.evmSide(from, toStellar);
+      if (!evm?.cctp?.contracts?.v2?.tokenMessenger) return null;
+      if (!isStandardAttestationAcceptable(evm)) return null;
+      return { kind: "inbound", network: toStellar, evm };
+    }
+
+    if (fromStellar && !toStellar) {
+      if (!isStellarCctpEnabled(fromStellar)) return null;
+      const evm = this.evmSide(to, fromStellar);
+      // Circle submits the EVM mint, so the destination must support it.
+      if (evm?.cctp?.forwarderSupported?.destination !== true) return null;
+      return { kind: "outbound", network: fromStellar, evm };
+    }
+
+    return null;
+  }
+
+  supports(from: Caip2, to: Caip2): boolean {
+    return this.direction(from, to) !== null;
+  }
+
+  /**
+   * CCTP is burn-and-mint: it needs the token ISSUER's mint authority on
+   * the destination, so this is USDC only. `ETH → Stellar` falls through
+   * to the no-route state (§7.6) rather than failing mid-flight.
+   */
+  supportsAsset(from: Caip19, to: Caip19): boolean {
+    const fromChain = parseCaip19(from)?.chain;
+    const toChain = parseCaip19(to)?.chain;
+    if (!fromChain || !toChain) return false;
+    const dir = this.direction(fromChain, toChain);
+    if (!dir) return false;
+    const [evmAsset, stellarAsset] =
+      dir.kind === "inbound" ? [from, to] : [to, from];
+    return (
+      assetIsToken(evmAsset, dir.evm, dir.evm.usdcAddress) &&
+      this.isStellarUsdc(stellarAsset, dir.network)
+    );
+  }
+
+  private isStellarUsdc(asset: Caip19, network: StellarCctpNetwork): boolean {
     const parsed = parseCaip19(asset);
-    if (!parsed) return false;
-
-    if (parsed.chainNamespace === "eip155") {
-      const source = this.evmSourceOf(parsed.chain);
-      if (!source) return false;
-      // EVM hex addresses fold case; compare lowercased.
-      return parsed.assetReference.toLowerCase() === source.usdc.toLowerCase();
-    }
-
-    if (parsed.chainNamespace === "stellar") {
-      const network = this.stellarNetworkOf(parsed.chain);
-      if (!network) return false;
-      // Stellar strkeys are case-SENSITIVE; compare verbatim. The CAIP-19
-      // reference carries the hyphen form (see `stellarUsdcToken`).
-      return (
-        parsed.assetReference === STELLAR_USDC[network].replace(":", "-")
-      );
-    }
-
-    return false;
+    if (!parsed || parsed.chain !== `stellar:${network}`) return false;
+    // Strkeys are case-SENSITIVE; compare verbatim, in the CAIP-19 hyphen
+    // form (`CODE-ISSUER`, see `stellarUsdcToken`).
+    return (
+      parsed.assetReference === STELLAR_USDC_ASSET[network].replace(":", "-")
+    );
   }
 
   toProviderChainId(c: Caip2): string | number | null {
-    const stellar = this.stellarNetworkOf(c);
-    if (stellar) return 27;
-    return this.evmSourceOf(c)?.domain ?? null;
+    if (this.stellarNetworkOf(c)) return STELLAR_CCTP_DOMAIN;
+    return findCircleChain(this.circle.bridgeChains(), c)?.cctp?.domain ?? null;
   }
 
   toProviderAsset(a: Caip19): string | null {
-    return this.isUsdc(a) ? (parseCaip19(a)?.assetReference ?? null) : null;
+    const parsed = parseCaip19(a);
+    if (!parsed) return null;
+    const network = this.stellarNetworkOf(parsed.chain);
+    if (network) {
+      return this.isStellarUsdc(a, network)
+        ? STELLAR_USDC_ASSET[network]
+        : null;
+    }
+    const def = findCircleChain(this.circle.bridgeChains(), parsed.chain);
+    return def && assetIsToken(a, def, def.usdcAddress)
+      ? (def.usdcAddress ?? null)
+      : null;
   }
 
   // ── quote ─────────────────────────────────────────────────────────────
 
   async quote(req: BridgeQuoteRequest): Promise<BridgeQuote> {
-    const network = this.stellarNetworkOf(req.toChain);
-    const source = this.evmSourceOf(req.fromChain);
-    if (!network || !source) {
-      throw new DefiError("unsupported_chain", "cctp serves EVM → Stellar only");
-    }
-    if (!isStellarCctpEnabled(network)) {
-      // Mainnet stays hard-blocked until the mandatory testnet dry-run
-      // signs off the hook encoding (§9 phase 4, §10.6).
+    const dir = this.direction(req.fromChain, req.toChain);
+    if (!dir) {
+      // Includes a mainnet route while the gate is closed (§10.6).
       throw new DefiError(
         "unsupported_chain",
-        "cctp stellar mainnet not enabled pending testnet dry-run",
+        "cctp stellar route not enabled",
       );
     }
     if (!this.supportsAsset(req.fromAsset, req.toAsset)) {
       throw new DefiError("unsupported_asset", "cctp bridges USDC only");
     }
-
     let amountRaw: bigint;
     try {
       amountRaw = BigInt(req.amountRaw);
@@ -266,51 +271,61 @@ export class CctpStellarAdapter implements BridgeRouteAdapter {
       throw new DefiError("unsupported_asset", "invalid amount");
     }
 
-    let params: ReturnType<typeof buildStellarBurnParams>;
     try {
-      params = buildStellarBurnParams({
-        network,
-        amountRaw,
-        burnToken: source.usdc,
-        recipientStrkey: req.toAddress,
-        maxFeeRaw: STANDARD_MAX_FEE_RAW,
-      });
+      return dir.kind === "inbound"
+        ? this.quoteInbound(req, dir, amountRaw)
+        : await this.quoteOutbound(req, dir, amountRaw);
     } catch (error: unknown) {
       if (error instanceof CctpParamError) {
-        this.logger.warn(`[quote] burn params rejected: ${error.message}`);
+        this.logger.warn(`[quote] params rejected: ${error.message}`);
         throw new DefiError("unsupported_asset", error.message);
       }
       throw error;
     }
+  }
 
-    const fromToken = this.evmUsdcToken(req.fromChain, source.usdc);
-    const toToken = this.stellarUsdcToken(req.toChain, network);
+  /** EVM → Stellar. */
+  private quoteInbound(
+    req: BridgeQuoteRequest,
+    dir: Extract<Direction, { kind: "inbound" }>,
+    amountRaw: bigint,
+  ): BridgeQuote {
+    const usdc = dir.evm.usdcAddress as `0x${string}`;
+    const params = buildStellarBurnParams({
+      network: dir.network,
+      amountRaw,
+      burnToken: usdc,
+      recipientStrkey: req.toAddress,
+      maxFeeRaw: STANDARD_MAX_FEE_RAW,
+    });
 
-    // Burn-and-mint is 1:1 by construction — there is no slippage, no
-    // liquidity pool, and no price impact. The only transformation is the
-    // 6→7 decimal rescale, which comes from the token metadata rather than
-    // a shared constant (§6).
+    const fromToken = this.evmUsdc(dir.evm);
+    const toToken = this.stellarUsdcToken(dir.network);
+    // Burn-and-mint is 1:1. The only transformation is the 6→7 decimal
+    // rescale, from token metadata rather than a shared constant (§6).
     const toAmountRaw = sourceUsdcToStellarUnits(amountRaw).toString();
-
+    const duration = standardDurationRange(dir.evm);
+    const stellarName =
+      dir.network === "pubnet" ? "Stellar" : "Stellar Testnet";
     const issuedAt = new Date();
+
     return {
       quoteId: randomUUID(),
       provider: this.key,
       from: {
         chain: req.fromChain,
-        chainName: source.name,
+        chainName: dir.evm.name,
         token: fromToken,
         address: req.fromAddress,
         amountRaw: req.amountRaw,
       },
       to: {
         chain: req.toChain,
-        chainName: network === "pubnet" ? "Stellar" : "Stellar Testnet",
+        chainName: stellarName,
         token: toToken,
         address: req.toAddress,
         amountRaw: toAmountRaw,
       },
-      // Exact by construction: nothing can be lost in transit.
       toAmountMinRaw: toAmountRaw,
       slippageBps: 0,
       fees: [
@@ -322,16 +337,10 @@ export class CctpStellarAdapter implements BridgeRouteAdapter {
           included: true,
         },
       ],
-      // The whole user-visible point of CCTP: real, issuer-minted USDC on
-      // Stellar rather than a wrapper (§7.1).
       receivesNativeAsset: true,
-      durationSeconds: STANDARD_DURATION_RANGE_SECONDS[1],
-      durationRangeSeconds: STANDARD_DURATION_RANGE_SECONDS,
-      bridge: {
-        key: "cctp",
-        name: "Circle CCTP",
-        mechanism: "burn_mint",
-      },
+      durationSeconds: duration[1],
+      durationRangeSeconds: duration,
+      bridge: { key: "cctp", name: "Circle CCTP", mechanism: "burn_mint" },
       steps: [
         {
           key: "approve",
@@ -342,15 +351,13 @@ export class CctpStellarAdapter implements BridgeRouteAdapter {
         {
           key: "burn",
           kind: "burn",
-          label: "Burn USDC on the source chain",
+          label: `Burn USDC on ${dir.evm.name}`,
           fromChain: req.fromChain,
           toChain: req.toChain,
         },
         {
           key: "attestation",
           kind: "attestation",
-          // Step 3 is where the ~15 to 19 minutes of a Standard transfer
-          // goes. Users will stare at it, so it gets honest copy (§7.7).
           label: "Wait for Circle to confirm the burn",
           fromChain: req.fromChain,
           toChain: req.toChain,
@@ -358,23 +365,24 @@ export class CctpStellarAdapter implements BridgeRouteAdapter {
         {
           key: "mint",
           kind: "mint",
-          label: "Mint USDC on Stellar",
+          // Stellar has no Forwarding Service: the user's own Stellar
+          // wallet claims the mint once Circle attests (§5.4.1).
+          label: "Receive USDC on Stellar with your wallet",
           toChain: req.toChain,
         },
       ],
-      execution: this.toBurnTransaction(req.fromChain, source.usdc, params),
+      execution: this.toEvmBurnTransaction(req.fromChain, dir.evm, params),
       issuedAt: issuedAt.toISOString(),
-      // CCTP quotes do not decay the way a liquidity route does, but the
-      // freshness contract is shared so the card behaves identically.
-      expiresAt: new Date(issuedAt.getTime() + 5 * 60_000).toISOString(),
+      expiresAt: new Date(issuedAt.getTime() + QUOTE_TTL_MS).toISOString(),
     };
   }
 
-  private toBurnTransaction(
+  private toEvmBurnTransaction(
     fromChain: Caip2,
-    usdc: `0x${string}`,
+    evm: CircleChainDef,
     params: ReturnType<typeof buildStellarBurnParams>,
   ): BridgeExecutionPayload {
+    const tokenMessenger = evm.cctp?.contracts?.v2?.tokenMessenger as string;
     const data = encodeFunctionData({
       abi: DEPOSIT_FOR_BURN_WITH_HOOK_ABI,
       functionName: "depositForBurnWithHook",
@@ -389,76 +397,189 @@ export class CctpStellarAdapter implements BridgeRouteAdapter {
         params.hookData,
       ],
     });
-
     return {
       kind: "evm_transaction",
       chain: fromChain,
-      to: TOKEN_MESSENGER_V2,
+      to: tokenMessenger,
       data,
       value: "0",
       approval: {
-        token: usdc,
-        spender: TOKEN_MESSENGER_V2,
+        token: params.burnToken,
+        spender: tokenMessenger,
         amountRaw: params.amountRaw.toString(),
       },
     };
+  }
+
+  /** Stellar → EVM. */
+  private async quoteOutbound(
+    req: BridgeQuoteRequest,
+    dir: Extract<Direction, { kind: "outbound" }>,
+    amountRaw: bigint,
+  ): Promise<BridgeQuote> {
+    const destinationDomain = dir.evm.cctp?.domain as number;
+    const forwardFeeRaw6 = await this.fetchForwardFee(
+      destinationDomain,
+      dir.network === "testnet",
+    );
+    const burn = buildStellarSourceBurn({
+      network: dir.network,
+      callerStrkey: req.fromAddress,
+      amountRaw,
+      destinationDomain,
+      mintRecipientEvm: req.toAddress,
+      maxFeeRaw6: forwardFeeRaw6,
+    });
+
+    const fromToken = this.stellarUsdcToken(dir.network);
+    const toToken = this.evmUsdc(dir.evm);
+    const toAmountRaw = (burn.messageAmountRaw6 - burn.maxFeeRaw6).toString();
+    const duration = standardDurationRange({
+      // Stellar attests in ~5 s; the CircleChainDef shape just carries the domain.
+      ...dir.evm,
+      cctp: { domain: STELLAR_CCTP_DOMAIN },
+    });
+    const stellarName =
+      dir.network === "pubnet" ? "Stellar" : "Stellar Testnet";
+    const issuedAt = new Date();
+
+    return {
+      quoteId: randomUUID(),
+      provider: this.key,
+      from: {
+        chain: req.fromChain,
+        chainName: stellarName,
+        token: fromToken,
+        address: req.fromAddress,
+        // What actually leaves the account: CCTP burns only through the
+        // sixth decimal, so a seventh-decimal remainder is never shown as
+        // sent (Circle, "Stellar as the source").
+        amountRaw: burn.burnedRaw7.toString(),
+      },
+      to: {
+        chain: req.toChain,
+        chainName: dir.evm.name,
+        token: toToken,
+        address: req.toAddress,
+        amountRaw: toAmountRaw,
+      },
+      // The burn caps the fee at exactly the quoted forwarding fee, and
+      // Circle spends any headroom as destination priority fee, so the
+      // floor is the expected amount.
+      toAmountMinRaw: toAmountRaw,
+      slippageBps: 0,
+      fees: [
+        {
+          key: "forwarding",
+          label: "Delivery fee",
+          amountRaw: sourceUsdcToStellarUnits(burn.maxFeeRaw6).toString(),
+          token: fromToken,
+          included: true,
+        },
+      ],
+      receivesNativeAsset: true,
+      durationSeconds: duration[1],
+      durationRangeSeconds: duration,
+      bridge: { key: "cctp", name: "Circle CCTP", mechanism: "burn_mint" },
+      steps: [
+        {
+          // Soroban SEP-41 allowance: the TokenMessengerMinter pulls the
+          // burn with `transfer_from`.
+          key: "approve",
+          kind: "approve",
+          label: "Approve Circle to move your USDC",
+          fromChain: req.fromChain,
+        },
+        {
+          key: "burn",
+          kind: "burn",
+          label: "Burn USDC on Stellar",
+          fromChain: req.fromChain,
+          toChain: req.toChain,
+        },
+        {
+          key: "attestation",
+          kind: "attestation",
+          label: "Wait for Circle to confirm the burn",
+          fromChain: req.fromChain,
+          toChain: req.toChain,
+        },
+        {
+          key: "mint",
+          kind: "mint",
+          label: `Circle delivers USDC on ${dir.evm.name}`,
+          toChain: req.toChain,
+        },
+      ],
+      execution: {
+        kind: "soroban_invoke",
+        chain: req.fromChain,
+        contractId: burn.contractId,
+        method: burn.method,
+        argsXdrBase64: [...burn.argsXdrBase64],
+        approval: {
+          token: burn.approval.token,
+          spender: burn.approval.spender,
+          amountRaw: burn.approval.amountRaw.toString(),
+        },
+      },
+      issuedAt: issuedAt.toISOString(),
+      expiresAt: new Date(issuedAt.getTime() + QUOTE_TTL_MS).toISOString(),
+    };
+  }
+
+  /**
+   * Circle's Forwarding Service fee for Stellar → `destinationDomain`, in
+   * six-decimal USDC subunits. `high` tier at Standard finality, the same
+   * choice App Kit makes for its own forwarded burns.
+   */
+  private async fetchForwardFee(
+    destinationDomain: number,
+    isTestnet: boolean,
+  ): Promise<bigint> {
+    const url = `${irisBaseUrl(isTestnet)}/v2/burn/USDC/fees/${STELLAR_CCTP_DOMAIN}/${destinationDomain}?forward=true`;
+    let tiers: Array<{
+      finalityThreshold?: number;
+      forwardFee?: { high?: number };
+    }>;
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+      if (!res.ok) throw new Error(`iris ${res.status}`);
+      tiers = (await res.json()) as typeof tiers;
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`[fee] iris forward fee unavailable: ${detail}`);
+      throw new DefiError("network_error", "forwarding fee unavailable");
+    }
+    const high = tiers.find((t) => t.finalityThreshold === 2000)?.forwardFee
+      ?.high;
+    if (typeof high !== "number" || !Number.isInteger(high) || high < 0) {
+      throw new DefiError("network_error", "forwarding fee missing");
+    }
+    return BigInt(high);
   }
 
   // ── status ────────────────────────────────────────────────────────────
 
   /**
    * CCTP produces only `completed` or `failed`: burn-and-mint is atomic
-   * per message, so there is no `PARTIAL` and no `REFUNDED` analogue
-   * (§7.7.1). Normalising onto the same four-value enum is what keeps the
-   * progress card provider-agnostic.
-   *
-   * Attestation state comes from Circle's public Iris API, which needs no
-   * API key for reads.
+   * per message (§7.7.1).
    */
   async status(ref: BridgeRef): Promise<BridgeStatus> {
-    const source = this.evmSourceOf(ref.fromChain);
-    if (!source) {
-      throw new DefiError("unsupported_chain", "unknown cctp source");
-    }
+    const fromStellar = this.stellarNetworkOf(ref.fromChain);
+    if (fromStellar) return this.statusOutbound(ref, fromStellar);
+    const toStellar = this.stellarNetworkOf(ref.toChain);
+    if (toStellar) return this.statusInbound(ref, toStellar);
+    throw new DefiError("unsupported_chain", "not a stellar cctp route");
+  }
 
-    const network = this.stellarNetworkOf(ref.toChain);
-    const base =
-      network === "testnet"
-        ? "https://iris-api-sandbox.circle.com"
-        : "https://iris-api.circle.com";
-
+  private async iris(
+    domain: number,
+    isTestnet: boolean,
+    txHash: string,
+  ): Promise<IrisMessage | undefined> {
     try {
-      const res = await fetch(
-        `${base}/v2/messages/${source.domain}?transactionHash=${encodeURIComponent(ref.sourceTxHash)}`,
-      );
-      if (!res.ok) {
-        // Not indexed yet is the common case right after submit; it is not
-        // an error state. Log the status, never surface it.
-        this.logger.debug(
-          `[status] iris returned ${res.status} for ${ref.sourceTxHash}`,
-        );
-        return {
-          outcome: null,
-          phase: "pending_source",
-          currentStepKey: "burn",
-          sourceTxHash: ref.sourceTxHash,
-        };
-      }
-      const body = (await res.json()) as {
-        messages?: Array<{ status?: string; attestation?: string }>;
-      };
-      const message = body.messages?.[0];
-      const attested =
-        message?.status === "complete" &&
-        typeof message.attestation === "string" &&
-        message.attestation !== "PENDING";
-
-      return {
-        outcome: attested ? "completed" : null,
-        phase: attested ? "settled" : "pending_attestation",
-        currentStepKey: attested ? "mint" : "attestation",
-        sourceTxHash: ref.sourceTxHash,
-      };
+      return await fetchIrisMessage({ domain, isTestnet, txHash });
     } catch (error: unknown) {
       const detail = error instanceof Error ? error.message : String(error);
       this.logger.warn(`[status] iris unreachable: ${detail}`);
@@ -466,11 +587,140 @@ export class CctpStellarAdapter implements BridgeRouteAdapter {
     }
   }
 
+  private async statusOutbound(
+    ref: BridgeRef,
+    network: StellarCctpNetwork,
+  ): Promise<BridgeStatus> {
+    const destination = findCircleChain(
+      this.circle.bridgeChains(),
+      ref.toChain,
+    );
+    // Stellar tx hashes are 64 hex chars without a prefix.
+    const message = await this.iris(
+      STELLAR_CCTP_DOMAIN,
+      network === "testnet",
+      ref.sourceTxHash,
+    );
+    return statusFromIrisMessage({
+      message,
+      sourceTxHash: ref.sourceTxHash,
+      burnStepKey: "burn",
+      mintStepKey: "mint",
+      explorerUrlFor: (hash) => explorerLink(destination, hash),
+    });
+  }
+
+  private async statusInbound(
+    ref: BridgeRef,
+    network: StellarCctpNetwork,
+  ): Promise<BridgeStatus> {
+    const source = this.evmSide(ref.fromChain, network);
+    if (!source?.cctp) {
+      throw new DefiError("unsupported_chain", "unknown cctp source");
+    }
+    const message = await this.iris(
+      source.cctp.domain,
+      source.isTestnet,
+      ref.sourceTxHash,
+    );
+
+    const attested =
+      message?.status === "complete" &&
+      typeof message.attestation === "string" &&
+      message.attestation.startsWith("0x") &&
+      typeof message.message === "string" &&
+      message.message.startsWith("0x");
+    if (!message || !attested) {
+      return {
+        outcome: null,
+        phase: message ? "pending_attestation" : "pending_source",
+        currentStepKey: message ? "attestation" : "burn",
+        sourceTxHash: ref.sourceTxHash,
+      };
+    }
+
+    // Attested is NOT delivered: Stellar has no Forwarding Service, so the
+    // mint happens only when `mint_and_forward` runs. The nonce comes from
+    // the attested message itself (header bytes 12..44), and "used" is
+    // the MessageTransmitter's own answer, not an inference.
+    const nonceHex = this.nonceFromMessage(message.message as string);
+    let used: boolean;
+    try {
+      used = await this.isNonceUsed(network, nonceHex);
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`[status] soroban nonce check failed: ${detail}`);
+      throw new DefiError("network_error", "stellar status unavailable");
+    }
+
+    if (used) {
+      return {
+        outcome: "completed",
+        phase: "settled",
+        currentStepKey: "mint",
+        sourceTxHash: ref.sourceTxHash,
+      };
+    }
+
+    const claim = buildMintAndForwardInvocation({
+      network,
+      messageHex: message.message as string,
+      attestationHex: message.attestation as string,
+    });
+    return {
+      outcome: null,
+      phase: "pending_destination",
+      currentStepKey: "mint",
+      sourceTxHash: ref.sourceTxHash,
+      destinationAction: {
+        kind: "soroban_invoke",
+        chain: ref.toChain,
+        contractId: claim.contractId,
+        method: claim.method,
+        argsXdrBase64: [...claim.argsXdrBase64],
+      },
+    };
+  }
+
+  /** CCTP V2 message header: version(4) src(4) dst(4) nonce(32) … */
+  private nonceFromMessage(messageHex: string): string {
+    const body = messageHex.slice(2);
+    if (body.length < 88)
+      throw new DefiError("network_error", "cctp message too short");
+    return body.slice(24, 88);
+  }
+
+  private async isNonceUsed(
+    network: StellarCctpNetwork,
+    nonceHex: string,
+  ): Promise<boolean> {
+    const server = new rpc.Server(sorobanRpcUrl(network));
+    // Simulation only: a throwaway source that never exists on-ledger and
+    // never signs. Nothing is submitted.
+    const source = new Account(Keypair.random().publicKey(), "0");
+    const tx = new TransactionBuilder(source, {
+      fee: BASE_FEE,
+      networkPassphrase: NETWORK_PASSPHRASE[network],
+    })
+      .addOperation(
+        new Contract(STELLAR_CCTP_CONTRACTS[network].messageTransmitter).call(
+          "is_nonce_used",
+          xdr.ScVal.scvBytes(Buffer.from(nonceHex, "hex")),
+        ),
+      )
+      .setTimeout(30)
+      .build();
+    const sim = await server.simulateTransaction(tx);
+    if (rpc.Api.isSimulationError(sim) || !sim.result) {
+      throw new Error("simulation failed");
+    }
+    return scValToNative(sim.result.retval) === true;
+  }
+
   // ── support matrix ────────────────────────────────────────────────────
 
   async listSupportedChains(): Promise<BridgeSupportedChain[]> {
     const rows: BridgeSupportedChain[] = [];
-
     for (const network of ["pubnet", "testnet"] as StellarCctpNetwork[]) {
       if (!isStellarCctpEnabled(network)) continue;
       rows.push({
@@ -479,72 +729,60 @@ export class CctpStellarAdapter implements BridgeRouteAdapter {
         providers: [this.key],
         nativeSymbol: "XLM",
       });
-    }
-
-    // Only advertise the EVM sources when at least one Stellar side is
-    // actually open — otherwise this adapter contributes nothing and
-    // listing them would imply a route that does not exist.
-    if (rows.length > 0) {
-      for (const [chainId, source] of Object.entries(EVM_SOURCES)) {
-        rows.push({
-          chain: `eip155:${chainId}`,
-          name: source.name,
-          providers: [this.key],
-        });
+      // Only advertise EVM counterparts when that Stellar side is open.
+      for (const def of this.circle.bridgeChains()) {
+        if (def.type !== "evm" || def.isTestnet !== (network === "testnet"))
+          continue;
+        if (!def.usdcAddress || !def.cctp?.contracts?.v2) continue;
+        const row = supportRow(def, this.key);
+        if (row) rows.push(row);
       }
     }
-
     return rows;
   }
 
   async listTools(): Promise<string[]> {
-    // Single-mechanism adapter: it aggregates nothing.
     return [];
   }
 
   async resolveToken(asset: Caip19): Promise<BridgeToken | null> {
-    if (!this.isUsdc(asset)) return null;
     const parsed = parseCaip19(asset);
     if (!parsed) return null;
-
-    if (parsed.chainNamespace === "stellar") {
-      const network = this.stellarNetworkOf(parsed.chain);
-      return network ? this.stellarUsdcToken(parsed.chain, network) : null;
+    const network = this.stellarNetworkOf(parsed.chain);
+    if (network) {
+      return this.isStellarUsdc(asset, network)
+        ? this.stellarUsdcToken(network)
+        : null;
     }
-    const source = this.evmSourceOf(parsed.chain);
-    return source ? this.evmUsdcToken(parsed.chain, source.usdc) : null;
+    const def = findCircleChain(this.circle.bridgeChains(), parsed.chain);
+    return def && assetIsToken(asset, def, def.usdcAddress)
+      ? this.evmUsdc(def)
+      : null;
   }
 
-  private evmUsdcToken(chain: Caip2, usdc: `0x${string}`): BridgeToken {
-    return {
-      caip19: buildCaip19(chain, "erc20", usdc),
-      chain,
-      address: usdc,
+  private evmUsdc(def: CircleChainDef): BridgeToken {
+    return circleToken({
+      def,
+      address: def.usdcAddress as string,
       symbol: "USDC",
       name: "USD Coin",
       decimals: EVM_USDC_DECIMALS,
-      isNative: false,
-      verification: "verified",
-    };
+    });
   }
 
-  private stellarUsdcToken(
-    chain: Caip2,
-    network: StellarCctpNetwork,
-  ): BridgeToken {
-    const asset = STELLAR_USDC[network];
+  private stellarUsdcToken(network: StellarCctpNetwork): BridgeToken {
+    const chain = `stellar:${network}`;
+    const asset = STELLAR_USDC_ASSET[network];
     return {
-      // CAIP-19 constrains `asset_namespace` to `[-a-z0-9]{3,8}`, so the
-      // descriptive `credit_alphanum4` is not legal, and its
-      // `asset_reference` grammar excludes the colon, so `CODE:ISSUER`
-      // is encoded with a hyphen (Stellar's own canonical display form).
+      // CAIP-19 constrains `asset_namespace` to `[-a-z0-9]{3,8}` and its
+      // reference grammar excludes the colon, so `CODE:ISSUER` is encoded
+      // `asset:CODE-ISSUER` (Stellar's own canonical display form).
       caip19: buildCaip19(chain, "asset", asset.replace(":", "-")),
       chain,
       address: asset,
       symbol: "USDC",
       name: "USD Coin",
-      // SEVEN, not six. Sourced here rather than from a shared constant —
-      // see §5.4.1 / §6.
+      // SEVEN, not six (§5.4.1, §6).
       decimals: STELLAR_USDC_DECIMALS,
       isNative: false,
       verification: "verified",
@@ -553,19 +791,9 @@ export class CctpStellarAdapter implements BridgeRouteAdapter {
 
   /**
    * Deliberately NO `gasTopUp`. Stellar's destination precondition is a
-   * TRUSTLINE plus an XLM base reserve, not gas, and a trustline is a hard
-   * opt-in the recipient must perform themselves — no amount of
-   * sender-side signing can complete a transfer to an account that hasn't
-   * opted in. The remedy is `ensureTrustline` on the user's own wallet,
-   * which mobile surfaces via `checkDestinationReadiness` (§7.5). Omitting
-   * the method is the correct signal, not an oversight (§5.2).
-   *
-   * Note also that Stellar has NO Forwarding Service (§7.5.1), so the
-   * readiness warning is mandatory here rather than optional.
+   * TRUSTLINE plus an XLM base reserve, which the recipient must set up
+   * themselves; mobile surfaces it via `checkDestinationReadiness` (§7.5).
+   * The claim leg also needs a little XLM for its fee, which the same
+   * readiness check (funded account) covers.
    */
-
-  /** Exposed for the readiness path so mobile can name the exact contract. */
-  forwarderFor(network: StellarCctpNetwork): string {
-    return STELLAR_CCTP_CONTRACTS[network].forwarder;
-  }
 }

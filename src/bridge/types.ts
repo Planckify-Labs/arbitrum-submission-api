@@ -216,6 +216,55 @@ export type BridgeExecutionPayload =
       method: string;
       /** Pre-encoded XDR ScVal args, base64 each, in positional order. */
       argsXdrBase64: string[];
+      /**
+       * SEP-41 allowance the Stellar kit must grant first — the Soroban
+       * analogue of the EVM `approval`. Stellar's CCTP
+       * `TokenMessengerMinter` pulls the burn with `transfer_from`
+       * (confirmed by testnet simulation, 2026-09-26: without it the USDC
+       * SAC fails with "not enough allowance to spend"), so a
+       * Stellar-source burn needs `approve(from, spender, amount,
+       * expiration_ledger)` on the USDC contract. `token` and `spender`
+       * are `C…` contract ids; `amountRaw` is in the token's own decimals.
+       */
+      approval?: {
+        token: string;
+        spender: string;
+        amountRaw: string;
+      };
+    }
+  | {
+      /**
+       * A Circle bridge that the DEVICE runs through Arc App Kit's own
+       * `bridge()`, with the user's signer (§5.4).
+       *
+       * Deliberately PARAMETERS, never calldata: App Kit builds the
+       * approve and burn itself against Circle's pinned contracts, so a
+       * compromised backend cannot slip a different target in here. The
+       * device still checks every field against the quote the user
+       * approved before it signs anything.
+       */
+      kind: "circle_app_kit_bridge";
+      /** Source chain, CAIP-2 (the chain the device signs on). */
+      chain: Caip2;
+      /** Which Circle product. Selects the device-side hand-off step. */
+      protocol: "cctp" | "cctpx";
+      /** App Kit chain identifiers, e.g. `"Base"`, `"Arc"`. */
+      sourceChain: string;
+      destinationChain: string;
+      /** App Kit token alias: `"USDC"` or a CCTPx symbol such as `"EURC"`. */
+      token: string;
+      /** The source token contract the alias must resolve to. */
+      tokenAddress: string;
+      /** Human decimal string, the only amount format App Kit accepts. */
+      amount: string;
+      recipientAddress: string;
+      transferSpeed: "SLOW";
+      /** Always true: the phone hands off once the burn is on-chain. */
+      useForwarder: true;
+      /** Human decimal cap on the protocol fee (USDC routes). */
+      maxFee?: string;
+      /** Provider-signed quote, OPAQUE, passed back to `bridge()` as-is. */
+      quote?: unknown;
     };
 
 /**
@@ -257,6 +306,15 @@ export interface BridgeStatus {
   refundChain?: Caip2;
   /** Explorer deep link, when the provider gives one. */
   explorerUrl?: string;
+  /**
+   * A destination-side invocation the RECIPIENT's own wallet must sign
+   * before the transfer can complete. Present only on routes with no
+   * Forwarding Service: today, CCTP into Stellar, where someone has to
+   * call `CctpForwarder.mint_and_forward(message, attestation)` (§5.4.1).
+   * Anyone may call it and the payout target is fixed by the burn, so the
+   * user claiming their own funds is safe and needs no third party.
+   */
+  destinationAction?: BridgeExecutionPayload;
 }
 
 export interface BridgeRef {

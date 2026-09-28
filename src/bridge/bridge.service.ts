@@ -48,10 +48,11 @@ export class BridgeService {
   /**
    * The queried support matrix (§5.3).
    *
-   * Consequence of querying rather than hardcoding: Circle adding a CCTP
-   * domain, or LI.FI adding a bridge, lights up for us with NO DEPLOY and
-   * no code change. That is also why Arc graduating to CCTP mainnet needs
-   * nothing from us (§10.7).
+   * Consequence of querying rather than hardcoding: LI.FI adding a bridge
+   * lights up with NO DEPLOY, and Circle adding a CCTP domain lights up on
+   * an App Kit version bump with no table of ours to edit. (Arc mainnet
+   * reaches us through `circle-cctp`, not LI.FI, which lists Arc but
+   * serves no route on it; see §10.7.)
    */
   async getSupport(): Promise<BridgeSupport> {
     const adapters = listBridgeAdapters();
@@ -168,9 +169,17 @@ export class BridgeService {
   }
 
   async status(ref: BridgeRef): Promise<BridgeStatus> {
-    const candidates = ref.provider
-      ? listBridgeAdapters().filter((a) => a.key === ref.provider)
-      : resolveBridgeAdapters(ref.fromChain, ref.toChain);
+    let candidates = ref.provider
+      ? listBridgeAdapters().filter(
+          (a) =>
+            a.key === ref.provider ||
+            (ref.provider === "circle" && a.key.startsWith("circle")),
+        )
+      : [];
+
+    if (candidates.length === 0) {
+      candidates = resolveBridgeAdapters(ref.fromChain, ref.toChain);
+    }
 
     if (candidates.length === 0) {
       throw new DefiError("unsupported_chain", "no adapter for this route");

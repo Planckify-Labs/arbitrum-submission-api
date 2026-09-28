@@ -33,6 +33,9 @@
     "defi:dry-run": "node --env-file-if-exists=.env -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/resolve-targets-dry-run.ts"
   },
   "dependencies": {
+    "@circle-fin/adapter-solana": "1.7.3",
+    "@circle-fin/adapter-viem-v2": "1.18.0",
+    "@circle-fin/app-kit": "1.15.3",
     "@coral-xyz/anchor": "^0.32.1",
     "@lifi/sdk": "^3.16.3",
     "@mysten/sui": "^2.16.0",
