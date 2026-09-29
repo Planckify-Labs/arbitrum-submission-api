@@ -366,7 +366,9 @@ export function circleToken(args: {
     symbol: args.symbol,
     name: args.name,
     decimals: args.decimals,
-    isNative: false,
+    isNative:
+      args.def.nativeCurrency.symbol.toUpperCase() ===
+      args.symbol.toUpperCase(),
     // Circle-issued, pinned by Circle's own chain definitions.
     verification: "verified",
   };

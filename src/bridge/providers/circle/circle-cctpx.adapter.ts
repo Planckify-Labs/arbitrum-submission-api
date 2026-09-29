@@ -240,7 +240,7 @@ export class CircleCctpxAdapter implements BridgeRouteAdapter {
       toAmountMinRaw: amountRaw.toString(),
       slippageBps: 0,
       fees,
-      receivesNativeAsset: true,
+      receivesNativeAsset: toToken.isNative,
       durationSeconds: durationRange[1],
       durationRangeSeconds: durationRange,
       bridge: { key: "cctpx", name: "Circle CCTP", mechanism: "burn_mint" },

@@ -283,9 +283,8 @@ export class LifiBridgeAdapter implements BridgeRouteAdapter {
       toAmountMinRaw: estimate.toAmountMin ?? estimate.toAmount ?? "0",
       slippageBps,
       fees,
-      // The entire user-visible point of CCTP, and it must be said plainly
-      // ("You receive native USDC") rather than implied (§7.1).
-      receivesNativeAsset: receivesNativeIssuance(step.tool),
+      // Destination token is native gas currency (§7.1).
+      receivesNativeAsset: toToken.isNative,
       durationSeconds: Number(estimate.executionDuration ?? 0),
       bridge: toBridgeProviderInfo(step),
       steps: toBridgeSteps(step, fromChain, toChain, needsApproval),

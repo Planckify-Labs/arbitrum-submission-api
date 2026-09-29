@@ -313,6 +313,38 @@ describe("circle-cctp (USDC)", () => {
     expect(new Date(q.expiresAt).getTime()).toBeGreaterThan(Date.now());
   });
 
+  it("marks receivesNativeAsset as true only when destination is Arc (native USDC)", async () => {
+    const { client } = stubClient({
+      fees: [{ type: "forwarder", token: "USDC", amount: "0.017867" }],
+    });
+    const a = new CircleCctpAdapter(client);
+    // Bridging Arc -> Base: destination is Base where USDC is ERC-20, not native gas
+    const qArcToBase = await a.quote({
+      fromChain: "eip155:5042",
+      toChain: "eip155:8453",
+      fromAsset: usdc(ARC),
+      toAsset: usdc(BASE),
+      amountRaw: "5000000",
+      fromAddress: ME,
+      toAddress: ME,
+    });
+    expect(qArcToBase.receivesNativeAsset).toBe(false);
+    expect(qArcToBase.to.token.isNative).toBe(false);
+
+    // Bridging Base -> Arc: destination is Arc where USDC is the native gas asset
+    const qBaseToArc = await a.quote({
+      fromChain: "eip155:8453",
+      toChain: "eip155:5042",
+      fromAsset: usdc(BASE),
+      toAsset: usdc(ARC),
+      amountRaw: "5000000",
+      fromAddress: ME,
+      toAddress: ME,
+    });
+    expect(qBaseToArc.receivesNativeAsset).toBe(true);
+    expect(qBaseToArc.to.token.isNative).toBe(true);
+  });
+
   it("refuses an amount the delivery fee would swallow", async () => {
     const { client } = stubClient({
       fees: [{ type: "forwarder", token: "USDC", amount: "0.05" }],

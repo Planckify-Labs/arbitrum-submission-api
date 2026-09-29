@@ -255,8 +255,8 @@ export class CircleCctpAdapter implements BridgeRouteAdapter {
       // Burn-and-mint: no pool, no price, nothing to slip.
       slippageBps: 0,
       fees,
-      // The user-visible point of CCTP: Circle-issued USDC on arrival (§7.1).
-      receivesNativeAsset: true,
+      // The user-visible point of CCTP: USDC is native gas asset on Arc, token on other chains (§7.1).
+      receivesNativeAsset: toToken.isNative,
       durationSeconds: durationRange[1],
       durationRangeSeconds: durationRange,
       bridge: { key: "cctp", name: "Circle CCTP", mechanism: "burn_mint" },
