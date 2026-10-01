@@ -971,6 +971,28 @@ async function main() {
         isTestnet: true,
       },
     }),
+    // Robinhood Chain testnet — an Arbitrum Orbit L2 (EIP-155 chainId 46630).
+    // Added for the Arbitrum Open House 2026 hackathon. rpc-proxy has no
+    // provider rows for it yet, so rpcUrl is the public endpoint directly
+    // (same posture as Base mainnet's public RPC).
+    prisma.blockchain.upsert({
+      where: { chainId: 46630 },
+      update: {
+        rpcUrl: "https://rpc.testnet.chain.robinhood.com",
+        blockExplorer: "https://explorer.testnet.chain.robinhood.com",
+        name: "Robinhood Chain Testnet",
+      },
+      create: {
+        name: "Robinhood Chain Testnet",
+        chainId: 46630,
+        rpcUrl: "https://rpc.testnet.chain.robinhood.com",
+        blockExplorer: "https://explorer.testnet.chain.robinhood.com",
+        type: "EVM",
+        isActive: true,
+        isTestnet: true,
+        minConfirmations: 1,
+      },
+    }),
     // Sui mainnet — keyed by chainSlug (no EIP-155 chainId, same posture
     // as Solana). Public Mysten fullnode for v1; swap in Alchemy/Triton
     // when traffic warrants. Keyed by chainSlug (slugChain()).
@@ -1161,18 +1183,67 @@ async function main() {
         isActive: true,
       },
     }),
-    // takumi_pay on Arbitrum Sepolia — same address as contract/evm's
-    // Arbitrum One (42161) deployment record; verify this is a genuine
-    // CREATE2 cross-chain match rather than a copy-paste before trusting it
-    // for real settlement traffic.
+    // takumi_pay on Arbitrum One — TakumiPay 2.1.0 behind a UUPS proxy, see
+    // ../contract/evm/deployments/42161.json (Arbitrum Open House 2026).
+    // USDG and USDC allowlisted with a 1000-unit sweep cap each and a 24h
+    // withdrawal delay. The previous address here (0x479B…a968) was a
+    // predicted CREATE address that turned out to be Monad mainnet's proxy,
+    // not an Arbitrum deployment, so this row converges `address` on re-seed.
     prisma.smartContract.upsert({
       where: { id: "smart-contract-payment-arbitrum" },
-      update: {},
+      update: {
+        name: "takumi_pay",
+        type: "payment",
+        address: "0xdE981573883294dfD35A7F0F399DB7e439E1f56B",
+        isActive: true,
+      },
       create: {
         id: "smart-contract-payment-arbitrum",
         name: "takumi_pay",
         type: "payment",
+        blockchainId: evmChain(42161).id, // Arbitrum One
+        address: "0xdE981573883294dfD35A7F0F399DB7e439E1f56B",
+        isActive: true,
+      },
+    }),
+    // takumi_pay on Arbitrum Sepolia — see
+    // ../contract/evm/deployments/421614.json. USDC and Paxos testnet USDG
+    // allowlisted; createTransaction / depositPoints exercised live with both.
+    prisma.smartContract.upsert({
+      where: { id: "smart-contract-payment-arbitrum-sepolia" },
+      update: {
+        name: "takumi_pay",
+        type: "payment",
+        address: "0x2469Bd87e809772f491af0E7847fbf7B62c388ae",
+        isActive: true,
+      },
+      create: {
+        id: "smart-contract-payment-arbitrum-sepolia",
+        name: "takumi_pay",
+        type: "payment",
         blockchainId: evmChain(421614).id, // Arbitrum Sepolia
+        address: "0x2469Bd87e809772f491af0E7847fbf7B62c388ae",
+        isActive: true,
+      },
+    }),
+    // takumi_pay on Robinhood Chain testnet (Arbitrum Orbit) — see
+    // ../contract/evm/deployments/46630.json. Paxos testnet USDG allowlisted;
+    // createTransaction, depositPoints and processMerchantPayment all
+    // exercised live. Same address as Monad mainnet: same deployer key at the
+    // same nonce on a fresh chain, a genuine CREATE match.
+    prisma.smartContract.upsert({
+      where: { id: "smart-contract-payment-robinhood-testnet" },
+      update: {
+        name: "takumi_pay",
+        type: "payment",
+        address: "0x479B0843C3e0627f36551660506dEd5b349Fa968",
+        isActive: true,
+      },
+      create: {
+        id: "smart-contract-payment-robinhood-testnet",
+        name: "takumi_pay",
+        type: "payment",
+        blockchainId: evmChain(46630).id, // Robinhood Chain testnet
         address: "0x479B0843C3e0627f36551660506dEd5b349Fa968",
         isActive: true,
       },
@@ -2801,6 +2872,37 @@ async function main() {
       peggedCurrency: "USD",
     },
   });
+
+  // USDG (Paxos Global Dollar) and USDC for the Arbitrum Open House 2026
+  // hackathon. Addresses from docs.paxos.com/guides/stablecoin/usdg/{mainnet,
+  // testnet} and Circle; symbol()/decimals() read on-chain (6 for all).
+  // `isPaymentEnabled: true` because each token is allowlisted + sweep-capped
+  // on the matching takumi_pay deployment (deployments/42161, 421614, 46630).
+  for (const [chainId, name, symbol, contractAddress, logoUrl] of [
+    [42161, "Global Dollar", "USDG", "0x004B506865409877C9fA29bfb1ebA929984B9bbC", null],
+    [42161, "USD Coin", "USDC", "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", "https://static.alchemyapi.io/images/assets/3408.png"],
+    [421614, "Global Dollar", "USDG", "0xFFC95faa3d63Cde504a05B567C600B78C0b41892", null],
+    [46630, "Global Dollar", "USDG", "0x7E955252E15c84f5768B83c41a71F9eba181802F", null],
+  ] as const) {
+    const blockchainId = evmChain(chainId).id;
+    await prisma.token.upsert({
+      where: { blockchainId_contractAddress: { blockchainId, contractAddress } },
+      update: { isPaymentEnabled: true, isActive: true, isStablecoin: true },
+      create: {
+        name,
+        symbol,
+        decimals: 6,
+        blockchainId,
+        contractAddress,
+        logoUrl,
+        isStablecoin: true,
+        isNativeCurrency: false,
+        isPaymentEnabled: true,
+        isActive: true,
+        peggedCurrency: "USD",
+      },
+    });
+  }
 
   // BNB on BSC / AVAX on Avalanche — native currencies, no contract address.
   // Same (blockchainId, isNativeCurrency) identification as MON on Monad
