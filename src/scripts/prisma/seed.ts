@@ -1254,6 +1254,30 @@ async function main() {
         isActive: true,
       },
     }),
+    // takumi_pay on Arc mainnet — TakumiPay 2.1.0 behind a UUPS proxy, see
+    // ../contract/evm/deployments/5042.json (deployed 2026-10-01). Native USDC
+    // is aliased to its 6-decimal ERC-20 view and is the only allowlisted
+    // token, with a 1000 USDC sweep cap and a 24h withdrawal delay. The
+    // address is the SAME as Arc testnet's / Monad testnet's: same deployer key
+    // at the same nonce on a fresh chain, a genuine CREATE match. Converges
+    // `address` on re-seed, same as the other takumi_pay rows.
+    prisma.smartContract.upsert({
+      where: { id: "smart-contract-payment-arc-mainnet" },
+      update: {
+        name: "takumi_pay",
+        type: "payment",
+        address: "0x9EEC5aD4FC092fD468A8114007e541238F4Ba5ee",
+        isActive: true,
+      },
+      create: {
+        id: "smart-contract-payment-arc-mainnet",
+        name: "takumi_pay",
+        type: "payment",
+        blockchainId: evmChain(5042).id, // Arc mainnet
+        address: "0x9EEC5aD4FC092fD468A8114007e541238F4Ba5ee",
+        isActive: true,
+      },
+    }),
     // takumi_pay on Solana Devnet — Anchor program deployed via `anchor deploy`.
     // `name` is a stable machine key here, not a display label — every
     // chain's takumi_pay contract/program uses the same "takumi_pay" name so
