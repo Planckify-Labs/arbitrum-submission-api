@@ -52,7 +52,6 @@ export class CacheWarmingService implements OnModuleInit {
     await Promise.allSettled([
       this.warmProductCache(),
       this.warmExchangeRateCache(),
-      this.warmCatalogCache(),
       this.warmBlockchainCache(),
     ]);
 
@@ -145,39 +144,14 @@ export class CacheWarmingService implements OnModuleInit {
     }
   }
 
-  /**
-   * Warm catalog cache (grouped products by category)
-   */
-  private async warmCatalogCache(): Promise<void> {
-    try {
-      // Fetch and cache grouped catalog
-      await this.productCacheService.getCatalogGrouped(async () => {
-        const categories = await this.prismaService.category.findMany({
-          where: { isActive: true },
-          include: {
-            Product: {
-              where: { isActive: true },
-              include: {
-                variants: {
-                  include: {
-                    ProductPrice: true,
-                  },
-                },
-              },
-              take: 10, // Limit products per category
-            },
-          },
-          orderBy: { name: 'asc' },
-        });
-
-        return categories;
-      });
-
-      this.logger.debug('Warmed catalog cache');
-    } catch (error) {
-      this.logger.error(`Failed to warm catalog cache: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
+  // The grouped catalog (`catalog:grouped`) is deliberately NOT warmed here.
+  // ProductsService.findAllGroupedByCategories is its only producer and the
+  // mobile Redeem screen depends on its `{ category, products }` shape. A
+  // second producer in this file once wrote a different shape under the same
+  // key at every startup, so the endpoint served that for an hour and the
+  // screen rendered empty. ProductsModule imports ValkeyModule, so this
+  // service cannot call ProductsService without a cycle; leave the key to
+  // the endpoint's own cache-aside.
 
   /**
    * Warm blockchain cache with active chains so facilitator URLs and
