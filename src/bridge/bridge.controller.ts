@@ -26,6 +26,7 @@ import {
   BridgeGasTopUpDto,
   BridgeQuoteDto,
   BridgeStatusQueryDto,
+  BridgeTokenSearchQueryDto,
 } from "./dto/bridge.dto";
 import type { BridgeQuote, BridgeStatus, BridgeSupport } from "./types";
 
@@ -69,6 +70,15 @@ export class BridgeController {
       // NOT user-adjustable and NOT model-supplied (§8.4). A
       // safety-critical number must not be under LLM control.
     });
+  }
+
+  @Get("tokens/search")
+  @ApiOperation({
+    summary:
+      "Find a token on a chain by symbol, name or address, from the route providers' token lists.",
+  })
+  searchTokens(@Query() query: BridgeTokenSearchQueryDto) {
+    return this.bridgeService.searchTokens(query.chain, query.query);
   }
 
   @Get("status")

@@ -145,6 +145,7 @@ type Direction =
 @Injectable()
 export class CctpStellarAdapter implements BridgeRouteAdapter {
   readonly key = "cctp";
+  readonly kinds = ["bridge"] as const;
 
   private readonly logger = new Logger(CctpStellarAdapter.name);
 
@@ -327,6 +328,7 @@ export class CctpStellarAdapter implements BridgeRouteAdapter {
         amountRaw: toAmountRaw,
       },
       toAmountMinRaw: toAmountRaw,
+      kind: "bridge",
       slippageBps: 0,
       fees: [
         {
@@ -467,6 +469,7 @@ export class CctpStellarAdapter implements BridgeRouteAdapter {
       // Circle spends any headroom as destination priority fee, so the
       // floor is the expected amount.
       toAmountMinRaw: toAmountRaw,
+      kind: "bridge",
       slippageBps: 0,
       fees: [
         {

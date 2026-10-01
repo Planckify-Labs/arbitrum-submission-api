@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { alchemyNetworkForChainId } from "../alchemy/alchemy-networks";
+import { getPublicClientForChain } from "../strategies/targets/rpc";
 import { ValkeyService } from "../valkey/valkey.service";
 
 /**
@@ -19,9 +20,16 @@ import { ValkeyService } from "../valkey/valkey.service";
  * outside 0-36 cannot be a real token scale, and letting one through would
  * rescale an approval by orders of magnitude.
  *
- * Mirrors `AlchemyPricesClient`: `ConfigService` key, Valkey cache, and a
- * fail-to-null posture — a miss, a timeout, or a bad key degrades to nulls
- * and never throws into the request.
+ * Transport: `alchemy_getTokenMetadata` is a JSON-RPC method on the chain's
+ * Alchemy endpoint, so it goes through the chain's own RPC route (the rpc
+ * proxy, which forwards to Alchemy) like every other RPC call here. No
+ * Alchemy key is needed on this service. A direct `ALCHEMY_API_KEY` call is
+ * only the fallback for an environment that sets one. Until 2026-10-01 the
+ * key was the ONLY path, so without it every icon silently resolved to null.
+ *
+ * Valkey cache and a fail-to-null posture: a miss, a timeout, or a provider
+ * that does not serve the method degrades to nulls and never throws into
+ * the request.
  */
 export interface AlchemyTokenIdentity {
   symbol: string | null;
@@ -101,20 +109,17 @@ export class AlchemyTokenMetadataClient {
     private readonly configService: ConfigService,
     private readonly valkeyService: ValkeyService,
   ) {
+    // Optional: the rpc-proxy route needs no key. Only the direct fallback
+    // uses one.
     this.apiKey =
       this.configService.get<string>("ALCHEMY_API_KEY") ??
       // Deploy-order fallback, see AlchemyPricesClient.
       this.configService.get<string>("ALCHEMY_PRICES_API_KEY") ??
       null;
-    if (!this.apiKey) {
-      this.logger.warn(
-        "ALCHEMY_API_KEY not configured — token icons will resolve to null.",
-      );
-    }
   }
 
-  private cacheKey(network: string, address: string): string {
-    return `alchemy-token-meta:${network}:${address.toLowerCase()}`;
+  private cacheKey(chainId: number, address: string): string {
+    return `alchemy-token-meta:${chainId}:${address.toLowerCase()}`;
   }
 
   /**
@@ -127,17 +132,75 @@ export class AlchemyTokenMetadataClient {
     address: string,
   ): Promise<AlchemyTokenIdentity> {
     if (!/^0x[0-9a-fA-F]{40}$/.test(address)) return EMPTY;
-    const network = alchemyNetworkForChainId(chainId);
-    if (!network) return EMPTY;
 
-    const key = this.cacheKey(network, address);
+    const key = this.cacheKey(chainId, address);
     const cached = await this.valkeyService
       .get<AlchemyTokenIdentity>(key)
       .catch(() => null);
     if (cached !== null) return cached;
 
-    if (!this.apiKey) return EMPTY;
+    const result =
+      (await this.viaChainRpc(chainId, address)) ??
+      (await this.viaDirectKey(chainId, address));
+    if (result === undefined) return EMPTY;
 
+    const identity: AlchemyTokenIdentity = {
+      symbol:
+        typeof result?.symbol === "string" && result.symbol.length > 0
+          ? result.symbol
+          : null,
+      logo: safeLogoUrl(result?.logo),
+      decimals: safeDecimals(result?.decimals),
+    };
+    const hit =
+      identity.symbol !== null ||
+      identity.logo !== null ||
+      identity.decimals !== null;
+    await this.valkeyService
+      .set(key, identity, {
+        ttl: hit ? IDENTITY_CACHE_TTL_SECONDS : MISS_CACHE_TTL_SECONDS,
+      })
+      .catch(() => undefined);
+    return identity;
+  }
+
+  /**
+   * Through the chain's own RPC route (the rpc proxy, forwarding to
+   * Alchemy). `undefined` when the route is missing or the provider behind
+   * it does not serve the method, so the caller can try the next path.
+   */
+  private async viaChainRpc(
+    chainId: number,
+    address: string,
+  ): Promise<AlchemyTokenMetadataResult | null | undefined> {
+    const client = getPublicClientForChain(chainId);
+    if (!client) return undefined;
+    try {
+      const result = await Promise.race([
+        client.request({
+          method: "alchemy_getTokenMetadata",
+          params: [address],
+        } as never) as Promise<AlchemyTokenMetadataResult | null>,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("timeout")), REQUEST_TIMEOUT_MS),
+        ),
+      ]);
+      return result ?? null;
+    } catch (error: unknown) {
+      this.logger.warn(
+        `[getIdentity] chain RPC lookup failed for ${chainId}:${address}: ${describeFetchError(error)}`,
+      );
+      return undefined;
+    }
+  }
+
+  /** Direct to Alchemy, only where a key is configured. */
+  private async viaDirectKey(
+    chainId: number,
+    address: string,
+  ): Promise<AlchemyTokenMetadataResult | null | undefined> {
+    const network = alchemyNetworkForChainId(chainId);
+    if (!this.apiKey || !network) return undefined;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
@@ -165,30 +228,12 @@ export class AlchemyTokenMetadataClient {
       if (body.error) {
         throw new Error(body.error.message ?? "Alchemy Token API error");
       }
-      const result = body.result ?? null;
-      const identity: AlchemyTokenIdentity = {
-        symbol:
-          typeof result?.symbol === "string" && result.symbol.length > 0
-            ? result.symbol
-            : null,
-        logo: safeLogoUrl(result?.logo),
-        decimals: safeDecimals(result?.decimals),
-      };
-      const hit =
-        identity.symbol !== null ||
-        identity.logo !== null ||
-        identity.decimals !== null;
-      await this.valkeyService
-        .set(key, identity, {
-          ttl: hit ? IDENTITY_CACHE_TTL_SECONDS : MISS_CACHE_TTL_SECONDS,
-        })
-        .catch(() => undefined);
-      return identity;
+      return body.result ?? null;
     } catch (error: unknown) {
       this.logger.error(
         `[getIdentity] Alchemy request failed for ${network}:${address}: ${describeFetchError(error)}`,
       );
-      return EMPTY;
+      return undefined;
     } finally {
       clearTimeout(timer);
     }

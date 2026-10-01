@@ -10,6 +10,8 @@
  */
 
 import { Module, type OnModuleInit } from "@nestjs/common";
+import { AlchemyPricesClient } from "../strategies/external/alchemy-prices.client";
+import { ValkeyModule } from "../valkey/valkey.module";
 import { BridgeController } from "./bridge.controller";
 import { BridgeService } from "./bridge.service";
 import { CctpStellarAdapter } from "./providers/cctp-stellar.adapter";
@@ -21,9 +23,12 @@ import { TowerSwapAdapter } from "./providers/tower.adapter";
 import { registerBridgeAdapter } from "./registry";
 
 @Module({
+  // Valkey backs the shared Alchemy price cache and daily budget.
+  imports: [ValkeyModule],
   controllers: [BridgeController],
   providers: [
     BridgeService,
+    AlchemyPricesClient,
     CircleAppKitClient,
     LifiBridgeAdapter,
     CircleCctpAdapter,
@@ -43,8 +48,15 @@ export class BridgeModule implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    // `lifi` — any asset, 72 chains, EVM + Solana + Sui. Misses Stellar.
-    registerBridgeAdapter(this.lifi);
+    // Registration order is the tie-break among adapters that answer the
+    // same route (swap spec §4.3): specialists first, the generalist last.
+    // That, not a chain list in any adapter, is what puts Tower ahead of
+    // LI.FI for a same-chain swap on a chain Tower serves; LI.FI stays the
+    // fallback whenever Tower declines.
+
+    // `tower` — SAME-CHAIN swaps on the chains Tower serves. Refuses
+    // cross-chain routes, so it never competes with the Circle adapters.
+    registerBridgeAdapter(this.tower);
 
     // `circle-cctp` — USDC over CCTP V2, built on Arc App Kit (§5.4).
     // Declares `supportsAsset`, so the registry sorts it AHEAD of LI.FI
@@ -63,9 +75,8 @@ export class BridgeModule implements OnModuleInit {
     // `circle-cctp`, which never touches a Stellar chain.
     registerBridgeAdapter(this.cctpStellar);
 
-    // `tower` — SAME-CHAIN swaps on Arc only. It never overlaps the two
-    // above: they refuse same-chain routes and it refuses cross-chain
-    // ones. LI.FI's Arc mainnet is dark, so this is Arc's only swap route.
-    registerBridgeAdapter(this.tower);
+    // `lifi` — any asset, 72 chains, EVM + Solana + Sui. Misses Stellar.
+    // Last: the generalist answers whatever the specialists above decline.
+    registerBridgeAdapter(this.lifi);
   }
 }

@@ -20,6 +20,7 @@ const ALCHEMY_NETWORK_BY_CHAIN_ID: Record<number, string> = {
   8453: "base-mainnet",
   42161: "arb-mainnet",
   43114: "avax-mainnet",
+  5042: "arc-mainnet",
   11155111: "eth-sepolia",
   84532: "base-sepolia",
   421614: "arb-sepolia",

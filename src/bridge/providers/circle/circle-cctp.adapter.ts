@@ -88,6 +88,7 @@ const QUOTE_TTL_MS = 3 * 60_000;
 @Injectable()
 export class CircleCctpAdapter implements BridgeRouteAdapter {
   readonly key = "circle-cctp";
+  readonly kinds = ["bridge"] as const;
 
   private readonly logger = new Logger(CircleCctpAdapter.name);
 
@@ -237,6 +238,7 @@ export class CircleCctpAdapter implements BridgeRouteAdapter {
     return {
       quoteId: randomUUID(),
       provider: this.key,
+      kind: "bridge",
       from: {
         chain: req.fromChain,
         chainName: source.name,

@@ -77,6 +77,7 @@ const SIGNED_QUOTE_SAFETY_MS = 20_000;
 @Injectable()
 export class CircleCctpxAdapter implements BridgeRouteAdapter {
   readonly key = "circle-cctpx";
+  readonly kinds = ["bridge"] as const;
 
   private readonly logger = new Logger(CircleCctpxAdapter.name);
 
@@ -222,6 +223,7 @@ export class CircleCctpxAdapter implements BridgeRouteAdapter {
     return {
       quoteId: randomUUID(),
       provider: this.key,
+      kind: "bridge",
       from: {
         chain: req.fromChain,
         chainName: source.name,

@@ -43,11 +43,19 @@ export interface TowerQuote {
   inputTokenDecimals?: number;
   outputTokenDecimals?: number;
   feeBps?: number;
+  /** BASIS POINTS despite the docs saying "percentage". Convert in the adapter. */
+  priceImpact?: number;
   dexId?: string;
   dexName?: string;
   route?: { hops?: Array<{ dexId?: string; dexName?: string }> };
   expiresAt?: string;
-  routeOptions?: Array<{ dexId?: string; dexName?: string }>;
+  routeOptions?: Array<{
+    dexId?: string;
+    dexName?: string;
+    outputAmountRaw?: string;
+    minOutRaw?: string;
+    priceImpact?: number;
+  }>;
   [key: string]: unknown;
 }
 

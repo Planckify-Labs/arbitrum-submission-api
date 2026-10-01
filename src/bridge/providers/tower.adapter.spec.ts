@@ -278,7 +278,10 @@ describe("TowerSwapAdapter", () => {
       const q = await adapter().quote(request());
 
       expect(calls[2].body.dexId).toBe("aero");
-      expect(q.bridge.name).toBe("Tower via Aero");
+      // Co-marketing: presented as Tower, never as the DEX underneath.
+      expect(q.bridge.name).toBe("Tower");
+      expect(q.venue?.name).toBe("Tower");
+      expect(q.steps.find((s) => s.kind === "swap")?.provider?.name).toBe("Tower");
     });
 
     it("reports no route when Tower cannot price the pair", async () => {

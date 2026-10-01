@@ -278,18 +278,29 @@ export function toBridgeProviderInfo(step: LiFiStep): BridgeProviderInfo {
 export function toBridgeFees(
   estimate: Estimate | undefined,
   fromChain: Caip2,
+  toChain?: Caip2,
 ): BridgeFee[] {
   const fees: BridgeFee[] = [];
+  // A same-chain route is a swap: "bridge fee" and "source chain" describe
+  // a transfer that is not happening.
+  const swap = toChain === fromChain;
 
   for (const fee of estimate?.feeCosts ?? []) {
-    fees.push(feeCostToBridgeFee(fee));
+    fees.push(relabel(feeCostToBridgeFee(fee), swap));
   }
   for (const gas of estimate?.gasCosts ?? []) {
     const line = gasCostToBridgeFee(gas, fromChain);
-    if (line) fees.push(line);
+    if (line) fees.push(relabel(line, swap));
   }
 
   return fees;
+}
+
+function relabel(fee: BridgeFee, swap: boolean): BridgeFee {
+  if (!swap) return fee;
+  if (fee.key === "bridge") return { ...fee, label: "Swap fee" };
+  if (fee.key === "gas_source") return { ...fee, label: "Network fee" };
+  return fee;
 }
 
 function feeCostToBridgeFee(fee: FeeCost): BridgeFee {
@@ -382,12 +393,27 @@ export function toBridgeSteps(
       const incFromChain = lifiChainIdToCaip2(fromToken.chainId) ?? fromChain;
       const incToChain = lifiChainIdToCaip2(toToken.chainId) ?? toChain;
       const crossing = incFromChain !== incToChain;
+      const incType = (inc.type as string | undefined)?.toLowerCase();
+      let kind: BridgeRouteStep["kind"] = crossing ? "burn" : "swap";
+      let label = crossing
+        ? `Move funds via ${inc.toolDetails?.name ?? inc.tool}`
+        : `Swap via ${inc.toolDetails?.name ?? inc.tool}`;
+
+      if (incType === "protocol" || inc.tool === "feeCollection") {
+        kind = "protocol";
+        label = inc.toolDetails?.name ?? "Integrator Fee";
+      } else if (incType === "swap") {
+        kind = "swap";
+        label = `Swap via ${inc.toolDetails?.name ?? inc.tool}`;
+      } else if (incType === "cross") {
+        kind = "burn";
+        label = `Move funds via ${inc.toolDetails?.name ?? inc.tool}`;
+      }
+
       steps.push({
         key: `${inc.tool}-${index}`,
-        kind: crossing ? "burn" : "swap",
-        label: crossing
-          ? `Move funds via ${inc.toolDetails?.name ?? inc.tool}`
-          : `Swap via ${inc.toolDetails?.name ?? inc.tool}`,
+        kind,
+        label,
         fromChain: incFromChain,
         toChain: incToChain,
         fromToken: toBridgeToken(incFromChain, fromToken),
@@ -403,10 +429,13 @@ export function toBridgeSteps(
       });
     }
   } else {
+    const isSwap = fromChain === toChain;
     steps.push({
       key: step.tool,
-      kind: "burn",
-      label: `Move funds via ${step.toolDetails?.name ?? step.tool}`,
+      kind: isSwap ? "swap" : "burn",
+      label: isSwap
+        ? `Swap via ${step.toolDetails?.name ?? step.tool}`
+        : `Move funds via ${step.toolDetails?.name ?? step.tool}`,
       fromChain,
       toChain,
       provider: toBridgeProviderInfo(step),
@@ -417,19 +446,22 @@ export function toBridgeSteps(
   // CCTP that is literally `fetchAttestation` → `mint`; for a liquidity or
   // intent bridge it is the filler's destination transaction. Modelling
   // both the same way is what keeps the progress card provider-agnostic.
-  steps.push({
-    key: "attestation",
-    kind: "attestation",
-    label: "Wait for the transfer to be confirmed",
-    fromChain,
-    toChain,
-  });
-  steps.push({
-    key: "mint",
-    kind: "mint",
-    label: "Deliver funds on the destination chain",
-    toChain,
-  });
+  // Same-chain swaps have no cross-chain settlement wait.
+  if (fromChain !== toChain) {
+    steps.push({
+      key: "attestation",
+      kind: "attestation",
+      label: "Wait for the transfer to be confirmed",
+      fromChain,
+      toChain,
+    });
+    steps.push({
+      key: "mint",
+      kind: "mint",
+      label: "Deliver funds on the destination chain",
+      toChain,
+    });
+  }
 
   return steps;
 }

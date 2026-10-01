@@ -83,9 +83,32 @@ interface CacheEntry<T> {
   fetchedAt: number;
 }
 
+/**
+ * LI.FI's estimate carries no `priceImpact` (verified live). Derive it, in
+ * PERCENT, from the USD value in vs out. It includes the protocol fee, so it
+ * errs toward warning the user. Absent USD figures stay absent (unknown is
+ * never 0).
+ */
+export function lifiPriceImpactPercent(estimate: {
+  fromAmountUSD?: string;
+  toAmountUSD?: string;
+  priceImpact?: number;
+}): number | undefined {
+  if (typeof estimate.priceImpact === "number") return estimate.priceImpact;
+  const from = Number.parseFloat(estimate.fromAmountUSD ?? "");
+  const to = Number.parseFloat(estimate.toAmountUSD ?? "");
+  // A zero or missing output value means LI.FI has no price for the token,
+  // not that the user receives nothing: that is UNKNOWN, never 100%.
+  if (!Number.isFinite(from) || !Number.isFinite(to) || from <= 0 || to <= 0) {
+    return undefined;
+  }
+  return Math.max(0, ((from - to) / from) * 100);
+}
+
 @Injectable()
 export class LifiBridgeAdapter implements BridgeRouteAdapter {
   readonly key = "lifi";
+  readonly kinds = ["swap", "bridge"] as const;
 
   private readonly logger = new Logger(LifiBridgeAdapter.name);
   private readonly integrator: string;
@@ -126,7 +149,6 @@ export class LifiBridgeAdapter implements BridgeRouteAdapter {
   // ── capability seam (§5.2) ────────────────────────────────────────────
 
   supports(from: Caip2, to: Caip2): boolean {
-    if (from === to) return false;
     const fromId = caip2ToLifiChainId(from);
     const toId = caip2ToLifiChainId(to);
     if (fromId === null || toId === null) return false;
@@ -238,7 +260,7 @@ export class LifiBridgeAdapter implements BridgeRouteAdapter {
         parseCaip2(fromChain)?.namespace === "eip155",
     );
 
-    const fees = toBridgeFees(estimate, fromChain);
+    const fees = toBridgeFees(estimate, fromChain, toChain);
     if (this.integratorFeeBps > 0 && !fees.some((f) => f.key === "integrator")) {
       // Decision §10.2: the integrator fee may be zero, but if it is ever
       // switched on it must be VISIBLE. Never let it ride silently inside
@@ -281,6 +303,13 @@ export class LifiBridgeAdapter implements BridgeRouteAdapter {
       // on screen at all (§6). LI.FI always supplies it; the fallback only
       // covers a malformed payload.
       toAmountMinRaw: estimate.toAmountMin ?? estimate.toAmount ?? "0",
+      kind: fromChain === toChain ? "swap" : "bridge",
+      priceImpact: lifiPriceImpactPercent(estimate),
+      venue: {
+        key: step.tool,
+        name: step.toolDetails?.name ?? step.tool,
+        logoUri: step.toolDetails?.logoURI,
+      },
       slippageBps,
       fees,
       // Destination token is native gas currency (§7.1).
@@ -497,6 +526,25 @@ export class LifiBridgeAdapter implements BridgeRouteAdapter {
       const detail = error instanceof Error ? error.message : String(error);
       this.logger.warn(`[resolveToken] LI.FI error for ${asset}: ${detail}`);
       return null;
+    }
+  }
+
+  /**
+   * LI.FI's token lookup accepts a symbol (case-insensitive) or an address
+   * per chain. One best match, or none. Live-checked 2026-10-01: `cirBTC`
+   * on Arc resolves to Circle's own pinned contract.
+   */
+  async searchTokens(chain: Caip2, query: string): Promise<BridgeToken[]> {
+    const chainId = caip2ToLifiChainId(chain);
+    const q = query.trim();
+    if (chainId === null || q.length === 0) return [];
+    try {
+      const token = await getToken(chainId, q);
+      return token ? [toBridgeToken(chain, token)] : [];
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.debug?.(`[searchTokens] no LI.FI match for ${q} on ${chain}: ${detail}`);
+      return [];
     }
   }
 

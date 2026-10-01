@@ -64,7 +64,18 @@ interface ArcChain {
   name: string;
 }
 
-/** The chains Tower serves. Keyed by CAIP-2. */
+/**
+ * The chains Tower serves swaps on. Keyed by CAIP-2.
+ *
+ * Deliberately NOT derived from Tower's `GET /chains` (swap spec §4.8 B12
+ * proposed filtering it on `supportedFeatures` including "swaps"). Live
+ * check 2026-09-30: `/chains` lists Arc mainnet (5042) with only
+ * `bridge`, `rpc-proxy`, `wallet-balance`, and "swaps" on Arc Testnet
+ * alone, while swaps on 5042 quote and build fine. Filtering on it would
+ * switch off the one working route. Revisit when Tower's feature flags
+ * match reality. The platform's own chain intersection (§4.7) still
+ * applies on top of this table.
+ */
 const ARC_CHAINS: Record<Caip2, ArcChain> = {
   "eip155:5042": { chainId: 5042, name: "Arc" },
   "eip155:5042002": { chainId: 5042002, name: "Arc Testnet" },
@@ -102,9 +113,22 @@ interface ResolvedSide {
   token: BridgeToken;
 }
 
+/**
+ * Tower's `priceImpact` is in BASIS POINTS, not the "percentage" its docs
+ * claim (live-verified 2026-09-30 on Arc mainnet: 100k USDC -> EURC reports
+ * 14 while the rate moved ~0.12%; small trades report 0-2). The wire type
+ * carries PERCENT, so convert here and nowhere else. Absent stays absent.
+ */
+export function towerPriceImpactPercent(raw: unknown): number | undefined {
+  return typeof raw === "number" && Number.isFinite(raw) && raw >= 0
+    ? raw / 100
+    : undefined;
+}
+
 @Injectable()
 export class TowerSwapAdapter implements BridgeRouteAdapter {
   readonly key = "tower";
+  readonly kinds = ["swap"] as const;
 
   private readonly logger = new Logger(TowerSwapAdapter.name);
   private readonly client: TowerClient;
@@ -354,10 +378,12 @@ export class TowerSwapAdapter implements BridgeRouteAdapter {
     const { req, quote, built, executor, from, to, amountRaw } = args;
     const chainName = this.chainName(req.fromChain);
     // An auto-routed quote names its venue only on the first hop.
-    const venue = quote.dexName ?? quote.route?.hops?.[0]?.dexName;
+    // Co-marketing: a Tower swap is presented as Tower, never as the DEX
+    // Tower routed through underneath (KyberSwap and so on). The DEX stays
+    // in `routeOptions` for diagnostics only.
     const provider = {
       key: this.key,
-      name: venue ? `Tower via ${venue}` : "Tower",
+      name: "Tower",
       mechanism: "liquidity_pool" as const,
     };
 
@@ -422,6 +448,18 @@ export class TowerSwapAdapter implements BridgeRouteAdapter {
         amountRaw: quote.outputAmountRaw as string,
       },
       toAmountMinRaw: quote.minOutRaw as string,
+      kind: "swap",
+      priceImpact: towerPriceImpactPercent(quote.priceImpact),
+      // The venue that actually won, named the same way the provider label
+      // above names it (an auto-routed quote carries it on the first hop).
+      venue: { key: this.key, name: "Tower" },
+      routeOptions: quote.routeOptions?.map((o) => ({
+        dexId: o.dexId,
+        name: o.dexName ?? o.dexId ?? "Unknown",
+        outputAmountRaw: o.outputAmountRaw,
+        minOutRaw: o.minOutRaw,
+        priceImpact: towerPriceImpactPercent(o.priceImpact),
+      })),
       slippageBps: args.slippageBps,
       fees,
       receivesNativeAsset: false,

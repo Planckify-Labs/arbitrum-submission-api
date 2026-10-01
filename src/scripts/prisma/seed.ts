@@ -908,6 +908,26 @@ async function main() {
         bundlerUrl: null, // Arc has no bundler; see task 37 + §7.1.
       },
     }),
+    // Arc Mainnet — UMKM USDC payout settlement chain & Tower Exchange swaps (spec §7 / §12).
+    // EVM chain 5042, native currency USDC.
+    // rpcUrl is the rpc-proxy route like every other chain — the proxy owns
+    // the Alchemy key and the publicnode/drpc fallbacks for /evm/5042.
+    prisma.blockchain.upsert({
+      where: { chainId: 5042 },
+      update: {
+        rpcUrl: "/evm/5042",
+        blockExplorer: "https://explorer.arc.io",
+      },
+      create: {
+        name: "Arc",
+        chainId: 5042,
+        rpcUrl: "/evm/5042",
+        blockExplorer: "https://explorer.arc.io",
+        type: "EVM",
+        isActive: true,
+        isTestnet: false,
+      },
+    }),
     // Monad mainnet — sourced from staging-api.takumiaiwallet.xyz /blockchains.
     // EVM chain 143, native currency MON. No Gateway / Paymaster / x402 on
     // Monad — those fields stay null. Appended last to keep existing
@@ -2402,6 +2422,118 @@ async function main() {
         peggedCurrency: "USD",
       },
     }),
+    prisma.token.upsert({
+      where: {
+        blockchainId_contractAddress: {
+          blockchainId: evmChain(5042).id, // Arc Mainnet
+          contractAddress: "0x3600000000000000000000000000000000000000",
+        },
+      },
+      update: {
+        name: "USD Coin",
+        symbol: "USDC",
+        decimals: 6,
+        logoUrl:
+          "https://static.alchemyapi.io/images/assets/3408.png",
+        isStablecoin: true,
+        isNativeCurrency: false,
+        isPaymentEnabled: true,
+        isActive: true,
+        peggedCurrency: "USD",
+      },
+      create: {
+        name: "USD Coin",
+        symbol: "USDC",
+        decimals: 6,
+        blockchainId: evmChain(5042).id, // Arc Mainnet
+        contractAddress: "0x3600000000000000000000000000000000000000",
+        logoUrl:
+          "https://static.alchemyapi.io/images/assets/3408.png",
+        isStablecoin: true,
+        isNativeCurrency: false,
+        isPaymentEnabled: true,
+        isActive: true,
+        peggedCurrency: "USD",
+      },
+    }),
+    // EURC on Arc (Circle-issued; matches App Kit's pin). The catalogue row is
+    // what vouches for the exact address (swap spec §8.4 L1) and keeps it in
+    // the Tower co-marketing lane. Verified on-chain 2026-10-01: EURC, 6 dec.
+    prisma.token.upsert({
+      where: {
+        blockchainId_contractAddress: {
+          blockchainId: evmChain(5042).id, // Arc Mainnet
+          contractAddress: "0xbEf5f6d51CB62b58e6A8f77868681825C6fe21c1",
+        },
+      },
+      update: {
+        name: "EURC",
+        symbol: "EURC",
+        decimals: 6,
+        logoUrl: "https://static.alchemyapi.io/images/assets/20641.png",
+        isStablecoin: true,
+        isNativeCurrency: false,
+        // Swappable and vouched-for, NOT cleared for payment flows.
+        isPaymentEnabled: false,
+        isActive: true,
+        peggedCurrency: "EUR",
+      },
+      create: {
+        blockchainId: evmChain(5042).id, // Arc Mainnet
+        contractAddress: "0xbEf5f6d51CB62b58e6A8f77868681825C6fe21c1",
+        name: "EURC",
+        symbol: "EURC",
+        decimals: 6,
+        logoUrl: "https://static.alchemyapi.io/images/assets/20641.png",
+        isStablecoin: true,
+        isNativeCurrency: false,
+        // Swappable and vouched-for, NOT cleared for payment flows.
+        isPaymentEnabled: false,
+        isActive: true,
+        peggedCurrency: "EUR",
+      },
+    }),
+    // cirBTC on Arc (Circle-issued; App Kit pins it internally but does not
+    // export it, so this row is our only vouch for the address). Verified
+    // on-chain 2026-10-01: "Circle Wrapped Bitcoin", cirBTC, 8 dec. Alchemy has
+    // no cirBTC image, so this is the Bitcoin logo LI.FI serves for it (Trust
+    // Wallet's): an icon is the asset's face, not the deployment's.
+    prisma.token.upsert({
+      where: {
+        blockchainId_contractAddress: {
+          blockchainId: evmChain(5042).id, // Arc Mainnet
+          contractAddress: "0x171A4217b86A807A64eB94757Db6849fb4bDbAA0",
+        },
+      },
+      update: {
+        name: "Circle Wrapped Bitcoin",
+        symbol: "cirBTC",
+        decimals: 8,
+        logoUrl:
+          "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/bitcoin/info/logo.png",
+        isStablecoin: false,
+        isNativeCurrency: false,
+        // Swappable and vouched-for, NOT cleared for payment flows.
+        isPaymentEnabled: false,
+        isActive: true,
+        peggedCurrency: null,
+      },
+      create: {
+        blockchainId: evmChain(5042).id, // Arc Mainnet
+        contractAddress: "0x171A4217b86A807A64eB94757Db6849fb4bDbAA0",
+        name: "Circle Wrapped Bitcoin",
+        symbol: "cirBTC",
+        decimals: 8,
+        logoUrl:
+          "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/bitcoin/info/logo.png",
+        isStablecoin: false,
+        isNativeCurrency: false,
+        // Swappable and vouched-for, NOT cleared for payment flows.
+        isPaymentEnabled: false,
+        isActive: true,
+        peggedCurrency: null,
+      },
+    }),
   ]);
 
   // Native USDC on Arc — the second view of the SAME balance the ERC-20 row
@@ -2453,6 +2585,28 @@ async function main() {
       data: {
         ...arcNativeUsdc,
         blockchainId: evmChain(5042002).id, // Arc Testnet
+        contractAddress: null,
+      },
+    });
+  }
+
+  // Native USDC on Arc Mainnet (5042)
+  const existingArcMainnetNativeToken = await prisma.token.findFirst({
+    where: {
+      blockchainId: evmChain(5042).id,
+      isNativeCurrency: true,
+    },
+  });
+  if (existingArcMainnetNativeToken) {
+    await prisma.token.update({
+      where: { id: existingArcMainnetNativeToken.id },
+      data: arcNativeUsdc,
+    });
+  } else {
+    await prisma.token.create({
+      data: {
+        ...arcNativeUsdc,
+        blockchainId: evmChain(5042).id, // Arc Mainnet
         contractAddress: null,
       },
     });

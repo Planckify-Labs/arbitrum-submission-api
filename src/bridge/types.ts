@@ -22,6 +22,25 @@
 /** CAIP-2 chain id, e.g. `eip155:8453`, `solana:5eykt4Us…`, `stellar:pubnet`. */
 export type Caip2 = string;
 
+export type RouteKind = "swap" | "bridge";
+
+export function routeKindOf(fromChain: Caip2, toChain: Caip2): RouteKind {
+  return fromChain === toChain ? "swap" : "bridge";
+}
+
+export function routeQuoteKindOf(quote: { from: { chain: Caip2 }; to: { chain: Caip2 } }): RouteKind {
+  return quote.from.chain === quote.to.chain ? "swap" : "bridge";
+}
+
+export interface RouteOption {
+  dexId?: string;
+  name: string;
+  /** Absent when the provider does not quote per venue (Tower, live-verified). */
+  outputAmountRaw?: string;
+  minOutRaw?: string;
+  priceImpact?: number;
+}
+
 /**
  * CAIP-19 asset id, e.g.
  *   `eip155:8453/erc20:0x833589f…`
@@ -171,6 +190,8 @@ export interface BridgeQuoteRequest {
    * does not expose it.
    */
   slippageBps?: number;
+  transferSpeedHint?: "fast" | "standard";
+  useForwarder?: boolean;
 }
 
 /**
@@ -349,6 +370,15 @@ export interface BridgeQuote {
   };
   /** Worst-case guarantee. Without it there is no protection number on screen. */
   toAmountMinRaw: string;
+  /** Derived from topology ("swap" | "bridge"). */
+  kind: RouteKind;
+  /** Price impact in PERCENT (1.5 = 1.5%), as Tower documents it. Absent = unknown, never 0. */
+  priceImpact?: number;
+  /** Winning venue details: whose pool the trade actually hits. */
+  venue?: { key: string; name: string; logoUri?: string };
+
+  /** Alternative route options. */
+  routeOptions?: RouteOption[];
   /** Disclosed, fixed per route class, not user-adjustable (§8.4). */
   slippageBps: number;
   fees: BridgeFee[];
@@ -403,3 +433,10 @@ export interface GasTopUpRequest {
   fromAddress: string;
   amountUsd: number;
 }
+
+export type RouteQuote = BridgeQuote;
+export type RouteQuoteRequest = BridgeQuoteRequest;
+export type RouteToken = BridgeToken;
+export type RouteSupportedChain = BridgeSupportedChain;
+export type RouteRef = BridgeRef;
+export type RouteStatus = BridgeStatus;

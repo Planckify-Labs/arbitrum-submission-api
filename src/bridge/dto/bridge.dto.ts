@@ -102,6 +102,22 @@ export class BridgeQuoteDto {
   toAddress: string;
 }
 
+export class BridgeTokenSearchQueryDto {
+  @ApiProperty({ description: "Chain to search, CAIP-2.", example: "eip155:5042" })
+  @IsString()
+  @Matches(CAIP2)
+  chain: string;
+
+  @ApiProperty({
+    description:
+      "Symbol, name or contract address as the user said it, or an exact CAIP-19 to check.",
+    example: "cirBTC",
+  })
+  @IsString()
+  @Matches(/^[\p{L}\p{N} ._₮:\/-]{1,160}$/u)
+  query: string;
+}
+
 export class BridgeStatusQueryDto {
   @ApiProperty({ description: "Source chain, CAIP-2." })
   @IsString()
