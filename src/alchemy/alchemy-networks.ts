@@ -21,6 +21,8 @@ const ALCHEMY_NETWORK_BY_CHAIN_ID: Record<number, string> = {
   42161: "arb-mainnet",
   43114: "avax-mainnet",
   5042: "arc-mainnet",
+  4663: "robinhood-mainnet",
+  46630: "robinhood-testnet",
   11155111: "eth-sepolia",
   84532: "base-sepolia",
   421614: "arb-sepolia",

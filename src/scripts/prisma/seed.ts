@@ -972,24 +972,45 @@ async function main() {
       },
     }),
     // Robinhood Chain testnet — an Arbitrum Orbit L2 (EIP-155 chainId 46630).
-    // Added for the Arbitrum Open House 2026 hackathon. rpc-proxy has no
-    // provider rows for it yet, so rpcUrl is the public endpoint directly
-    // (same posture as Base mainnet's public RPC).
+    // Added for the Arbitrum Open House 2026 hackathon. rpc-proxy routes it
+    // (Alchemy `robinhood-testnet`, public fallback) since 2026-10-01.
     prisma.blockchain.upsert({
       where: { chainId: 46630 },
       update: {
-        rpcUrl: "https://rpc.testnet.chain.robinhood.com",
+        rpcUrl: "/evm/46630",
         blockExplorer: "https://explorer.testnet.chain.robinhood.com",
-        name: "Robinhood Chain Testnet",
+        name: "Robinhood Testnet",
       },
       create: {
-        name: "Robinhood Chain Testnet",
+        name: "Robinhood Testnet",
         chainId: 46630,
-        rpcUrl: "https://rpc.testnet.chain.robinhood.com",
+        rpcUrl: "/evm/46630",
         blockExplorer: "https://explorer.testnet.chain.robinhood.com",
         type: "EVM",
         isActive: true,
         isTestnet: true,
+        minConfirmations: 1,
+      },
+    }),
+    // Robinhood Chain mainnet (Arbitrum Orbit L2, EIP-155 chainId 4663, live
+    // since 2026-07-01), routed via rpc-proxy (Alchemy `robinhood-mainnet`,
+    // public fallback; see rpc-proxy/src/db/seed.ts). No takumi_pay deployment on this chain yet, so no SmartContract row and
+    // its tokens are not payment-enabled.
+    prisma.blockchain.upsert({
+      where: { chainId: 4663 },
+      update: {
+        rpcUrl: "/evm/4663",
+        blockExplorer: "https://robinhoodchain.blockscout.com",
+        name: "Robinhood",
+      },
+      create: {
+        name: "Robinhood",
+        chainId: 4663,
+        rpcUrl: "/evm/4663",
+        blockExplorer: "https://robinhoodchain.blockscout.com",
+        type: "EVM",
+        isActive: true,
+        isTestnet: false,
         minConfirmations: 1,
       },
     }),
@@ -2269,6 +2290,71 @@ async function main() {
         isActive: true,
       },
     }),
+    // ETH on Robinhood Chain testnet. Without a native-currency row the chain
+    // has no icon app-wide (the mobile chain icon is this row's logoUrl), so
+    // like the Arbitrum rows logoUrl is the chain's own brand mark — CoinGecko's
+    // `robinhood` asset-platform image — not the ETH logo.
+    prisma.token.upsert({
+      where: {
+        blockchainId_contractAddress: {
+          blockchainId: evmChain(46630).id,
+          contractAddress: "0x0000000000000000000000000000000000000004",
+        },
+      },
+      update: {
+        name: "Robinhood Testnet",
+        symbol: "ETH",
+        decimals: 18,
+        logoUrl:
+          "https://coin-images.coingecko.com/asset_platforms/images/102132299/small/robinhood.png?1782921203",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
+      },
+      create: {
+        name: "Robinhood Testnet",
+        symbol: "ETH",
+        decimals: 18,
+        blockchainId: evmChain(46630).id, // Robinhood Chain testnet
+        contractAddress: "0x0000000000000000000000000000000000000004",
+        logoUrl:
+          "https://coin-images.coingecko.com/asset_platforms/images/102132299/small/robinhood.png?1782921203",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
+      },
+    }),
+    // ETH on Robinhood Chain mainnet — chain icon, same convention as above.
+    prisma.token.upsert({
+      where: {
+        blockchainId_contractAddress: {
+          blockchainId: evmChain(4663).id,
+          contractAddress: "0x0000000000000000000000000000000000000004",
+        },
+      },
+      update: {
+        name: "Robinhood",
+        symbol: "ETH",
+        decimals: 18,
+        logoUrl:
+          "https://coin-images.coingecko.com/asset_platforms/images/102132299/small/robinhood.png?1782921203",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
+      },
+      create: {
+        name: "Robinhood",
+        symbol: "ETH",
+        decimals: 18,
+        blockchainId: evmChain(4663).id, // Robinhood Chain mainnet
+        contractAddress: "0x0000000000000000000000000000000000000004",
+        logoUrl:
+          "https://coin-images.coingecko.com/asset_platforms/images/102132299/small/robinhood.png?1782921203",
+        isStablecoin: false,
+        isNativeCurrency: true,
+        isActive: true,
+      },
+    }),
     // ETH on Arbitrum (mainnet). Previously missing — the single "Arbitrum"
     // entry above had drifted onto the Sepolia row, leaving mainnet without a
     // native token (placeholder icon + "N/A" symbol app-wide).
@@ -2876,18 +2962,19 @@ async function main() {
   // USDG (Paxos Global Dollar) and USDC for the Arbitrum Open House 2026
   // hackathon. Addresses from docs.paxos.com/guides/stablecoin/usdg/{mainnet,
   // testnet} and Circle; symbol()/decimals() read on-chain (6 for all).
+  // USDG logo is CoinGecko's `global-dollar` image (same token on every chain).
   // `isPaymentEnabled: true` because each token is allowlisted + sweep-capped
   // on the matching takumi_pay deployment (deployments/42161, 421614, 46630).
   for (const [chainId, name, symbol, contractAddress, logoUrl] of [
-    [42161, "Global Dollar", "USDG", "0x004B506865409877C9fA29bfb1ebA929984B9bbC", null],
+    [42161, "Global Dollar", "USDG", "0x004B506865409877C9fA29bfb1ebA929984B9bbC", "https://coin-images.coingecko.com/coins/images/51281/small/GDN_USDG_Token_200x200.png?1730484111"],
     [42161, "USD Coin", "USDC", "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", "https://static.alchemyapi.io/images/assets/3408.png"],
-    [421614, "Global Dollar", "USDG", "0xFFC95faa3d63Cde504a05B567C600B78C0b41892", null],
-    [46630, "Global Dollar", "USDG", "0x7E955252E15c84f5768B83c41a71F9eba181802F", null],
+    [421614, "Global Dollar", "USDG", "0xFFC95faa3d63Cde504a05B567C600B78C0b41892", "https://coin-images.coingecko.com/coins/images/51281/small/GDN_USDG_Token_200x200.png?1730484111"],
+    [46630, "Global Dollar", "USDG", "0x7E955252E15c84f5768B83c41a71F9eba181802F", "https://coin-images.coingecko.com/coins/images/51281/small/GDN_USDG_Token_200x200.png?1730484111"],
   ] as const) {
     const blockchainId = evmChain(chainId).id;
     await prisma.token.upsert({
       where: { blockchainId_contractAddress: { blockchainId, contractAddress } },
-      update: { isPaymentEnabled: true, isActive: true, isStablecoin: true },
+      update: { isPaymentEnabled: true, isActive: true, isStablecoin: true, logoUrl },
       create: {
         name,
         symbol,
@@ -2898,6 +2985,33 @@ async function main() {
         isStablecoin: true,
         isNativeCurrency: false,
         isPaymentEnabled: true,
+        isActive: true,
+        peggedCurrency: "USD",
+      },
+    });
+  }
+
+  // USDG on Robinhood Chain mainnet. Address from CoinGecko's `global-dollar`
+  // `robinhood` platform entry; symbol() "USDG" and decimals() 6 read on-chain
+  // 2026-10-01. Not payment-enabled: takumi_pay is not deployed on chain 4663.
+  {
+    const blockchainId = evmChain(4663).id;
+    const contractAddress = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168";
+    const logoUrl =
+      "https://coin-images.coingecko.com/coins/images/51281/small/GDN_USDG_Token_200x200.png?1730484111";
+    await prisma.token.upsert({
+      where: { blockchainId_contractAddress: { blockchainId, contractAddress } },
+      update: { isActive: true, isStablecoin: true, logoUrl },
+      create: {
+        name: "Global Dollar",
+        symbol: "USDG",
+        decimals: 6,
+        blockchainId,
+        contractAddress,
+        logoUrl,
+        isStablecoin: true,
+        isNativeCurrency: false,
+        isPaymentEnabled: false,
         isActive: true,
         peggedCurrency: "USD",
       },
