@@ -3581,6 +3581,17 @@ async function main() {
       region: "ID",
       markup: 1.5,
     },
+    // USDG (Paxos Global Dollar) → IDR. The on-chain rail keys the FX
+    // snapshot on the payer's token symbol, so without this row USDG intents
+    // fail with 503 FX_UNAVAILABLE. USD-pegged, so same USD/IDR spot and
+    // markup as the AUSD row above.
+    {
+      fromCurrency: "USDG",
+      toCurrency: "IDR",
+      rate: 17690,
+      region: "ID",
+      markup: 1.5,
+    },
   ];
 
   await Promise.all(
