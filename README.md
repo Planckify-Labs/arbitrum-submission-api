@@ -21,7 +21,5 @@ pnpm install
 pnpm start:dev
 ```
 
-The `EVM_QUOTE_SIGNER_PRIVATE_KEY` used on the hackathon deployments is a shared, publicly known testnet key. See hub README section 5.
-
 ---
 
